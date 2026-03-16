@@ -1,0 +1,13 @@
+<Solution>
+  <Project Path="ThDarkOrbitEmulator.ApiService/ThDarkOrbitEmulator.ApiService.csproj" />
+  <Project Path="ThDarkOrbitEmulator.AppHost/ThDarkOrbitEmulator.AppHost.csproj" />
+  <Project Path="ThDarkOrbitEmulator.Cluster.Application/ThDarkOrbitEmulator.Cluster.Application.csproj" />
+  <Project Path="ThDarkOrbitEmulator.Cluster.Infrastructure/ThDarkOrbitEmulator.Cluster.Infrastructure.csproj" />
+  <Project Path="ThDarkOrbitEmulator.Gateway/ThDarkOrbitEmulator.Gateway.csproj" />
+  <Project Path="ThDarkOrbitEmulator.Identity.Application/ThDarkOrbitEmulator.Identity.Application.csproj" />
+  <Project Path="ThDarkOrbitEmulator.Identity.Domain/ThDarkOrbitEmulator.Identity.Domain.csproj" />
+  <Project Path="ThDarkOrbitEmulator.Identity.Infrastructure/ThDarkOrbitEmulator.Identity.Infrastructure.csproj" />
+  <Project Path="ThDarkOrbitEmulator.ServiceDefaults/ThDarkOrbitEmulator.ServiceDefaults.csproj" />
+  <Project Path="ThDarkOrbitEmulator.Tests/ThDarkOrbitEmulator.Tests.csproj" />
+</Solution>
+

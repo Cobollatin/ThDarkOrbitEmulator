@@ -1,0 +1,33 @@
+# Build outputs
+bin/
+obj/
+out/
+artifacts/
+
+# User/IDE
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test / coverage
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+
+# Logs
+*.log
+
+# Local tools/config
+.ionide/
+
+# Reverse
+_reversing

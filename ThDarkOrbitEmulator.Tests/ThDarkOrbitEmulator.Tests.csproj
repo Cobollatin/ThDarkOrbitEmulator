@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.Testing" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="NetArchTest.Rules" />
+    <PackageReference Include="NUnit" />
+    <PackageReference Include="NUnit.Analyzers" />
+    <PackageReference Include="NUnit3TestAdapter" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ThDarkOrbitEmulator.AppHost\ThDarkOrbitEmulator.AppHost.csproj" />
+    <ProjectReference Include="..\ThDarkOrbitEmulator.ApiService\ThDarkOrbitEmulator.ApiService.csproj" />
+    <ProjectReference Include="..\ThDarkOrbitEmulator.Cluster.Application\ThDarkOrbitEmulator.Cluster.Application.csproj" />
+    <ProjectReference Include="..\ThDarkOrbitEmulator.Identity.Application\ThDarkOrbitEmulator.Identity.Application.csproj" />
+    <ProjectReference Include="..\ThDarkOrbitEmulator.Identity.Domain\ThDarkOrbitEmulator.Identity.Domain.csproj" />
+    <ProjectReference Include="..\ThDarkOrbitEmulator.Identity.Infrastructure\ThDarkOrbitEmulator.Identity.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="System.Net" />
+    <Using Include="Microsoft.Extensions.DependencyInjection" />
+    <Using Include="Aspire.Hosting.ApplicationModel" />
+    <Using Include="Aspire.Hosting.Testing" />
+    <Using Include="NUnit.Framework" />
+  </ItemGroup>
+
+</Project>
