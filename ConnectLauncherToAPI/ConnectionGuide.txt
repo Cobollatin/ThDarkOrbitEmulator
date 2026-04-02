@@ -1,0 +1,74 @@
+# DarkOrbit Launcher → Local API Connection Guide
+
+## Prerequisites
+- Visual Studio running as Administrator (required for port 443 binding)
+- DarkOrbit Unity installed locally
+
+---
+
+## STEP 1: CREATE WILDCARD CERTIFICATE FOR LOCALHOST AND DARKORBIT DOMAINS
+
+# Create a self-signed certificate with multiple Subject Alternative Names (SANs)
+# This allows the cert to work for localhost AND all DarkOrbit domains
+$cert = New-SelfSignedCertificate `
+    -DnsName "localhost", "*.darkorbit.com", "*.bpsecure.com", "alicdn-oss-prod.darkorbit.com" `
+    -CertStoreLocation "Cert:\CurrentUser\My" `
+    -KeyExportPolicy Exportable `
+    -KeySpec Signature `
+    -KeyLength 2048 `
+    -KeyAlgorithm RSA `
+    -HashAlgorithm SHA256
+
+Write-Host "Certificate created with thumbprint: $($cert.Thumbprint)" -ForegroundColor Green
+
+# Export the certificate to a .pfx file (with password protection)
+$pwd = ConvertTo-SecureString -String "password123" -Force -AsPlainText
+Export-PfxCertificate -Cert $cert -FilePath "$env:TEMP\darkorbit.pfx" -Password $pwd
+
+# Import it into Trusted Root Certification Authorities
+# This makes Windows trust the certificate system-wide
+Import-PfxCertificate -FilePath "$env:TEMP\darkorbit.pfx" -CertStoreLocation Cert:\CurrentUser\Root -Password $pwd
+
+Write-Host "✓ Certificate trusted!" -ForegroundColor Green
+# ⚠️ IMPORTANT: Copy the thumbprint shown above - you'll need it in STEP 2
+
+
+## STEP 2: Configure API Service Certificate
+1. Open `ThDarkOrbitEmulator.ApiService\Program.cs`
+2. Locate line ~11: `var certThumbprint = "";`
+3. Paste the thumbprint from Step 1 between the quotes
+4. Save the file
+
+
+## STEP 3: Prepare Game Client
+1. Navigate to your DarkOrbit Unity metadata folder: C:\Users\*UserName*\AppData\Local\DarkOrbit Unity\DarkOrbit_Data\il2cpp_data\Metadata
+2. **Backup** the original `global-metadata.dat` (rename to `global-metadata.dat.backup`)
+3. Copy the **modified** `global-metadata.dat` (with localhost:443 URLs) into this folder
+
+---
+
+## STEP 4: Launch & Verify
+1. **Run Visual Studio as Administrator**
+2. Set __Startup Project__ to `ThDarkOrbitEmulator.AppHost`
+3. Select the **https** launch profile in the dropdown
+4. Press F5 to start debugging
+5. Verify the ApiService console shows: `🔥🔥🔥 REQUEST` logs
+6. Launch `DarkorbitLauncher.exe`
+7. Watch the ApiService console - you should see incoming requests from the launcher
+
+---
+
+## Troubleshooting
+- **"Certificate not found" error**: Verify the thumbprint is correct and has no spaces
+- **Port 443 binding fails**: Ensure Visual Studio is running as Administrator
+- **Launcher still connects to real API**: Double-check `global-metadata.dat` was replaced
+- **SSL/TLS errors**: Verify Step 2 (trust certificate) completed successfully
+- **Open wireshark**: 'Adapter for loopback traffic capture' Filter for `tcp.port == 443` to see if the launcher is connecting to localhost instead of the real API
+
+---
+
+## Reverting Changes
+To restore normal game operation:
+1. Delete/Rename modified `global-metadata.dat`
+2. Rename `global-metadata.dat.backup` back to `global-metadata.dat`
+3. Restart the game launcher
