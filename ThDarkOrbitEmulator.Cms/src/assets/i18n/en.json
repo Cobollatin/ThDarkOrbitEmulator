@@ -1,0 +1,128 @@
+{
+  "app": {
+    "title": "Dark Orbit Emulator CMS",
+    "brand": "Dark Orbit Emulator CMS"
+  },
+  "a11y": {
+    "skipToContent": "Skip to main content",
+    "mainContent": "Main content",
+    "loading": "Loading",
+    "errorAnnouncement": "Error"
+  },
+  "locale": {
+    "label": "Language",
+    "en": "English",
+    "es": "Spanish"
+  },
+  "nav": {
+    "signIn": "Sign in",
+    "register": "Register",
+    "signOut": "Sign out",
+    "home": "Dashboard",
+    "backoffice": "Backoffice"
+  },
+  "common": {
+    "loading": "Loading…"
+  },
+  "backoffice": {
+    "title": "Backoffice",
+    "subtitle": "Platform operations (RBAC-protected). Assign Keycloak roles for more access.",
+    "nav": {
+      "overview": "Overview",
+      "identity": "Identity DB",
+      "keycloak": "Keycloak",
+      "operations": "Operations"
+    },
+    "overview": {
+      "title": "Stack overview",
+      "services": "Services",
+      "links": "Quick links"
+    },
+    "identity": {
+      "title": "Identity accounts",
+      "count": "Total accounts",
+      "empty": "No accounts in identity.accounts.",
+      "deleteAll": "Delete all identity users"
+    },
+    "keycloak": {
+      "title": "Keycloak users",
+      "hint": "Realm users (separate from identity.accounts).",
+      "empty": "No users in realm."
+    },
+    "operations": {
+      "title": "Low-level operations",
+      "hint": "Same actions as Aspire BO commands, via API.",
+      "clearCache": "Clear Redis cache (FLUSHALL)",
+      "cacheCleared": "Redis cache cleared."
+    },
+    "table": {
+      "name": "Name",
+      "role": "Role",
+      "status": "Status",
+      "username": "Username",
+      "email": "Email",
+      "enabled": "Enabled"
+    },
+    "error": {
+      "load": "Could not load backoffice data."
+    }
+  },
+  "auth": {
+    "login": {
+      "title": "Sign in",
+      "subtitle": "Sign in with your Dark Orbit emulator account.",
+      "username": "Username",
+      "password": "Password",
+      "submit": "Sign in",
+      "submitting": "Signing in…",
+      "noAccount": "No account?",
+      "registerLink": "Create one"
+    },
+    "register": {
+      "title": "Create account",
+      "subtitle": "Register for the Dark Orbit emulator CMS.",
+      "username": "Username",
+      "email": "Email (optional)",
+      "password": "Password",
+      "confirmPassword": "Confirm password",
+      "submit": "Register",
+      "submitting": "Creating account…",
+      "hasAccount": "Already have an account?",
+      "loginLink": "Sign in",
+      "passwordMismatch": "Passwords do not match."
+    },
+    "profile": {
+      "title": "Dashboard",
+      "subtitle": "Signed-in user overview",
+      "loading": "Loading profile…",
+      "username": "Username",
+      "email": "Email",
+      "gameUserId": "Game user ID",
+      "emailEmpty": "Not set"
+    },
+    "validation": {
+      "required": "This field is required.",
+      "usernameMinLength": "Username must be at least {{min}} characters.",
+      "passwordMinLength": "Password must be at least {{min}} characters.",
+      "email": "Enter a valid email address."
+    }
+  },
+  "errors": {
+    "common": {
+      "unknown": "An unexpected error occurred.",
+      "validation_failed": "The request is invalid."
+    },
+    "identity": {
+      "feature_disabled": "This feature is currently disabled.",
+      "invalid_input": "Username and password are required.",
+      "invalid_credentials": "Username or password is incorrect.",
+      "account_not_registered": "No account exists for that username. Register first.",
+      "authentication_failed": "Sign-in was rejected by the identity server. Try registering again with the same username.",
+      "username_taken": "That username is already registered.",
+      "keycloak_unavailable": "Identity service is unavailable. Try again shortly.",
+      "unauthorized": "You must sign in to continue.",
+      "account_not_found": "Account was not found.",
+      "network": "Cannot reach the API. Is the gateway running?"
+    }
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "realm": "thdarkorbit",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "verifyEmail": false,
+  "loginWithEmailAllowed": false,
+  "duplicateEmailsAllowed": true,
+  "resetPasswordAllowed": true,
+  "requiredActions": [
+    {
+      "alias": "CONFIGURE_TOTP",
+      "name": "Configure OTP",
+      "providerId": "CONFIGURE_TOTP",
+      "enabled": false,
+      "defaultAction": false,
+      "priority": 10
+    },
+    {
+      "alias": "UPDATE_PASSWORD",
+      "name": "Update Password",
+      "providerId": "UPDATE_PASSWORD",
+      "enabled": false,
+      "defaultAction": false,
+      "priority": 30
+    },
+    {
+      "alias": "UPDATE_PROFILE",
+      "name": "Update Profile",
+      "providerId": "UPDATE_PROFILE",
+      "enabled": false,
+      "defaultAction": false,
+      "priority": 40
+    },
+    {
+      "alias": "VERIFY_EMAIL",
+      "name": "Verify Email",
+      "providerId": "VERIFY_EMAIL",
+      "enabled": false,
+      "defaultAction": false,
+      "priority": 50
+    }
+  ],
+  "roles": {
+    "realm": [
+      { "name": "emulator-admin", "description": "Full backoffice access (composite)" },
+      { "name": "emulator-operator", "description": "Read/write identity, cache, ops" },
+      { "name": "emulator-viewer", "description": "Read-only backoffice (default for new users)" }
+    ],
+    "client": {
+      "thdarkorbit-api": [
+        { "name": "backoffice.identity.read" },
+        { "name": "backoffice.identity.write" },
+        { "name": "backoffice.identity.delete" },
+        { "name": "backoffice.keycloak.read" },
+        { "name": "backoffice.cache.write" },
+        { "name": "backoffice.ops.read" }
+      ]
+    }
+  },
+  "clients": [
+    {
+      "clientId": "thdarkorbit-api",
+      "name": "ThDarkOrbit API",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "protocol": "openid-connect",
+      "fullScopeAllowed": true,
+      "redirectUris": ["*"],
+      "webOrigins": ["+"]
+    }
+  ]
+}

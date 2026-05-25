@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
+using ThDarkOrbitEmulator.ServiceDefaults.Authorization;
 
 namespace Microsoft.Extensions.Hosting;
 
@@ -29,17 +31,37 @@ public static class SecurityExtensions
             .AddJwtBearer(jwt =>
             {
                 jwt.Authority = options.Authority;
-                jwt.Audience = options.Audience;
                 jwt.RequireHttpsMetadata = options.RequireHttpsMetadata;
+                jwt.MapInboundClaims = false;
                 jwt.TokenValidationParameters = new TokenValidationParameters
                 {
-                    ValidateAudience = !string.IsNullOrWhiteSpace(options.Audience)
+                    // Keycloak public-client tokens often use aud=account (or omit aud); azp holds the client id.
+                    ValidateAudience = false,
+                    NameClaimType = "preferred_username",
+                    RoleClaimType = "roles"
+                };
+
+                jwt.Events = new JwtBearerEvents
+                {
+                    OnAuthenticationFailed = context =>
+                    {
+                        var logger = context.HttpContext.RequestServices
+                            .GetRequiredService<ILoggerFactory>()
+                            .CreateLogger("KeycloakJwtAuthentication");
+                        logger.LogWarning(
+                            context.Exception,
+                            "JWT authentication failed for {Path}.",
+                            context.HttpContext.Request.Path);
+                        return Task.CompletedTask;
+                    }
                 };
             });
 
-        services.AddAuthorizationBuilder().SetFallbackPolicy(new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
-            .RequireAuthenticatedUser()
-            .Build());
+        services.AddEmulatorAuthorization();
+        services.AddAuthorizationBuilder().SetFallbackPolicy(
+            new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
+                .RequireAuthenticatedUser()
+                .Build());
 
         return services;
     }

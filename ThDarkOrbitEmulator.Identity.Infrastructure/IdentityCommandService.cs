@@ -4,7 +4,9 @@ using ThDarkOrbitEmulator.Identity.Domain;
 
 namespace ThDarkOrbitEmulator.Identity.Infrastructure;
 
-public sealed class IdentityCommandService(IdentityWriteDbContext dbContext) : IIdentityCommandService
+public sealed class IdentityCommandService(
+    IdentityWriteDbContext dbContext,
+    IGameUserIdGenerator gameUserIdGenerator) : IIdentityCommandService
 {
     public async Task<bool> ExecuteAsync(RegisterAccountCommand command, CancellationToken cancellationToken)
     {
@@ -19,10 +21,13 @@ public sealed class IdentityCommandService(IdentityWriteDbContext dbContext) : I
             return false;
         }
 
+        var gameUserId = await gameUserIdGenerator.NextAsync(cancellationToken);
+
         dbContext.Accounts.Add(new Account
         {
             Username = normalizedUsername,
-            Email = command.Email
+            Email = command.Email,
+            GameUserId = gameUserId
         });
 
         await dbContext.SaveChangesAsync(cancellationToken);

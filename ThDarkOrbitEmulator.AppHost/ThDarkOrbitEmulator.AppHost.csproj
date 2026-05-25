@@ -1,10 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <Sdk Name="Aspire.AppHost.Sdk" Version="9.5.0" />
+  <Sdk Name="Aspire.AppHost.Sdk" Version="13.3.5" />
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ThDarkOrbitEmulator.Tests" />
+  </ItemGroup>
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <UserSecretsId>b37ae8c8-1ba1-42e0-8415-f3eabe1f7ff9</UserSecretsId>
@@ -17,8 +20,11 @@
 
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting.AppHost" />
+    <PackageReference Include="Aspire.Hosting.JavaScript" />
     <PackageReference Include="Aspire.Hosting.PostgreSQL" />
     <PackageReference Include="Aspire.Hosting.Redis" />
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="StackExchange.Redis" />
   </ItemGroup>
 
 </Project>

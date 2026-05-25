@@ -1,9 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ThDarkOrbitEmulator.Tests" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\ThDarkOrbitEmulator.Identity.Application\ThDarkOrbitEmulator.Identity.Application.csproj" />
@@ -21,5 +24,6 @@
 
   <ItemGroup>
     <None Include="Migrations\Sql\*.pgsql" CopyToOutputDirectory="PreserveNewest" />
+    <EmbeddedResource Include="Keycloak\thdarkorbit-realm.json" />
   </ItemGroup>
 </Project>

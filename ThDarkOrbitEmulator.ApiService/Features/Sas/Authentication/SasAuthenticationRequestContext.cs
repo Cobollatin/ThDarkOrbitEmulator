@@ -4,6 +4,8 @@ public sealed class SasAuthenticationRequestContext
 {
     public SasAuthenticationQuery Query { get; init; } = new();
 
+    public SasAuthenticationCookies Cookies { get; init; } = new();
+
     public SasAuthenticationPayload Payload { get; init; } = new();
 
     public SasAuthenticationRequestMetadata Metadata { get; init; } = new();
@@ -11,6 +13,11 @@ public sealed class SasAuthenticationRequestContext
     public static async Task<SasAuthenticationRequestContext> ParseAsync(HttpRequest request, CancellationToken cancellationToken)
     {
         var payload = new SasAuthenticationPayload();
+        var cookies = new SasAuthenticationCookies
+        {
+            Dosid = ReadCookie(request, "dosid"),
+            AliYun = ReadCookie(request, "aliyungf_tc")
+        };
 
         if (request.HasFormContentType)
         {
@@ -32,6 +39,14 @@ public sealed class SasAuthenticationRequestContext
             }
         }
 
+        foreach (var cookie in request.Cookies)
+        {
+            if (!SasAuthenticationCookies.KnownCookieNames.Contains(cookie.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                cookies.Additional[cookie.Key] = cookie.Value;
+            }
+        }
+
         return new SasAuthenticationRequestContext
         {
             Query = new SasAuthenticationQuery
@@ -39,6 +54,7 @@ public sealed class SasAuthenticationRequestContext
                 AuthUser = request.Query["authUser"].ToString(),
                 Token = request.Query["token"].ToString()
             },
+            Cookies = cookies,
             Payload = payload,
             Metadata = new SasAuthenticationRequestMetadata
             {
@@ -56,6 +72,9 @@ public sealed class SasAuthenticationRequestContext
             }
         };
     }
+
+    private static string? ReadCookie(HttpRequest request, string name)
+        => request.Cookies.TryGetValue(name, out var value) ? value : null;
 }
 
 public sealed class SasAuthenticationQuery
@@ -63,6 +82,17 @@ public sealed class SasAuthenticationQuery
     public string? AuthUser { get; init; }
 
     public string? Token { get; init; }
+}
+
+public sealed class SasAuthenticationCookies
+{
+    internal static readonly string[] KnownCookieNames = ["dosid", "aliyungf_tc"];
+
+    public string? Dosid { get; init; }
+
+    public string? AliYun { get; init; }
+
+    public IDictionary<string, string> Additional { get; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class SasAuthenticationPayload

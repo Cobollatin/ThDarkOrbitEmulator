@@ -1,0 +1,23 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Roboto', ui-sans-serif, system-ui, sans-serif;
+  --color-surface: #0f172a;
+  --color-surface-elevated: #1e293b;
+  --color-border: #334155;
+  --color-primary: #3b82f6;
+  --color-primary-hover: #2563eb;
+  --color-danger: #f87171;
+  --color-muted: #94a3b8;
+}
+
+@layer base {
+  html,
+  body {
+    @apply h-full bg-slate-950 text-slate-100 antialiased;
+  }
+
+  a {
+    @apply text-blue-400 hover:text-blue-300 underline-offset-2 hover:underline;
+  }
+}

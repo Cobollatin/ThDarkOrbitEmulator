@@ -1,11 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <CollectCoverage>true</CollectCoverage>
+    <CoverletOutputFormat>cobertura</CoverletOutputFormat>
+    <CoverletOutput>./TestResults/</CoverletOutput>
   </PropertyGroup>
 
 
@@ -16,6 +18,8 @@
     <PackageReference Include="NUnit" />
     <PackageReference Include="NUnit.Analyzers" />
     <PackageReference Include="NUnit3TestAdapter" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
   </ItemGroup>
 
   <ItemGroup>
@@ -25,6 +29,7 @@
     <ProjectReference Include="..\ThDarkOrbitEmulator.Identity.Application\ThDarkOrbitEmulator.Identity.Application.csproj" />
     <ProjectReference Include="..\ThDarkOrbitEmulator.Identity.Domain\ThDarkOrbitEmulator.Identity.Domain.csproj" />
     <ProjectReference Include="..\ThDarkOrbitEmulator.Identity.Infrastructure\ThDarkOrbitEmulator.Identity.Infrastructure.csproj" />
+    <ProjectReference Include="..\ThDarkOrbitEmulator.ServiceDefaults\ThDarkOrbitEmulator.ServiceDefaults.csproj" />
   </ItemGroup>
 
   <ItemGroup>

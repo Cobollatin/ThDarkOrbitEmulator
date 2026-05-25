@@ -1,0 +1,33 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_request_duration_seconds_count[5m])) by (service_name)",
+          "legendFormat": "{{service_name}}",
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP request rate (OTEL → Prometheus)",
+      "type": "timeseries"
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["thdarkorbit", "emulator"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "Emulator overview",
+  "uid": "thdarkorbit-overview",
+  "version": 1
+}

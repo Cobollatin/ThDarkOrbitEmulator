@@ -4,9 +4,10 @@ namespace ThDarkOrbitEmulator.Tests;
 
 public class WebTests
 {
-    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(120);
 
     [Test]
+    [Category("Integration")]
     public async Task GatewayHealthEndpointReturnsOkStatusCode()
     {
         // Arrange

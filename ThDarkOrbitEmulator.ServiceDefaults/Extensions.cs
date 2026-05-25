@@ -1,21 +1,24 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.HttpLogging;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.ServiceDiscovery;
+using Npgsql;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
+using Serilog;
+using Serilog.Events;
 using System.Threading.RateLimiting;
 
 namespace Microsoft.Extensions.Hosting;
 
 // Adds common Aspire services: service discovery, resilience, health checks, and OpenTelemetry.
-// This project should be referenced by each service project in your solution.
-// To learn more about using this project, see https://aka.ms/dotnet/aspire/service-defaults
 public static class Extensions
 {
     private const string HealthEndpointPath = "/health";
@@ -23,10 +26,38 @@ public static class Extensions
 
     public static TBuilder AddServiceDefaults<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
     {
+        var otlpEndpoint = builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]
+            ?? builder.Configuration["ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL"];
+
+        builder.Logging.ClearProviders();
+
+        builder.Services.AddSerilog((services, loggerConfiguration) =>
+        {
+            loggerConfiguration
+                .ReadFrom.Configuration(builder.Configuration)
+                .ReadFrom.Services(services)
+                .Enrich.FromLogContext()
+                .Enrich.WithProperty("application", builder.Environment.ApplicationName)
+                .WriteTo.Console(
+                    outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{SourceContext}] {Message:lj}{NewLine}{Exception}");
+
+            if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+            {
+                loggerConfiguration.WriteTo.OpenTelemetry(options =>
+                {
+                    options.Endpoint = otlpEndpoint;
+                    options.ResourceAttributes = new Dictionary<string, object>
+                    {
+                        ["service.name"] = builder.Environment.ApplicationName
+                    };
+                });
+            }
+        });
+
+        builder.Logging.AddSerilog(dispose: true);
+
         builder.ConfigureOpenTelemetry();
-
         builder.AddDefaultHealthChecks();
-
         builder.Services.AddServiceDiscovery();
 
         builder.Services.AddRateLimiter(options =>
@@ -54,31 +85,29 @@ public static class Extensions
 
         builder.Services.ConfigureHttpClientDefaults(http =>
         {
-            // Turn on resilience by default
             http.AddStandardResilienceHandler();
-
-            // Turn on service discovery by default
             http.AddServiceDiscovery();
         });
-
-        // Uncomment the following to restrict the allowed schemes for service discovery.
-        // builder.Services.Configure<ServiceDiscoveryOptions>(options =>
-        // {
-        //     options.AllowedSchemes = ["https"];
-        // });
 
         return builder;
     }
 
     public static TBuilder ConfigureOpenTelemetry<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
     {
-        builder.Logging.AddOpenTelemetry(logging =>
+        builder.Services.AddHttpLogging(logging =>
         {
-            logging.IncludeFormattedMessage = true;
-            logging.IncludeScopes = true;
+            logging.LoggingFields = HttpLoggingFields.RequestPropertiesAndHeaders
+                | HttpLoggingFields.ResponsePropertiesAndHeaders
+                | HttpLoggingFields.Duration;
+            logging.CombineLogs = true;
+            logging.RequestHeaders.Add("traceparent");
+            logging.RequestHeaders.Add("x-correlation-id");
+            logging.ResponseHeaders.Add("traceparent");
+            logging.MediaTypeOptions.AddText("application/json");
+            logging.MediaTypeOptions.AddText("application/problem+json");
         });
 
-        builder.Services.AddOpenTelemetry()
+        var openTelemetryBuilder = builder.Services.AddOpenTelemetry()
             .WithMetrics(metrics =>
             {
                 metrics.AddAspNetCoreInstrumentation()
@@ -88,37 +117,30 @@ public static class Extensions
             .WithTracing(tracing =>
             {
                 tracing.AddSource(builder.Environment.ApplicationName)
-                    .AddAspNetCoreInstrumentation(tracing =>
-                        // Exclude health check requests from tracing
-                        tracing.Filter = context =>
+                    .AddAspNetCoreInstrumentation(options =>
+                        options.Filter = context =>
                             !context.Request.Path.StartsWithSegments(HealthEndpointPath)
-                            && !context.Request.Path.StartsWithSegments(AlivenessEndpointPath)
-                    )
-                    // Uncomment the following line to enable gRPC instrumentation (requires the OpenTelemetry.Instrumentation.GrpcNetClient package)
-                    //.AddGrpcClientInstrumentation()
-                    .AddHttpClientInstrumentation();
+                            && !context.Request.Path.StartsWithSegments(AlivenessEndpointPath))
+                    .AddHttpClientInstrumentation()
+                    .AddNpgsql();
             });
 
-        builder.AddOpenTelemetryExporters();
+        builder.AddOpenTelemetryExporters(openTelemetryBuilder);
 
         return builder;
     }
 
-    private static TBuilder AddOpenTelemetryExporters<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
+    private static TBuilder AddOpenTelemetryExporters<TBuilder>(
+        this TBuilder builder,
+        OpenTelemetry.OpenTelemetryBuilder openTelemetryBuilder) where TBuilder : IHostApplicationBuilder
     {
-        var useOtlpExporter = !string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]);
+        var otlpEndpoint = builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]
+            ?? builder.Configuration["ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL"];
 
-        if (useOtlpExporter)
+        if (!string.IsNullOrWhiteSpace(otlpEndpoint))
         {
-            builder.Services.AddOpenTelemetry().UseOtlpExporter();
+            openTelemetryBuilder.UseOtlpExporter();
         }
-
-        // Uncomment the following lines to enable the Azure Monitor exporter (requires the Azure.Monitor.OpenTelemetry.AspNetCore package)
-        //if (!string.IsNullOrEmpty(builder.Configuration["APPLICATIONINSIGHTS_CONNECTION_STRING"]))
-        //{
-        //    builder.Services.AddOpenTelemetry()
-        //       .UseAzureMonitor();
-        //}
 
         return builder;
     }
@@ -126,30 +148,59 @@ public static class Extensions
     public static TBuilder AddDefaultHealthChecks<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
     {
         builder.Services.AddHealthChecks()
-            // Add a default liveness check to ensure app is responsive
             .AddCheck("self", () => HealthCheckResult.Healthy(), ["live"]);
 
         return builder;
     }
 
-    public static WebApplication MapDefaultEndpoints(this WebApplication app)
+    public static WebApplication UseServiceDefaults(this WebApplication app)
     {
+        app.UseSerilogRequestLogging(options =>
+        {
+            options.MessageTemplate =
+                "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms (client {ClientIP})";
+            options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
+            {
+                diagnosticContext.Set("ClientIP", httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+                diagnosticContext.Set("UserAgent", httpContext.Request.Headers.UserAgent.ToString());
+                diagnosticContext.Set("RequestHost", httpContext.Request.Host.Value);
+            };
+            options.GetLevel = (httpContext, elapsed, ex) =>
+            {
+                if (ex is not null)
+                {
+                    return LogEventLevel.Error;
+                }
+
+                if (httpContext.Response.StatusCode >= 500)
+                {
+                    return LogEventLevel.Error;
+                }
+
+                if (httpContext.Response.StatusCode >= 400 || elapsed > 1000)
+                {
+                    return LogEventLevel.Warning;
+                }
+
+                return LogEventLevel.Information;
+            };
+        });
+
+        app.UseHttpLogging();
         app.UseRateLimiter();
 
-        // Adding health checks endpoints to applications in non-development environments has security implications.
-        // See https://aka.ms/dotnet/aspire/healthchecks for details before enabling these endpoints in non-development environments.
+        return app;
+    }
+
+    public static WebApplication MapDefaultEndpoints(this WebApplication app)
+    {
         if (app.Environment.IsDevelopment())
         {
-            // All health checks must pass for app to be considered ready to accept traffic after starting
-            app.MapHealthChecks(HealthEndpointPath)
-                .AllowAnonymous();
-
-            // Only health checks tagged with the "live" tag must pass for app to be considered alive
+            app.MapHealthChecks(HealthEndpointPath).AllowAnonymous();
             app.MapHealthChecks(AlivenessEndpointPath, new HealthCheckOptions
             {
                 Predicate = r => r.Tags.Contains("live")
-            })
-            .AllowAnonymous();
+            }).AllowAnonymous();
         }
 
         return app;

@@ -1,0 +1,40 @@
+<app-page-card [title]="'backoffice.overview.title' | translate">
+  @if (error()) {
+    <p class="text-sm text-red-400">{{ error()! | translate }}</p>
+  } @else if (overview(); as data) {
+    <section class="space-y-4">
+      <h2 class="text-sm font-medium text-slate-300">{{ 'backoffice.overview.services' | translate }}</h2>
+      <div class="overflow-x-auto rounded-lg border border-slate-800">
+        <table class="min-w-full text-left text-sm">
+          <thead class="bg-slate-900 text-slate-400">
+            <tr>
+              <th class="px-3 py-2">{{ 'backoffice.table.name' | translate }}</th>
+              <th class="px-3 py-2">{{ 'backoffice.table.role' | translate }}</th>
+              <th class="px-3 py-2">{{ 'backoffice.table.status' | translate }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of data.services; track row.name) {
+              <tr class="border-t border-slate-800">
+                <td class="px-3 py-2 text-slate-200">{{ row.name }}</td>
+                <td class="px-3 py-2 text-slate-400">{{ row.role }}</td>
+                <td class="px-3 py-2 text-slate-400">{{ row.status }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <h2 class="text-sm font-medium text-slate-300">{{ 'backoffice.overview.links' | translate }}</h2>
+      <ul class="space-y-1 text-sm">
+        @for (link of data.links; track link.url) {
+          <li>
+            <a class="text-blue-400 hover:underline" [href]="link.url" target="_blank" rel="noopener">{{ link.label }}</a>
+          </li>
+        }
+      </ul>
+    </section>
+  } @else {
+    <p class="text-sm text-slate-400">{{ 'common.loading' | translate }}</p>
+  }
+</app-page-card>

@@ -1,0 +1,34 @@
+<app-page-card [wide]="true">
+  <span cardTitle>{{ 'auth.profile.title' | translate }}</span>
+  <span cardSubtitle>{{ 'auth.profile.subtitle' | translate }}</span>
+
+  <button
+    cardActions
+    type="button"
+    class="rounded-lg border border-slate-600 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800"
+    (click)="logout()"
+  >
+    {{ 'nav.signOut' | translate }}
+  </button>
+
+  @if (loading()) {
+    <p class="py-8 text-center text-slate-400" role="status">{{ 'auth.profile.loading' | translate }}</p>
+  } @else if (errorCode(); as code) {
+    <p class="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-red-300" role="alert">{{ code | apiErrorMessage }}</p>
+  } @else if (profile(); as user) {
+    <dl class="grid gap-4 sm:grid-cols-2">
+      <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-4">
+        <dt class="text-xs uppercase tracking-wide text-slate-500">{{ 'auth.profile.username' | translate }}</dt>
+        <dd class="mt-1 text-lg text-slate-100">{{ user.username }}</dd>
+      </div>
+      <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-4">
+        <dt class="text-xs uppercase tracking-wide text-slate-500">{{ 'auth.profile.email' | translate }}</dt>
+        <dd class="mt-1 text-lg text-slate-100">{{ user.email || ('auth.profile.emailEmpty' | translate) }}</dd>
+      </div>
+      <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-4 sm:col-span-2">
+        <dt class="text-xs uppercase tracking-wide text-slate-500">{{ 'auth.profile.gameUserId' | translate }}</dt>
+        <dd class="mt-1 font-mono text-lg text-blue-300">{{ user.gameUserId }}</dd>
+      </div>
+    </dl>
+  }
+</app-page-card>

@@ -1,5 +1,7 @@
 using FastEndpoints;
+using Microsoft.Extensions.Logging;
 using Microsoft.FeatureManagement;
+using ThDarkOrbitEmulator.ApiService.Common;
 using ThDarkOrbitEmulator.Identity.Application;
 
 namespace ThDarkOrbitEmulator.ApiService.Features.Identity.Login;
@@ -7,11 +9,12 @@ namespace ThDarkOrbitEmulator.ApiService.Features.Identity.Login;
 public sealed class LoginEndpoint(
     IIdentityQueryService queryService,
     IFeatureManager featureManager,
-    IKeycloakService keycloakService) : Endpoint<LoginRequest, LoginResponse>
+    IKeycloakService keycloakService,
+    ILogger<LoginEndpoint> logger) : Endpoint<LoginRequest, LoginResponse>
 {
     public override void Configure()
     {
-        Post("/v{version:int}/identity/login");
+        Post("identity/login");
         Version(1);
         AllowAnonymous();
         Description(description => description.WithTags("Identity"));
@@ -21,28 +24,37 @@ public sealed class LoginEndpoint(
     {
         if (!await featureManager.IsEnabledAsync("Identity.Login"))
         {
-            await SendNotFoundAsync(ct);
+            await HttpContext.WriteApiErrorAsync(ApiErrorCode.IdentityFeatureDisabled, StatusCodes.Status404NotFound, cancellation: ct);
             return;
         }
 
-        var authenticated = await queryService.ExecuteAsync(new ValidateCredentialsQuery(req.Username), ct);
-        if (!authenticated)
+        var username = req.Username.Trim();
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(req.Password))
         {
-            await SendUnauthorizedAsync(ct);
+            await HttpContext.WriteApiErrorAsync(ApiErrorCode.IdentityInvalidInput, StatusCodes.Status400BadRequest, cancellation: ct);
             return;
         }
 
-        var accessToken = await keycloakService.RequestAccessTokenAsync(req.Username, req.Password, ct);
+        var accountExists = await queryService.ExecuteAsync(new ValidateCredentialsQuery(username), ct);
+        if (!accountExists)
+        {
+            logger.LogWarning("Login rejected: no local account for '{Username}'.", username);
+            await HttpContext.WriteApiErrorAsync(ApiErrorCode.IdentityAccountNotRegistered, StatusCodes.Status401Unauthorized, cancellation: ct);
+            return;
+        }
+
+        var accessToken = await keycloakService.RequestAccessTokenAsync(username, req.Password, ct);
         if (string.IsNullOrWhiteSpace(accessToken))
         {
-            await SendUnauthorizedAsync(ct);
+            logger.LogWarning("Login rejected: Keycloak token request failed for '{Username}'.", username);
+            await HttpContext.WriteApiErrorAsync(ApiErrorCode.IdentityAuthenticationFailed, StatusCodes.Status401Unauthorized, cancellation: ct);
             return;
         }
 
-        await SendOkAsync(new LoginResponse
+        await Send.OkAsync(new LoginResponse
         {
             Authenticated = true,
             Token = accessToken
-        }, ct);
+        }, cancellation: ct);
     }
 }

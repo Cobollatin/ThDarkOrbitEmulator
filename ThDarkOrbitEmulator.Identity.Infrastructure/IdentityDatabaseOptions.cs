@@ -20,5 +20,5 @@ public sealed class IdentityDatabaseOptions
 
     public bool EnableDockerPgDumpFallback { get; set; } = true;
 
-    public string DockerPostgresContainerName { get; set; } = "postgres";
+    public string DockerPostgresContainerName { get; set; } = "thdarkorbit-emulator";
 }

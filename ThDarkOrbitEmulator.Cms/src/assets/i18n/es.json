@@ -1,0 +1,81 @@
+{
+  "app": {
+    "title": "CMS emulador Dark Orbit",
+    "brand": "CMS emulador Dark Orbit"
+  },
+  "a11y": {
+    "skipToContent": "Saltar al contenido principal",
+    "mainContent": "Contenido principal",
+    "loading": "Cargando",
+    "errorAnnouncement": "Error"
+  },
+  "locale": {
+    "label": "Idioma",
+    "en": "Inglés",
+    "es": "Español"
+  },
+  "nav": {
+    "signIn": "Iniciar sesión",
+    "register": "Registrarse",
+    "signOut": "Cerrar sesión",
+    "home": "Panel"
+  },
+  "auth": {
+    "login": {
+      "title": "Iniciar sesión",
+      "subtitle": "Accede con tu cuenta del emulador Dark Orbit.",
+      "username": "Usuario",
+      "password": "Contraseña",
+      "submit": "Entrar",
+      "submitting": "Iniciando sesión…",
+      "noAccount": "¿No tienes cuenta?",
+      "registerLink": "Crear una"
+    },
+    "register": {
+      "title": "Crear cuenta",
+      "subtitle": "Regístrate en el CMS del emulador Dark Orbit.",
+      "username": "Usuario",
+      "email": "Correo (opcional)",
+      "password": "Contraseña",
+      "confirmPassword": "Confirmar contraseña",
+      "submit": "Registrarse",
+      "submitting": "Creando cuenta…",
+      "hasAccount": "¿Ya tienes cuenta?",
+      "loginLink": "Iniciar sesión",
+      "passwordMismatch": "Las contraseñas no coinciden."
+    },
+    "profile": {
+      "title": "Panel",
+      "subtitle": "Resumen del usuario conectado",
+      "loading": "Cargando perfil…",
+      "username": "Usuario",
+      "email": "Correo",
+      "gameUserId": "ID de usuario del juego",
+      "emailEmpty": "Sin definir"
+    },
+    "validation": {
+      "required": "Este campo es obligatorio.",
+      "usernameMinLength": "El usuario debe tener al menos {{min}} caracteres.",
+      "passwordMinLength": "La contraseña debe tener al menos {{min}} caracteres.",
+      "email": "Introduce un correo válido."
+    }
+  },
+  "errors": {
+    "common": {
+      "unknown": "Se produjo un error inesperado.",
+      "validation_failed": "La solicitud no es válida."
+    },
+    "identity": {
+      "feature_disabled": "Esta función está desactivada.",
+      "invalid_input": "Usuario y contraseña son obligatorios.",
+      "invalid_credentials": "Usuario o contraseña incorrectos.",
+      "account_not_registered": "No existe una cuenta con ese usuario. Regístrate primero.",
+      "authentication_failed": "El servidor de identidad rechazó el inicio de sesión. Intenta registrarte de nuevo con el mismo usuario.",
+      "username_taken": "Ese nombre de usuario ya está registrado.",
+      "keycloak_unavailable": "El servicio de identidad no está disponible. Inténtalo más tarde.",
+      "unauthorized": "Debes iniciar sesión para continuar.",
+      "account_not_found": "No se encontró la cuenta.",
+      "network": "No se puede contactar con la API. ¿Está el gateway en ejecución?"
+    }
+  }
+}

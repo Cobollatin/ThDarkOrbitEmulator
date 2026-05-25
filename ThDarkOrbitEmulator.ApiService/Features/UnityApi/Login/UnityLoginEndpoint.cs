@@ -1,9 +1,11 @@
-using System.Text.Json;
 using FastEndpoints;
+using ThDarkOrbitEmulator.ApiService.Features.GameAuth;
 
 namespace ThDarkOrbitEmulator.ApiService.Features.UnityApi.Login;
 
-public sealed class UnityLoginEndpoint(ILogger<UnityLoginEndpoint> logger) : EndpointWithoutRequest<UnityLoginResponse>
+public sealed class UnityLoginEndpoint(
+    ILogger<UnityLoginEndpoint> logger,
+    IGameAuthSessionStore gameAuthSessionStore) : EndpointWithoutRequest<UnityLoginResponse>
 {
     public override void Configure()
     {
@@ -16,19 +18,27 @@ public sealed class UnityLoginEndpoint(ILogger<UnityLoginEndpoint> logger) : End
     public override async Task HandleAsync(CancellationToken ct)
     {
         var requestContext = UnityLoginRequestContext.Parse(HttpContext.Request);
-        var sessionId = string.IsNullOrWhiteSpace(requestContext.Cookies.Dosid)
-            ? Guid.NewGuid().ToString("N")
-            : requestContext.Cookies.Dosid;
-        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var dosid = requestContext.Cookies.Dosid;
 
         logger.LogInformation(
             "UnityApi login received. UnityVersion: {UnityVersion}, UserAgent: {UserAgent}, DosidPresent: {DosidPresent}",
             requestContext.Metadata.UnityVersion,
             requestContext.Metadata.UserAgent,
-            !string.IsNullOrWhiteSpace(requestContext.Cookies.Dosid));
+            !string.IsNullOrWhiteSpace(dosid));
+
+        var session = !string.IsNullOrWhiteSpace(dosid)
+            ? await gameAuthSessionStore.TryGetByDosidAsync(dosid, ct)
+            : null;
+
+        if (session is null)
+        {
+            logger.LogWarning("UnityApi login rejected: missing or unknown dosid session.");
+            await Send.UnauthorizedAsync(cancellation: ct);
+            return;
+        }
 
         HttpContext.Response.Headers.Append("X-Custom-Header", "DarkOrbitUnity");
-        HttpContext.Response.Cookies.Append("dosid", sessionId, new CookieOptions
+        HttpContext.Response.Cookies.Append("dosid", session.Dosid, new CookieOptions
         {
             Path = "/",
             HttpOnly = true,
@@ -36,30 +46,10 @@ public sealed class UnityLoginEndpoint(ILogger<UnityLoginEndpoint> logger) : End
             SameSite = SameSiteMode.None
         });
 
-        var mockData = new
+        var innerPayload = UnityLoginPayloadBuilder.Build(session, HttpContext.Request);
+        await Send.OkAsync(new UnityLoginResponse
         {
-            lang = "es",
-            userID = "173217628",
-            sessionID = sessionId,
-            basePath = "spacemap",
-            pid = "1398",
-            opid = "1398",
-            host = "https://gbl3.darkorbit.com",
-            allowChat = "1",
-            nextAction = "internalWebGL",
-            serverInfo = new
-            {
-                instanceName = "Global 3 - Titan",
-                serverTime = DateTime.UtcNow.ToString("HH:mm"),
-                serverDate = DateTime.UtcNow.ToString("dd.MM.yyyy"),
-                timeStamp = timestamp,
-                localizedTs = timestamp
-            }
-        };
-
-        await SendOkAsync(new UnityLoginResponse
-        {
-            Data = JsonSerializer.Serialize(mockData)
-        }, ct);
+            Data = innerPayload
+        }, cancellation: ct);
     }
 }

@@ -7,4 +7,6 @@ public sealed class Account
     public string Username { get; set; } = string.Empty;
 
     public string? Email { get; set; }
+
+    public long GameUserId { get; set; }
 }

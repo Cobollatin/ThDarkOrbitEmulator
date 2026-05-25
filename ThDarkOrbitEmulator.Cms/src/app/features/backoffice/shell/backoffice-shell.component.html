@@ -1,0 +1,43 @@
+<div class="w-full max-w-5xl space-y-6">
+  <div>
+    <h1 class="text-2xl font-semibold text-slate-100">{{ 'backoffice.title' | translate }}</h1>
+    <p class="mt-1 text-sm text-slate-400">{{ 'backoffice.subtitle' | translate }}</p>
+  </div>
+
+  <nav class="flex flex-wrap gap-2 border-b border-slate-800 pb-3" aria-label="Backoffice">
+    @if (rbac.hasPermission('backoffice.ops.read')) {
+      <a
+        routerLink="overview"
+        routerLinkActive="bg-blue-600/25 text-blue-200"
+        class="rounded-lg px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"
+        >{{ 'backoffice.nav.overview' | translate }}</a
+      >
+    }
+    @if (rbac.hasPermission('backoffice.identity.read')) {
+      <a
+        routerLink="identity"
+        routerLinkActive="bg-blue-600/25 text-blue-200"
+        class="rounded-lg px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"
+        >{{ 'backoffice.nav.identity' | translate }}</a
+      >
+    }
+    @if (rbac.hasPermission('backoffice.keycloak.read')) {
+      <a
+        routerLink="keycloak"
+        routerLinkActive="bg-blue-600/25 text-blue-200"
+        class="rounded-lg px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"
+        >{{ 'backoffice.nav.keycloak' | translate }}</a
+      >
+    }
+    @if (rbac.hasPermission('backoffice.cache.write')) {
+      <a
+        routerLink="operations"
+        routerLinkActive="bg-blue-600/25 text-blue-200"
+        class="rounded-lg px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"
+        >{{ 'backoffice.nav.operations' | translate }}</a
+      >
+    }
+  </nav>
+
+  <router-outlet />
+</div>

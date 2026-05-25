@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat Code Coverage">
+        <Configuration>
+          <Format>cobertura</Format>
+          <Include>[ThDarkOrbitEmulator.ServiceDefaults]*,[ThDarkOrbitEmulator.Identity.*]*,[ThDarkOrbitEmulator.ApiService]*,[ThDarkOrbitEmulator.AppHost]*</Include>
+          <Exclude>[ThDarkOrbitEmulator.Tests]*,[*]*.Mocks.*</Exclude>
+          <Threshold>80</Threshold>
+          <ThresholdType>line</ThresholdType>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>
