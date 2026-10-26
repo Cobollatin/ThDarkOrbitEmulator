@@ -1,0 +1,2353 @@
+using System.Buffers.Binary;
+using System.Net;
+using System.Net.Sockets;
+using ThDarkOrbitEmulator.ApiService.Features.World;
+using ThDarkOrbitEmulator.ApiService.Features.World.Mesh;
+using ThDarkOrbitEmulator.ApiService.Features.Resources.Maps;
+using ThDarkOrbitEmulator.Identity.Application;
+using ThDarkOrbitEmulator.ApiService.Features.GameAuth;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using ThDarkOrbitEmulator.ApiService.Features.IndexInternal.InternalStart;
+using Microsoft.Extensions.Caching.Distributed;
+using System.Text.Json;
+using ThDarkOrbitEmulator.ApiService.Features.Economy;
+using ThDarkOrbitEmulator.ApiService.Features.World.Admin;
+
+namespace ThDarkOrbitEmulator.Tests.ClientTesting;
+
+public class WorldTransportTests
+{
+    [Test]
+    public async Task Loopback_OwnSameMapAdminTeleport_SnapsIdleSocketOnce()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var socketStore = new WorldSessionStore(cache);
+        var adminStore = new WorldSessionStore(cache);
+        var pilot = new WorldPilot(852, "mmo", 1, 1, "ship", 0, 0)
+        { Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), socketStore);
+        using (client) using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(852, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+            await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt32(w, pilot.X); WorldPayload.WriteInt32(w, 2100);
+                WorldPayload.WriteInt32(w, 9000); WorldPayload.WriteInt32(w, pilot.Y);
+            }));
+            Assert.That((await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value.Command,
+                Is.EqualTo(WorldCommandId.MoveCommand));
+
+            var changed = await adminStore.TeleportAsync(852, 1, 3400, 2100, false, CancellationToken.None);
+            Assert.That(changed, Is.Not.Null);
+            var packet = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(packet.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+            var move = WorldPayload.Decode(packet.Payload, r =>
+                (Id: WorldPayload.ReadInt64(r), X: WorldPayload.ReadInt32(r),
+                    Y: WorldPayload.ReadInt32(r), Duration: WorldPayload.ReadInt32(r)));
+            Assert.That(move, Is.EqualTo((852L, 3400, 2100, 0)));
+            Assert.That(socketStore.Find(852), Has.Property("X").EqualTo(3400));
+            var safe = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(safe.Command, Is.EqualTo(WorldCommandId.SafeZoneCommand));
+            Assert.That(safe.Payload.ToArray(), Is.EqualTo(new byte[] { 0 }));
+            await Task.Delay(1200);
+            Assert.That(client.Available, Is.Zero, "A stationary teleport must be announced only once.");
+            await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt32(w, 3400); WorldPayload.WriteInt32(w, 2100);
+                WorldPayload.WriteInt32(w, 3700); WorldPayload.WriteInt32(w, 2100);
+            }));
+            var resumed = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(resumed.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+            var resumedMove = WorldPayload.Decode(resumed.Payload, r =>
+                (Id: WorldPayload.ReadInt64(r), X: WorldPayload.ReadInt32(r),
+                    Y: WorldPayload.ReadInt32(r), Duration: WorldPayload.ReadInt32(r)));
+            Assert.Multiple(() =>
+            {
+                Assert.That(resumedMove.Id, Is.EqualTo(852));
+                Assert.That(resumedMove.X, Is.EqualTo(3700));
+                Assert.That(resumedMove.Y, Is.EqualTo(2100));
+                Assert.That(resumedMove.Duration, Is.InRange(1, 1500));
+            });
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Test]
+    public async Task Loopback_RemoteSameMapTeleport_SnapsVisiblePilotOnce()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var nodeA = new WorldSessionStore(cache);
+        var nodeB = new WorldSessionStore(cache);
+        var observer = new WorldPilot(850, "mmo", 1, 1, "ship", 0, 0)
+        { Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) };
+        var remote = observer with { UserId = 851, X = 1000, Y = 1000, UserName = "remote851" };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((observer, default)), nodeA);
+        using (client) using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(850, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+            var entered = await nodeB.EnterAsync(remote, CancellationToken.None);
+            var spawn = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(spawn.Command, Is.EqualTo(WorldCommandId.PilotCreateCommand));
+            Assert.That(WorldPayload.Decode(spawn.Payload, r =>
+                (WorldPayload.ReadInt64(r), WorldPayload.ReadString(r), WorldPayload.ReadString(r),
+                    WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r),
+                    WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r))).Item1, Is.EqualTo(851));
+
+            await nodeB.MoveAsync(entered, 4000, 2500, null, CancellationToken.None);
+            var travel = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(travel.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+            await nodeB.TeleportAsync(851, 1, 3400, 2100, false, CancellationToken.None);
+            var snap = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(snap.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+            var move = WorldPayload.Decode(snap.Payload, r =>
+                (Id: WorldPayload.ReadInt64(r), X: WorldPayload.ReadInt32(r),
+                    Y: WorldPayload.ReadInt32(r), Duration: WorldPayload.ReadInt32(r)));
+            Assert.That(move, Is.EqualTo((851L, 3400, 2100, 0)));
+            await Task.Delay(1200);
+            Assert.That(client.Available, Is.Zero, "The same saved position must not be announced twice.");
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Test]
+    public async Task Loopback_RemoteReplicaBrowserMove_ReachesIdleTcpObserver()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var socketStore = new WorldSessionStore(cache);
+        var browserStore = new WorldSessionStore(cache);
+        var pilot = new WorldPilot(805, "mmo", 1, 1, "ship", 0, 0)
+        { Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), socketStore);
+        using (client) using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(805, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+            await browserStore.MoveAsync(pilot, 5000, 1300, null, CancellationToken.None);
+            var first = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(first.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+            var result = WorldPayload.Decode(first.Payload, r =>
+                (Id: WorldPayload.ReadInt64(r), X: WorldPayload.ReadInt32(r),
+                    Y: WorldPayload.ReadInt32(r), Duration: WorldPayload.ReadInt32(r)));
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Id, Is.EqualTo(805));
+                Assert.That(result.X, Is.EqualTo(5000));
+                Assert.That(result.Y, Is.EqualTo(1300));
+                Assert.That(result.Duration, Is.GreaterThan(0));
+            });
+            await Task.Delay(1200);
+            Assert.That(client.Available, Is.Zero, "The same saved trajectory should be announced only once.");
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Test]
+    public async Task Loopback_PilotMovingOnAnotherNode_ReachesLocalTcpObserverOnce()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var nodeA = new WorldSessionStore(cache);
+        var nodeB = new WorldSessionStore(cache);
+        var observer = new WorldPilot(806, "mmo", 1, 1, "ship", 0, 0)
+        { Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) };
+        var remote = new WorldPilot(807, "mmo", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, UserName = "remote807", FactionId = 1,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((observer, default)), nodeA);
+        using (client) using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(806, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+            var entered = await nodeB.EnterAsync(remote, CancellationToken.None);
+            var spawn = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(spawn.Command, Is.EqualTo(WorldCommandId.PilotCreateCommand));
+            var created = WorldPayload.Decode(spawn.Payload, r =>
+                (Id: WorldPayload.ReadInt64(r), Name: WorldPayload.ReadString(r),
+                    Ship: WorldPayload.ReadString(r), Faction: WorldPayload.ReadInt32(r),
+                    Map: WorldPayload.ReadInt32(r), X: WorldPayload.ReadInt32(r),
+                    Y: WorldPayload.ReadInt32(r)));
+            Assert.Multiple(() =>
+            {
+                Assert.That(created.Id, Is.EqualTo(807));
+                Assert.That(created.Name, Is.EqualTo("remote807"));
+                Assert.That(created.Ship, Is.EqualTo("ship"));
+                Assert.That(created.Faction, Is.EqualTo(1));
+                Assert.That(created.Map, Is.EqualTo(1));
+                Assert.That(created.X, Is.EqualTo(1000));
+                Assert.That(created.Y, Is.EqualTo(1000));
+            });
+            await nodeB.MoveAsync(entered, 4000, 2500, null, CancellationToken.None);
+            var packet = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(packet.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+            var move = WorldPayload.Decode(packet.Payload, r =>
+                (Id: WorldPayload.ReadInt64(r), X: WorldPayload.ReadInt32(r),
+                    Y: WorldPayload.ReadInt32(r), Duration: WorldPayload.ReadInt32(r)));
+            Assert.Multiple(() =>
+            {
+                Assert.That(move.Id, Is.EqualTo(807));
+                Assert.That(move.X, Is.EqualTo(4000));
+                Assert.That(move.Y, Is.EqualTo(2500));
+                Assert.That(move.Duration, Is.GreaterThan(0));
+            });
+            await Task.Delay(1200);
+            Assert.That(client.Available, Is.Zero, "A remote trajectory should be announced once per observer.");
+            await nodeB.LeaveAsync(entered, null, CancellationToken.None);
+            var removed = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(removed.Command, Is.EqualTo(WorldCommandId.PilotRemoveCommand));
+            Assert.That(WorldPayload.Decode(removed.Payload, WorldPayload.ReadInt64), Is.EqualTo(807));
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Test]
+    public async Task RemoteObservers_OnSameMap_ShareOnePresenceAndTravelReadPerSnapshot()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var counting = new CountingCache(services.GetRequiredService<IDistributedCache>());
+        var nodeA = new WorldSessionStore(counting);
+        var nodeB = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var remote = new WorldPilot(811, "mmo", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) };
+        var entered = await nodeB.EnterAsync(remote, CancellationToken.None);
+        await nodeB.MoveAsync(entered, 4000, 2500, null, CancellationToken.None);
+        var observers = Enumerable.Range(0, 3).Select(i => new WorldPilot(820 + i, "mmo", 1, 1, "ship", 0, 0)
+        { Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }).ToArray();
+        var sent = new List<WorldCommandId>();
+        counting.Reads.Clear();
+
+        foreach (var observer in observers)
+        {
+            using var wire = new MemoryStream();
+            var connection = new WorldConnection(observer, new WorldPacketWriter(wire));
+            await nodeA.ObserveRemotePilotsAsync(observer, connection, CancellationToken.None);
+            foreach (var move in await nodeA.ObserveRemoteMovesAsync(observer, CancellationToken.None))
+                await nodeA.SendMoveAsync(connection, move, CancellationToken.None);
+            wire.Position = 0;
+            var reader = new WorldPacketReader(wire);
+            while (await reader.ReadAsync() is { } packet) sent.Add(packet.Command);
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(counting.Reads.Count(k => k == "world:presence:map:1"), Is.EqualTo(1));
+            Assert.That(counting.Reads.Count(k => k.EndsWith(":811")), Is.EqualTo(1));
+            Assert.That(sent.Count(s => s == WorldCommandId.PilotCreateCommand), Is.EqualTo(3));
+            Assert.That(sent.Count(s => s == WorldCommandId.MoveCommand), Is.EqualTo(3));
+        });
+
+        await Task.Delay(WorldSessionStore.RemoteSnapshotTtl + TimeSpan.FromMilliseconds(100));
+        await nodeA.ObserveRemoteMovesAsync(observers[0], CancellationToken.None);
+        Assert.That(counting.Reads.Count(k => k == "world:presence:map:1"), Is.EqualTo(2),
+            "An expired snapshot must re-read shared presence.");
+    }
+
+    private sealed class CountingCache(IDistributedCache inner) : IDistributedCache
+    {
+        public readonly System.Collections.Concurrent.ConcurrentQueue<string> Reads = new();
+        public byte[]? Get(string key) { Reads.Enqueue(key); return inner.Get(key); }
+        public Task<byte[]?> GetAsync(string key, CancellationToken token = default)
+        { Reads.Enqueue(key); return inner.GetAsync(key, token); }
+        public void Refresh(string key) => inner.Refresh(key);
+        public Task RefreshAsync(string key, CancellationToken token = default) => inner.RefreshAsync(key, token);
+        public void Remove(string key) => inner.Remove(key);
+        public Task RemoveAsync(string key, CancellationToken token = default) => inner.RemoveAsync(key, token);
+        public void Set(string key, byte[] value, DistributedCacheEntryOptions options) => inner.Set(key, value, options);
+        public Task SetAsync(string key, byte[] value, DistributedCacheEntryOptions options,
+            CancellationToken token = default) => inner.SetAsync(key, value, options, token);
+    }
+
+    [Test]
+    public async Task NpcObservers_OnSameMap_ShareOneReadAndSeeRemoteDamageAfterSnapshotExpiry()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var shared = services.GetRequiredService<IDistributedCache>();
+        var counting = new CountingCache(shared);
+        var mutex = new NpcMutex();
+        var options = Options.Create(new WorldNpcOptions
+            { Templates = [new("Streuner", "npc_streuner", 2, 100000, 20000, 400, 1, 400, 2, 0)] });
+        var local = new WorldNpcs(counting, mutex, new NpcRewards(), options, TimeProvider.System);
+        var remote = new WorldNpcs(shared, mutex, new NpcRewards(), options, TimeProvider.System);
+        var snapshots = await Task.WhenAll(Enumerable.Range(0, 8)
+            .Select(_ => local.VisibleForObserversAsync(1, CancellationToken.None)));
+        Assert.That(snapshots.All(s => s.Count == 2), Is.True);
+        Assert.That(counting.Reads.Count(k => k.StartsWith("world:npc:1:", StringComparison.Ordinal)), Is.EqualTo(2));
+
+        var target = snapshots[0][0];
+        var pilot = new WorldPilot(128, "mmo", 1, 1, "ship", 0, 0)
+            { AccountId = Guid.NewGuid(), X = target.X, Y = target.Y,
+                Stats = new WorldShipStats(300, 1000, 0, 100, 100, []) };
+        var sessions = new WorldSessionStore(shared, mutex);
+        var hit = await remote.AttackAsync(pilot, target.Id, sessions, CancellationToken.None);
+        Assert.That(hit.Status, Is.EqualTo("hit"));
+        await Task.Delay(WorldNpcs.ObserverSnapshotTtl + TimeSpan.FromMilliseconds(100));
+        var refreshed = await Task.WhenAll(Enumerable.Range(0, 8)
+            .Select(_ => local.VisibleForObserversAsync(1, CancellationToken.None)));
+        Assert.Multiple(() =>
+        {
+            Assert.That(refreshed.All(s => s.Single(n => n.Id == target.Id).Shield == hit.Target!.Shield), Is.True);
+            Assert.That(counting.Reads.Count(k => k.StartsWith("world:npc:1:", StringComparison.Ordinal)), Is.EqualTo(4));
+        });
+    }
+
+    private sealed class RecordingAdmin : IAdminCommandDispatcher
+    {
+        public AdminCommand? Command;
+        public AdminCommandActor? Actor;
+        public Action<string>? OnExecute;
+        public Task<AdminCommandResult> ExecuteAsync(AdminCommand command, AdminCommandActor actor,
+            CancellationToken ct = default)
+        {
+            Command = command; Actor = actor;
+            OnExecute?.Invoke(command.Text ?? string.Empty);
+            return Task.FromResult(new AdminCommandResult("var set", new { applied = true }, 12));
+        }
+    }
+
+    private sealed class LiveVariables : IRuntimeVariableRegistry
+    {
+        public double Speed = 1, Laser = 1, JumpRadius = 500, PeaceRadius = 1000, StreunerCount = 1;
+        public double CreditsReward = 1, UridiumReward = 1, ExperienceReward = 1, HonorReward = 1;
+        public IReadOnlyList<RuntimeVariable> Catalog => [];
+        public Task<double> NumberAsync(string key, CancellationToken ct = default) =>
+            Task.FromResult(key switch
+            {
+                "world.movement.speed_multiplier" => Speed,
+                "world.combat.laser_damage_multiplier" => Laser,
+                "world.portal.jump_radius" => JumpRadius,
+                "world.station.peace_radius" => PeaceRadius,
+                "world.spawn.streuner_count" => StreunerCount,
+                "economy.credits_reward_multiplier" => CreditsReward,
+                "economy.uridium_reward_multiplier" => UridiumReward,
+                "economy.xp_reward_multiplier" => ExperienceReward,
+                "economy.honor_reward_multiplier" => HonorReward,
+                "world.ship.pusat_plus_base_speed" => 300,
+                "world.ship.phoenix_base_speed" => 300,
+                _ => 1
+            });
+        public Task<IReadOnlyList<RuntimeVariable>> ListAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<RuntimeVariable> GetAsync(string key, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<RuntimeVariableChangeEntry> SetAsync(string key, string value, RuntimeVariableActor actor, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<RuntimeVariableChangeEntry> RollbackAsync(long changeId, RuntimeVariableActor actor, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<RuntimeVariableChangeEntry> ResetToDefaultAsync(string key, RuntimeVariableActor actor, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<RuntimeVariableChangeEntry>> HistoryAsync(string? key = null, int limit = 100, long? beforeChangeId = null, CancellationToken ct = default) => throw new NotSupportedException();
+    }
+
+    [Test]
+    public async Task Loopback_ExternalVariableChangeAndRollback_RefreshIdleSocketAttributes()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var variables = new LiveVariables();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), variables: variables);
+        var pilot = new WorldPilot(803, "mmo", 1, 1, "ship", 0, 0)
+        { BaseSpeedAtLoad = 300, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), store,
+            variables: variables);
+        using (client) using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(803, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+            async Task AssertAttributesAsync(int speed, int laser)
+            {
+                var packet = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+                Assert.That(packet.Command, Is.EqualTo(WorldCommandId.ShipAttributesCommand));
+                var stats = WorldPayload.Decode(packet.Payload, r =>
+                {
+                    WorldPayload.ReadInt64(r); r.ReadByte();
+                    var actualSpeed = WorldPayload.ReadInt32(r);
+                    WorldPayload.ReadInt64(r); WorldPayload.ReadInt64(r); WorldPayload.ReadInt64(r);
+                    return (actualSpeed, WorldPayload.ReadInt32(r));
+                });
+                Assert.That(stats, Is.EqualTo((speed, laser)));
+            }
+
+            // One variable per step, like one admin `var set`/rollback each: changing two fields
+            // back-to-back let the idle poll observe the half-applied pair and emit (600, 30).
+            variables.Speed = 2;
+            await AssertAttributesAsync(600, 30);
+            variables.Laser = 2;
+            await AssertAttributesAsync(600, 60);
+            variables.Speed = 1;
+            await AssertAttributesAsync(300, 60);
+            variables.Laser = 1;
+            await AssertAttributesAsync(300, 30);
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Test]
+    public async Task Loopback_MovementAndRuntimeRadius_RefreshSafeZoneOnOpenSocket()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var variables = new LiveVariables();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), variables: variables);
+        var pilot = new WorldPilot(853, "mmo", 1, 1, "ship", 0, 0)
+        { X = 2800, Y = 1300, BaseSpeedAtLoad = 300,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), store,
+            variables: variables);
+        using (client) using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(853, "opaque", "local-1"));
+            var entry = new List<WorldPacket>();
+            for (var i = 0; i < 7; i++) entry.Add((await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value);
+            Assert.That(entry.Single(p => p.Command == WorldCommandId.SafeZoneCommand).Payload.ToArray(), Is.EqualTo(new byte[] { 1 }));
+            await Task.Delay(1200);
+            Assert.That(client.Available, Is.Zero);
+
+            variables.PeaceRadius = 500;
+            var station = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(station.Command, Is.EqualTo(WorldCommandId.SpaceStationCommand));
+            Assert.That(WorldPayload.Decode(station.Payload, r =>
+                (WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r))),
+                Is.EqualTo((100, 2000, 1300, 500)));
+            var outside = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(outside.Command, Is.EqualTo(WorldCommandId.SafeZoneCommand));
+            Assert.That(outside.Payload.ToArray(), Is.EqualTo(new byte[] { 0 }));
+
+            variables.PeaceRadius = 1000;
+            Assert.That((await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value.Command,
+                Is.EqualTo(WorldCommandId.SpaceStationCommand));
+            Assert.That((await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value.Payload.ToArray(),
+                Is.EqualTo(new byte[] { 1 }));
+
+            await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt32(w, 2800); WorldPayload.WriteInt32(w, 1300);
+                WorldPayload.WriteInt32(w, 3400); WorldPayload.WriteInt32(w, 1300);
+            }));
+            Assert.That((await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value.Command,
+                Is.EqualTo(WorldCommandId.MoveCommand));
+            var left = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(left.Command, Is.EqualTo(WorldCommandId.SafeZoneCommand));
+            Assert.That(left.Payload.ToArray(), Is.EqualTo(new byte[] { 0 }));
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Test]
+    public async Task Loopback_ExternalJumpRadiusChange_GatesConnectedSocketPortalJump()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var variables = new LiveVariables();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), variables: variables);
+        var pilot = new WorldPilot(804, "mmo", 1, 1, "ship", 0, 0)
+        { X = 18800, Y = 1300, BaseSpeedAtLoad = 300, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), store,
+            variables: variables);
+        using (client) using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(804, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            var jump = WorldPayload.Encode(w => WorldPayload.WriteInt32(w, 101));
+
+            // Portal 101 is 700 units away: outside the default 500 radius.
+            await output.WriteAsync(WorldCommandId.JumpRequest, jump);
+            var rejected = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(rejected.Command, Is.EqualTo(WorldCommandId.LoginErrorCommand));
+
+            // The same open socket reads the next registry value without reconnecting.
+            variables.JumpRadius = 800;
+            await output.WriteAsync(WorldCommandId.JumpRequest, jump);
+            var changed = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(changed.Command, Is.EqualTo(WorldCommandId.MapChangeCommand));
+            Assert.That(WorldPayload.Decode(changed.Payload, r =>
+                (WorldPayload.ReadInt32(r), WorldPayload.ReadString(r), WorldPayload.ReadString(r))),
+                Is.EqualTo((2, string.Empty, string.Empty)));
+            Assert.That((await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value.Command,
+                Is.EqualTo(WorldCommandId.MapInitializationCommand));
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Test]
+    public async Task Loopback_ExternalSpeedChangeAndRollback_RetimesMovingShip()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var variables = new LiveVariables();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var store = new WorldSessionStore(cache, variables: variables);
+        var pilot = new WorldPilot(804, "mmo", 1, 1, "ship", 0, 0)
+        { BaseSpeedAtLoad = 300, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), store,
+            variables: variables);
+        using (client) using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(804, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt32(w, 2000); WorldPayload.WriteInt32(w, 1300);
+                WorldPayload.WriteInt32(w, 5000); WorldPayload.WriteInt32(w, 1300);
+            }));
+            Assert.That((await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value.Command,
+                Is.EqualTo(WorldCommandId.MoveCommand));
+
+            async Task AssertRetimedAsync(int speed, int maximumDuration)
+            {
+                var move = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+                Assert.That(move.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+                var destination = WorldPayload.Decode(move.Payload, r =>
+                {
+                    WorldPayload.ReadInt64(r);
+                    return (WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r));
+                });
+                Assert.That(destination.Item1, Is.EqualTo(5000));
+                Assert.That(destination.Item2, Is.EqualTo(1300));
+                Assert.That(destination.Item3, Is.InRange(1, maximumDuration));
+                var attributes = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+                Assert.That(attributes.Command, Is.EqualTo(WorldCommandId.ShipAttributesCommand));
+                var actualSpeed = WorldPayload.Decode(attributes.Payload, r =>
+                {
+                    WorldPayload.ReadInt64(r); r.ReadByte();
+                    var value = WorldPayload.ReadInt32(r);
+                    WorldPayload.ReadInt64(r); WorldPayload.ReadInt64(r); WorldPayload.ReadInt64(r);
+                    WorldPayload.ReadInt32(r);
+                    return value;
+                });
+                Assert.That(actualSpeed, Is.EqualTo(speed));
+                var saved = await cache.GetStringAsync("world:position:804");
+                Assert.That(saved, Does.Contain($"\"Speed\":{speed}"));
+            }
+
+            variables.Speed = 2;
+            await AssertRetimedAsync(600, 5000);
+            variables.Speed = 1;
+            await AssertRetimedAsync(300, 10000);
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [TestCase("world.movement.speed_multiplier", 600, 30)]
+    [TestCase("world.combat.laser_damage_multiplier", 300, 60)]
+    public async Task Loopback_AdminVariableChange_UpdatesShipAttributesImmediately(string key,
+        int expectedSpeed, int expectedLaser)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var variables = new LiveVariables();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), variables: variables);
+        var dispatcher = new RecordingAdmin { OnExecute = _ =>
+        { if (key.Contains("speed")) variables.Speed = 2; else variables.Laser = 2; } };
+        var pilot = new WorldPilot(802, "mmo", 1, 1, "ship", 0, 0)
+        { IsAdmin = true, UserName = "Pilot", BaseSpeedAtLoad = 300,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), store,
+            adminCommands: dispatcher, variables: variables);
+        using (client) using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(802, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++) await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.AdminCommandRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, $"/var set {key} 2")));
+            Assert.That((await input.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.AdminCommandResponse));
+            var attributes = (await input.ReadAsync())!.Value;
+            Assert.That(attributes.Command, Is.EqualTo(WorldCommandId.ShipAttributesCommand));
+            var stats = WorldPayload.Decode(attributes.Payload, r =>
+            {
+                WorldPayload.ReadInt64(r); r.ReadByte();
+                var speed = WorldPayload.ReadInt32(r);
+                WorldPayload.ReadInt64(r); WorldPayload.ReadInt64(r); WorldPayload.ReadInt64(r);
+                return (speed, laser: WorldPayload.ReadInt32(r));
+            });
+            Assert.That(stats, Is.EqualTo((expectedSpeed, expectedLaser)));
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [TestCase(false)] [TestCase(true)]
+    public async Task Loopback_AdminCommand_EnforcesPilotRoleAndResponds(bool isAdmin)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var dispatcher = new RecordingAdmin();
+        var pilot = new WorldPilot(801, "mmo", 1, 1, "ship", 0, 0)
+        { IsAdmin = isAdmin, UserName = "Pilot", Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), store,
+            adminCommands: dispatcher);
+        using (client) using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(801, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++) await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.AdminCommandRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "/var set world.movement.speed_multiplier 2")));
+            var reply = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            if (!isAdmin)
+            {
+                Assert.That(reply.Command, Is.EqualTo(WorldCommandId.LoginErrorCommand));
+                Assert.That(reply.Payload.ToArray(), Is.EqualTo(new[] { (byte)WorldLoginError.Unauthorized }));
+                Assert.That(dispatcher.Command, Is.Null);
+            }
+            else
+            {
+                Assert.That(reply.Command, Is.EqualTo(WorldCommandId.AdminCommandResponse));
+                Assert.That(reply.Payload.Span[0], Is.EqualTo(1));
+                var response = WorldPayload.Decode(reply.Payload[1..], WorldPayload.ReadAdminResult);
+                using var json = JsonDocument.Parse(response);
+                Assert.That(json.RootElement.GetProperty("AuditId").GetInt64(), Is.EqualTo(12));
+                Assert.That(dispatcher.Command?.Text, Is.EqualTo("var set world.movement.speed_multiplier 2"));
+                Assert.That(dispatcher.Actor?.Surface, Is.EqualTo("InGameAdmin"));
+                Assert.That((await input.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.ShipAttributesCommand));
+                Assert.That((await input.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.MapInitializationCommand));
+            }
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [TestCase(new byte[] { 0, 1, 0xff })]
+    [TestCase(new byte[] { 0, 2, (byte)'a' })]
+    [TestCase(new byte[] { 0, 1, (byte)'a', 0 })]
+    public async Task Loopback_MalformedAuthenticatedAdminPayload_ReturnsProtocolErrorAndCloses(byte[] payload)
+    {
+        var dispatcher = new RecordingAdmin();
+        var pilot = new WorldPilot(801, "mmo", 1, 1, "ship", 0, 0)
+        { IsAdmin = true, UserName = "Pilot", Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)),
+            adminCommands: dispatcher);
+        using (client) using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            Assert.That((await input.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.VersionCommand));
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(801, "opaque", "local-1"));
+            Assert.That((await input.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.LoginResponse));
+            for (var i = 0; i < 6; i++) await input.ReadAsync();
+
+            await output.WriteAsync(WorldCommandId.AdminCommandRequest, payload);
+            var response = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.Command, Is.EqualTo(WorldCommandId.LoginErrorCommand));
+                Assert.That(response.Payload.ToArray(), Is.EqualTo(new[] { (byte)WorldLoginError.Malformed }));
+                Assert.That(dispatcher.Command, Is.Null);
+            });
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.That(worker.IsCompletedSuccessfully, Is.True);
+        }
+    }
+
+    [Test]
+    public async Task Loopback_UnauthorizedAdminPayload_RejectsBeforeDecodingAndKeepsSessionOpen()
+    {
+        var dispatcher = new RecordingAdmin();
+        var pilot = new WorldPilot(802, "mmo", 1, 1, "ship", 0, 0)
+        { IsAdmin = false, UserName = "Pilot", Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)),
+            adminCommands: dispatcher);
+        using (client) using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(802, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++) await input.ReadAsync();
+
+            foreach (var payload in new[] { new byte[] { 0, 1, 0xff },
+                         WorldPayload.Encode(w => WorldPayload.WriteString(w, "/var list")) })
+            {
+                await output.WriteAsync(WorldCommandId.AdminCommandRequest, payload);
+                var response = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+                Assert.Multiple(() =>
+                {
+                    Assert.That(response.Command, Is.EqualTo(WorldCommandId.LoginErrorCommand));
+                    Assert.That(response.Payload.ToArray(), Is.EqualTo(new[] { (byte)WorldLoginError.Unauthorized }));
+                });
+            }
+            Assert.That(dispatcher.Command, Is.Null);
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+    [Test]
+    public async Task Loopback_AdminSpawnAndAnnouncement_ArriveAtTcpClient()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new NpcMutex();
+        var events = new WorldAdminEvents(cache, mutex);
+        var spawned = (WorldNpc)await events.SpawnAsync("streuner", 1, 3200, 2600, default);
+        await events.AnnounceAsync("Maintenance soon",
+            new AdminCommandActor("ServerManagement", "operator", "node-a"), default);
+        var npcs = new WorldNpcs(cache, mutex, new NpcRewards(), Options.Create(new WorldNpcOptions
+            { Templates = [] }), TimeProvider.System, adminEvents: events);
+        var pilot = new WorldPilot(744, "mmo", 1, 1, "ship", 0, 0)
+            { Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)),
+            new WorldSessionStore(cache), npcs: npcs, adminEvents: events);
+        using (client) using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(744, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            var spawn = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(spawn.Command, Is.EqualTo(WorldCommandId.ShipCreateCommand));
+            Assert.That(BinaryPrimitives.ReadInt32BigEndian(spawn.Payload.Span[..4]), Is.EqualTo(spawned.Id));
+            var announcement = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(announcement.Command, Is.EqualTo(WorldCommandId.AnnouncementCommand));
+            Assert.That(WorldPayload.Decode(announcement.Payload, WorldPayload.ReadString),
+                Is.EqualTo("Maintenance soon"));
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+    private sealed class NpcMutex : IServerMeshMutex
+    {
+        private readonly SemaphoreSlim gate = new(1, 1);
+        public async Task<IAsyncDisposable> AcquireAsync(CancellationToken ct)
+        { await gate.WaitAsync(ct); return new Handle(gate); }
+        private sealed class Handle(SemaphoreSlim gate) : IAsyncDisposable
+        { public ValueTask DisposeAsync() { gate.Release(); return ValueTask.CompletedTask; } }
+    }
+    private sealed class NpcRewards : IWorldNpcRewards
+    {
+        public int Calls;
+        public WorldNpc? LastCredited;
+        public Task CreditAsync(Guid accountId, WorldNpc npc, string key, CancellationToken ct)
+        { Calls++; LastCredited = npc; return Task.CompletedTask; }
+    }
+
+    [Test]
+    public async Task NpcKillRetry_KeepsCreditedAmountsAfterMultiplierChangesOnAnotherNode()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new NpcMutex();
+        var rewards = new NpcRewards();
+        var variables = new LiveVariables { CreditsReward = 2, UridiumReward = 3,
+            ExperienceReward = 1.5, HonorReward = 4 };
+        var options = Options.Create(new WorldNpcOptions
+            { Templates = [new("Streuner", "npc_streuner", 1, 50, 0, 400, 1, 400, 2, 0)] });
+        var nodeA = new WorldNpcs(cache, mutex, rewards, options, TimeProvider.System, variables);
+        var nodeB = new WorldNpcs(cache, mutex, rewards, options, TimeProvider.System, variables);
+        var npc = (await nodeA.VisibleAsync(1, default)).Single();
+        var pilot = new WorldPilot(912, "mmo", 1, 1, "ship", 0, 0)
+        { AccountId = Guid.NewGuid(), X = npc.X, Y = npc.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, []) };
+        var sessions = new WorldSessionStore(cache, mutex);
+        await sessions.EnterAsync(pilot, default);
+        var hit = await nodeA.AttackAsync(pilot, npc.Id, sessions, default);
+        Assert.That(hit.Destroyed, Is.True);
+        Assert.That(hit.Reward, Is.EqualTo(new WorldNpcReward(800, 3, 600, 8)));
+
+        variables.CreditsReward = 5;
+        variables.UridiumReward = 5;
+        variables.ExperienceReward = 5;
+        variables.HonorReward = 5;
+        variables.StreunerCount = 0;
+        Assert.That(await sessions.TeleportAsync(pilot.UserId, 1, 0, 0, false, default), Is.Not.Null);
+        Assert.That((long)npc.X * npc.X + (long)npc.Y * npc.Y, Is.GreaterThan(1_000_000));
+        var retry = await nodeB.AttackAsync(pilot, npc.Id, sessions, default);
+        Assert.That(retry.Status, Is.EqualTo("destroyed"));
+        Assert.That(rewards.Calls, Is.EqualTo(2));
+        Assert.That((rewards.LastCredited!.Credits, rewards.LastCredited.Uridium,
+            rewards.LastCredited.Experience, rewards.LastCredited.Honor),
+            Is.EqualTo((800, 3, 600, 8)));
+    }
+
+    [Test]
+    public async Task LeaseEpoch_FencesTcpStateWritesInsideCoordinatorMutex()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new NpcMutex();
+        var registry = new ServerMeshCoordinator(cache, mutex, TimeProvider.System,
+            Options.Create(new ThDarkOrbitEmulator.Cluster.Infrastructure.ClusterOptions()));
+        var now = DateTimeOffset.UtcNow;
+        static ServerMeshNode Node(string id, DateTimeOffset at) => new(id, id, $"http://{id}",
+            "127.0.0.1", 61001, ServerMeshNodeStatus.Active, at, at, 0, [], 0, 0);
+        var initial = await registry.HeartbeatAsync(Node("a", now));
+        var original = initial.Leases.Single(l => l.MapId == 1);
+        var pilot = new WorldPilot(903, "mmo", 1, 1, "ship", 0, 0)
+        { X = 19500, Y = 1300, Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
+        var stale = new WorldSessionStore(cache, mutex);
+        await stale.EnterAsync(pilot, default);
+        await registry.HeartbeatAsync(Node("b", now));
+        var reassigned = await registry.SetDrainingAsync("a");
+        var replacement = reassigned.Leases.Single(l => l.MapId == 1);
+        Assert.That(replacement.NodeId, Is.EqualTo("b"));
+        Assert.That(replacement.Epoch, Is.GreaterThan(original.Epoch));
+        var oldFence = new WorldLeaseFence(registry, "a", original.Epoch);
+        Assert.ThrowsAsync<WorldLeaseLostException>(async () =>
+            await stale.MoveAsync(pilot, 18000, 1300, null, default, fence: oldFence));
+        Assert.ThrowsAsync<WorldLeaseLostException>(async () =>
+            await stale.SwitchAsync(pilot, 2, default, fence: oldFence));
+        Assert.ThrowsAsync<WorldLeaseLostException>(async () =>
+            await stale.JumpAsync(pilot, 101, registry, default, oldFence));
+        var reopened = new WorldSessionStore(cache, mutex);
+        var restored = await reopened.RestoreAsync(pilot, default);
+        Assert.That((restored.MapId, restored.X, restored.Y), Is.EqualTo((1, 19500, 1300)));
+        Assert.That(reopened.Configuration(pilot.UserId), Is.EqualTo(1));
+        var newFence = new WorldLeaseFence(registry, "b", replacement.Epoch);
+        var moved = await reopened.MoveAsync(restored, 18000, 1300, null, default, fence: newFence);
+        Assert.That(moved.TimeToTargetMs, Is.GreaterThan(0));
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task TcpLeaseChange_RejectsWrongNodeAndFencesConnectedMovement(bool sendMovement)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new NpcMutex();
+        var registry = new ServerMeshCoordinator(cache, mutex, TimeProvider.System,
+            Options.Create(new ThDarkOrbitEmulator.Cluster.Infrastructure.ClusterOptions()));
+        var now = DateTimeOffset.UtcNow;
+        static ServerMeshNode Node(string id, DateTimeOffset at) => new(id, id, $"http://{id}",
+            "127.0.0.1", id == "a" ? 61001 : 61002, ServerMeshNodeStatus.Active,
+            at, at, 0, [], 0, 0);
+        await registry.HeartbeatAsync(Node("a", now));
+        Assert.That((await registry.GetSnapshotAsync()).Leases.Single(l => l.MapId == 1).NodeId,
+            Is.EqualTo("a"));
+        var pilot = new WorldPilot(901, "mmo", 1, 1, "ship", 0, 0)
+            { Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
+        var store = new WorldSessionStore(cache, mutex);
+
+        var wrong = await ConnectAsync(new FakeResolver((pilot, default)), store, registry, "b");
+        using (wrong.Client) using (wrong.Server)
+        {
+            var input = new WorldPacketReader(wrong.Client.GetStream());
+            var output = new WorldPacketWriter(wrong.Client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(901, "opaque", "local-1"));
+            var route = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(route.Command, Is.EqualTo(WorldCommandId.MapChangeCommand));
+            Assert.That(WorldPayload.Decode(route.Payload, r =>
+                (WorldPayload.ReadInt32(r), WorldPayload.ReadString(r), WorldPayload.ReadString(r))),
+                Is.EqualTo((1, "a", "127.0.0.1:61001")));
+            await wrong.Worker.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.That(store.Find(901), Is.Null);
+        }
+
+        var right = await ConnectAsync(new FakeResolver((pilot, default)), store, registry, "a");
+        using (right.Client) using (right.Server)
+        {
+            var input = new WorldPacketReader(right.Client.GetStream());
+            var output = new WorldPacketWriter(right.Client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(901, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++)
+                await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            await registry.HeartbeatAsync(Node("b", now));
+            await registry.SetDrainingAsync("a");
+            if (sendMovement)
+                await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
+                {
+                    WorldPayload.WriteInt32(w, 2000); WorldPayload.WriteInt32(w, 3000);
+                    WorldPayload.WriteInt32(w, 4000); WorldPayload.WriteInt32(w, 1300);
+                }));
+            var route = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(route.Command, Is.EqualTo(WorldCommandId.MapChangeCommand));
+            Assert.That(WorldPayload.Decode(route.Payload, r =>
+                (WorldPayload.ReadInt32(r), WorldPayload.ReadString(r), WorldPayload.ReadString(r))),
+                Is.EqualTo((1, "b", "127.0.0.1:61002")));
+            await right.Worker.WaitAsync(TimeSpan.FromSeconds(5));
+            var restored = await new WorldSessionStore(cache, mutex).RestoreAsync(pilot, default);
+            Assert.That((restored.X, restored.Y), Is.EqualTo((2000, 1300)));
+        }
+
+
+        var destination = await ConnectAsync(new FakeResolver((pilot, default)),
+            new WorldSessionStore(cache, mutex), registry, "b");
+        using (destination.Client) using (destination.Server)
+        {
+            var input = new WorldPacketReader(destination.Client.GetStream());
+            var output = new WorldPacketWriter(destination.Client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(901, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++)
+                await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt32(w, 2000); WorldPayload.WriteInt32(w, 3000);
+                WorldPayload.WriteInt32(w, 4000); WorldPayload.WriteInt32(w, 1300);
+            }));
+            Assert.That((await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value.Command,
+                Is.EqualTo(WorldCommandId.MoveCommand));
+            destination.Client.Client.Shutdown(SocketShutdown.Send);
+            await destination.Worker.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task TcpRemoteTeleport_RoutesOldSocketBeforeMovement(bool sendMovement)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new NpcMutex();
+        var registry = new ServerMeshCoordinator(cache, mutex, TimeProvider.System,
+            Options.Create(new ThDarkOrbitEmulator.Cluster.Infrastructure.ClusterOptions()));
+        var now = DateTimeOffset.UtcNow;
+        await registry.HeartbeatAsync(new ServerMeshNode("a", "api-game", "http://a",
+            "127.0.0.1", 61001, ServerMeshNodeStatus.Active,
+            now, now, 0, [], 0, 0));
+        var pilot = new WorldPilot(902, "mmo", 1, 1, "ship", 0, 0)
+        { X = 2000, Y = 1300, Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
+        var store = new WorldSessionStore(cache, mutex);
+        var socket = await ConnectAsync(new FakeResolver((pilot, default)), store, registry, "a");
+        using (socket.Client) using (socket.Server)
+        {
+            var input = new WorldPacketReader(socket.Client.GetStream());
+            var output = new WorldPacketWriter(socket.Client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(902, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+            var moved = await new WorldSessionStore(cache, mutex)
+                .TeleportAsync(902, 5, 3400, 2100, true, default);
+            Assert.That(moved?.MapId, Is.EqualTo(5));
+            var mapOneLease = (await registry.GetSnapshotAsync()).Leases.Single(lease => lease.MapId == 1);
+            Assert.ThrowsAsync<WorldLeaseLostException>(async () =>
+                await store.MoveAsync(pilot, 4000, 3000, null, default,
+                    fence: new WorldLeaseFence(registry, "a", mapOneLease.Epoch)));
+            if (sendMovement)
+                await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
+                {
+                    WorldPayload.WriteInt32(w, 2000); WorldPayload.WriteInt32(w, 3000);
+                    WorldPayload.WriteInt32(w, 4000); WorldPayload.WriteInt32(w, 1300);
+                }));
+            var route = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(route.Command, Is.EqualTo(WorldCommandId.MapChangeCommand));
+            Assert.That(WorldPayload.Decode(route.Payload, r =>
+                (WorldPayload.ReadInt32(r), WorldPayload.ReadString(r), WorldPayload.ReadString(r))),
+                Is.EqualTo((5, "a", "127.0.0.1:61001")));
+            await socket.Worker.WaitAsync(TimeSpan.FromSeconds(5));
+            var restored = await new WorldSessionStore(cache, mutex).RestoreAsync(pilot, default);
+            Assert.That((restored.MapId, restored.X, restored.Y), Is.EqualTo((5, 3400, 2100)));
+        }
+    }
+
+    [Test]
+    public async Task Loopback_NpcSpawnLockLaserAndRewardPackets()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new NpcMutex();
+        var rewards = new NpcRewards();
+        var variables = new LiveVariables { CreditsReward = 2, UridiumReward = 3,
+            ExperienceReward = 1.5, HonorReward = 4 };
+        var npcs = new WorldNpcs(cache, mutex, rewards, Options.Create(new WorldNpcOptions
+        { Templates = [new("Streuner", "npc_streuner", 1, 150, 20, 400, 1, 400, 2, 0)] }), TimeProvider.System, variables);
+        var npc = (await npcs.VisibleAsync(1, default)).Single();
+        var pilot = new WorldPilot(122, "mmo", 1, 1, "ship", 0, 0)
+        { AccountId = Guid.NewGuid(), X = npc.X, Y = npc.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, []) };
+        var sessions = new WorldSessionStore(cache, mutex);
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), sessions,
+            npcs: npcs);
+        using (client) using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(122, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++) await input.ReadAsync();
+            var spawn = (await input.ReadAsync())!.Value;
+            Assert.That(spawn.Command, Is.EqualTo(WorldCommandId.ShipCreateCommand));
+            Assert.That(BinaryPrimitives.ReadInt32BigEndian(spawn.Payload.Span[..4]), Is.EqualTo(npc.Id));
+            await output.WriteAsync(WorldCommandId.SelectShipRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteInt32(w, npc.Id)));
+            var locked = (await input.ReadAsync())!.Value;
+            Assert.That(locked.Command, Is.EqualTo(WorldCommandId.TargetLockCommand));
+            Assert.That(WorldPayload.Decode(locked.Payload, r =>
+                (WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r),
+                    WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r))),
+                Is.EqualTo((npc.Id, 150, 20, 150, 20)));
+            await output.WriteAsync(WorldCommandId.LaserFireRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteInt32(w, npc.Id)));
+            Assert.That((await input.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.LaserHitCommand));
+            var firstResult = (await input.ReadAsync())!.Value;
+            Assert.That(firstResult.Command, Is.EqualTo(WorldCommandId.LaserFireResultCommand));
+            Assert.That(WorldPayload.Decode(firstResult.Payload, r =>
+                (WorldPayload.ReadInt32(r), WorldPayload.ReadString(r))), Is.EqualTo((npc.Id, "hit")));
+            await output.WriteAsync(WorldCommandId.LaserFireRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteInt32(w, npc.Id)));
+            Assert.That((await input.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.LaserHitCommand));
+            Assert.That((await input.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.ShipDestroyCommand));
+            var rewardPacket = (await input.ReadAsync())!.Value;
+            Assert.That(rewardPacket.Command, Is.EqualTo(WorldCommandId.NpcRewardCommand));
+            Assert.That(WorldPayload.Decode(rewardPacket.Payload, r =>
+                (WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r),
+                    WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r))),
+                Is.EqualTo((npc.Id, 800, 3, 600, 8)));
+            var finalResult = (await input.ReadAsync())!.Value;
+            Assert.That(finalResult.Command, Is.EqualTo(WorldCommandId.LaserFireResultCommand));
+            Assert.That(WorldPayload.Decode(finalResult.Payload, r =>
+                (WorldPayload.ReadInt32(r), WorldPayload.ReadString(r))), Is.EqualTo((npc.Id, "hit")));
+            Assert.That(rewards.Calls, Is.EqualTo(1));
+            Assert.That((rewards.LastCredited!.Credits, rewards.LastCredited.Uridium,
+                rewards.LastCredited.Experience, rewards.LastCredited.Honor), Is.EqualTo((800, 3, 600, 8)));
+            Assert.That(await npcs.CanRetryRewardAsync(pilot with { AccountId = Guid.NewGuid() },
+                npc.Id, default), Is.False);
+            await output.WriteAsync(WorldCommandId.LaserFireRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteInt32(w, npc.Id)));
+            var retryResult = (await input.ReadAsync())!.Value;
+            Assert.That(retryResult.Command, Is.EqualTo(WorldCommandId.LaserFireResultCommand));
+            Assert.That(WorldPayload.Decode(retryResult.Payload, r =>
+                (WorldPayload.ReadInt32(r), WorldPayload.ReadString(r))), Is.EqualTo((npc.Id, "destroyed")));
+            Assert.That(rewards.Calls, Is.EqualTo(2));
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker;
+        }
+    }
+
+    [Test]
+    public async Task Loopback_RejectedLaserFire_SendsResultStatusAndKeepsSocketOpen()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new NpcMutex();
+        var rewards = new NpcRewards();
+        var npcs = new WorldNpcs(cache, mutex, rewards, Options.Create(new WorldNpcOptions
+        { Templates = [new("Streuner", "npc_streuner", 1, 50, 20, 400, 1, 400, 2, 0)] }), TimeProvider.System);
+        var npc = (await npcs.VisibleAsync(1, default)).Single();
+        var offset = npc.X > 10000 ? -2000 : 2000;
+        var pilot = new WorldPilot(123, "mmo", 1, 1, "ship", 0, 0)
+        { AccountId = Guid.NewGuid(), X = npc.X + offset, Y = npc.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, []) };
+        var sessions = new WorldSessionStore(cache, mutex);
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), sessions,
+            npcs: npcs);
+        using (client) using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(123, "opaque", "local-1"));
+            async Task<WorldPacket> NextAsync(WorldCommandId command)
+            {
+                while (true)
+                {
+                    var packet = (await input.ReadAsync())!.Value;
+                    Assert.That(packet.Command, Is.Not.EqualTo(WorldCommandId.LoginErrorCommand));
+                    if (packet.Command == command) return packet;
+                }
+            }
+            (int, string) Result(WorldPacket packet) => WorldPayload.Decode(packet.Payload,
+                r => (WorldPayload.ReadInt32(r), WorldPayload.ReadString(r)));
+            await NextAsync(WorldCommandId.ShipCreateCommand);
+            await output.WriteAsync(WorldCommandId.LaserFireRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteInt32(w, npc.Id)));
+            Assert.That(Result(await NextAsync(WorldCommandId.LaserFireResultCommand)),
+                Is.EqualTo((npc.Id, "unselected")));
+            await output.WriteAsync(WorldCommandId.SelectShipRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteInt32(w, npc.Id)));
+            await NextAsync(WorldCommandId.TargetLockCommand);
+            for (var shot = 0; shot < 2; shot++)
+            {
+                await output.WriteAsync(WorldCommandId.LaserFireRequest,
+                    WorldPayload.Encode(w => WorldPayload.WriteInt32(w, npc.Id)));
+                Assert.That(Result(await NextAsync(WorldCommandId.LaserFireResultCommand)),
+                    Is.EqualTo((npc.Id, "distant")));
+            }
+            Assert.That(rewards.Calls, Is.Zero);
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker;
+        }
+    }
+
+    [Test]
+    public async Task Loopback_IdleSocket_SyncsNpcRosterFromVariablesAndRemoteKills()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new NpcMutex();
+        var rewards = new NpcRewards();
+        var variables = new LiveVariables();
+        var options = Options.Create(new WorldNpcOptions
+            { Templates = [new("Streuner", "npc_streuner", 1, 50, 20, 400, 1, 400, 2, 0)] });
+        var npcs = new WorldNpcs(cache, mutex, rewards, options, TimeProvider.System, variables);
+        var pilot = new WorldPilot(124, "mmo", 1, 1, "ship", 0, 0)
+            { AccountId = Guid.NewGuid(), Stats = new WorldShipStats(300, 1000, 0, 100, 100, []) };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)),
+            new WorldSessionStore(cache, mutex, variables: variables), npcs: npcs, variables: variables);
+        using (client) using (server)
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(124, "opaque", "local-1"));
+            async Task<int> NextIdAsync(WorldCommandId command)
+            {
+                while (true)
+                {
+                    var packet = (await input.ReadAsync(timeout.Token))!.Value;
+                    Assert.That(packet.Command, Is.Not.EqualTo(WorldCommandId.LoginErrorCommand));
+                    // ShipCreate and ShipDestroy both lead with the int32 NPC id.
+                    if (packet.Command == command)
+                        return System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(packet.Payload.Span);
+                }
+            }
+            var first = await NextIdAsync(WorldCommandId.ShipCreateCommand);
+
+            // Server Management / CMS raise the shared spawn count: the idle socket gains the NPC.
+            variables.StreunerCount = 2;
+            var second = await NextIdAsync(WorldCommandId.ShipCreateCommand);
+            Assert.That(second, Is.Not.EqualTo(first));
+
+            // A pilot on another node (own NPC/session stores, same shared cache) kills it.
+            var remoteNpcs = new WorldNpcs(cache, mutex, rewards, options, TimeProvider.System, variables);
+            var remoteSessions = new WorldSessionStore(cache, mutex, variables: variables);
+            var target = (await remoteNpcs.VisibleAsync(1, default)).Single(n => n.Id == second);
+            var killer = pilot with { UserId = 125, AccountId = Guid.NewGuid(), X = target.X, Y = target.Y };
+            Assert.That(await remoteNpcs.SelectAsync(killer, second, default, null, remoteSessions), Is.Not.Null);
+            WorldNpcAttack hit;
+            do hit = await remoteNpcs.AttackAsync(killer, second, remoteSessions, default);
+            while (hit.Status == "hit" && !hit.Destroyed);
+            Assert.That(hit.Destroyed, Is.True, hit.Status);
+            Assert.That(await NextIdAsync(WorldCommandId.ShipDestroyCommand), Is.EqualTo(second));
+
+            // Rollback to zero removes the remaining NPC from the open socket.
+            variables.StreunerCount = 0;
+            Assert.That(await NextIdAsync(WorldCommandId.ShipDestroyCommand), Is.EqualTo(first));
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker;
+        }
+    }
+
+    [Test]
+    public async Task Loopback_IdleSocket_SyncsNpcVitalsFromRemoteDamage()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new NpcMutex();
+        var rewards = new NpcRewards();
+        var variables = new LiveVariables();
+        var options = Options.Create(new WorldNpcOptions
+            { Templates = [new("Streuner", "npc_streuner", 1, 100000, 20000, 400, 1, 400, 2, 0)] });
+        var npcs = new WorldNpcs(cache, mutex, rewards, options, TimeProvider.System, variables);
+        var pilot = new WorldPilot(126, "mmo", 1, 1, "ship", 0, 0)
+            { AccountId = Guid.NewGuid(), Stats = new WorldShipStats(300, 1000, 0, 100, 100, []) };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)),
+            new WorldSessionStore(cache, mutex, variables: variables), npcs: npcs, variables: variables);
+        using (client) using (server)
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(126, "opaque", "local-1"));
+            async Task<ReadOnlyMemory<byte>> NextAsync(WorldCommandId command)
+            {
+                while (true)
+                {
+                    var packet = (await input.ReadAsync(timeout.Token))!.Value;
+                    Assert.That(packet.Command, Is.Not.EqualTo(WorldCommandId.LoginErrorCommand));
+                    if (packet.Command == command) return packet.Payload;
+                }
+            }
+            static int Int(ReadOnlyMemory<byte> payload, int index) =>
+                System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(payload.Span[(index * 4)..]);
+            var id = Int(await NextAsync(WorldCommandId.ShipCreateCommand), 0);
+
+            // A pilot on another node damages the NPC without killing it; the idle socket's
+            // broadcast never fires, so only the idle vitals sync can report the new HP/shield.
+            var remoteNpcs = new WorldNpcs(cache, mutex, rewards, options, TimeProvider.System, variables);
+            var remoteSessions = new WorldSessionStore(cache, mutex, variables: variables);
+            var target = (await remoteNpcs.VisibleAsync(1, default)).Single(n => n.Id == id);
+            var shooter = pilot with { UserId = 127, AccountId = Guid.NewGuid(), X = target.X, Y = target.Y };
+            Assert.That(await remoteNpcs.SelectAsync(shooter, id, default, null, remoteSessions), Is.Not.Null);
+            var hit = await remoteNpcs.AttackAsync(shooter, id, remoteSessions, default);
+            Assert.That(hit.Status, Is.EqualTo("hit"));
+            Assert.That(hit.Destroyed, Is.False);
+            var health = await NextAsync(WorldCommandId.NpcHealthCommand);
+            Assert.That(Int(health, 0), Is.EqualTo(id));
+            Assert.That(Int(health, 1), Is.EqualTo(hit.Target!.Hp));
+            Assert.That(Int(health, 2), Is.EqualTo(target.MaxHp));
+            Assert.That(Int(health, 3), Is.EqualTo(hit.Target.Shield));
+            Assert.That(Int(health, 4), Is.EqualTo(target.MaxShield));
+            Assert.That((Int(health, 1), Int(health, 3)), Is.Not.EqualTo((target.Hp, target.Shield)));
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker;
+        }
+    }
+    [Test]
+    public async Task Loopback_CrossNodeJump_ClosesSourceAndPreservesDestinationPresence()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var now = DateTimeOffset.UtcNow;
+        var owner = new ServerMeshNode("node-b", "api-game", "http://b", "127.0.0.1", 61002,
+            ServerMeshNodeStatus.Active, now, now, 0, [2], 0, 0);
+        var source = owner with { NodeId = "node-a", WorldTcpPort = 61001, LeasedMapIds = [1] };
+        var registry = new JumpRegistry(new ServerMeshSnapshot([source, owner],
+            [new ServerMapLease(1, "node-a", 1, now.AddMinutes(1)),
+                new ServerMapLease(2, "node-b", 1, now.AddMinutes(1))]));
+        var pilot = new WorldPilot(121, "mmo", 1, 1, "ship", 0, 0)
+            { X = 19500, Y = 1300, Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), store,
+            registry, "node-a");
+        using (client)
+        using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(121, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++) await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.JumpRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteInt32(w, 101)));
+            var changed = (await input.ReadAsync())!.Value;
+            Assert.That(WorldPayload.Decode(changed.Payload, r =>
+                (WorldPayload.ReadInt32(r), WorldPayload.ReadString(r), WorldPayload.ReadString(r))),
+                Is.EqualTo((2, "node-b", "127.0.0.1:61002")));
+            await worker;
+            Assert.That(await store.ConnectedAsync(2, default), Has.Count.EqualTo(1));
+        }
+    }
+
+    private sealed class JumpRegistry(ServerMeshSnapshot snapshot) : IServerMeshRegistry
+    {
+        public Task<ServerMeshSnapshot> GetSnapshotAsync(CancellationToken ct = default) => Task.FromResult(snapshot);
+        public Task<ServerMeshSnapshot> HeartbeatAsync(ServerMeshNode node, CancellationToken ct = default) =>
+            Task.FromResult(snapshot);
+        public Task<ServerMeshSnapshot> SetDrainingAsync(string nodeId, CancellationToken ct = default) =>
+            Task.FromResult(snapshot);
+    }
+    [Test]
+    public async Task Loopback_JumpRequest_EmitsMapChangeAndDestinationHero()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var pilot = new WorldPilot(119, "mmo", 1, 1, "ship", 0, 0)
+        {
+            X = 19500, Y = 1300, Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), store);
+        using (client)
+        using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(119, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++) await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.JumpRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteInt32(w, 101)));
+            var changed = (await input.ReadAsync())!.Value;
+            Assert.That(changed.Command, Is.EqualTo(WorldCommandId.MapChangeCommand));
+            Assert.That(WorldPayload.Decode(changed.Payload, r =>
+                (WorldPayload.ReadInt32(r), WorldPayload.ReadString(r), WorldPayload.ReadString(r))),
+                Is.EqualTo((2, string.Empty, string.Empty)));
+            Assert.That((await input.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.MapInitializationCommand));
+            for (var i = 0; i < 3; i++) await input.ReadAsync();
+            var hero = (await input.ReadAsync())!.Value;
+            Assert.That(hero.Command, Is.EqualTo(WorldCommandId.HeroInitCommand));
+            using var heroStream = new MemoryStream(hero.Payload.ToArray());
+            using var heroReader = new BinaryReader(heroStream);
+            var arrival = ((Func<BinaryReader, (int, int, int)>)(r =>
+            {
+                WorldPayload.ReadInt64(r); WorldPayload.ReadString(r); WorldPayload.ReadString(r);
+                WorldPayload.ReadInt32(r); return (WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r),
+                    WorldPayload.ReadInt32(r));
+            }))(heroReader);
+            Assert.That(arrival, Is.EqualTo((2, 2500, 1300)));
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker;
+        }
+    }
+
+    [Test]
+    public async Task RadiationDamagesHullAndStationRepairsWhenStopped()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var pilot = new WorldPilot(120, "mmo", 1, 1, "ship", 0, 0)
+            { Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
+        await store.EnterAsync(pilot, default);
+        var now = DateTimeOffset.UtcNow;
+        await store.MoveAsync(pilot, -1, 1300, null, default, now);
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(990));
+        await store.MoveAsync(pilot, -1, 1300, null, default, now.AddSeconds(2));
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(980));
+        await store.MoveAsync(pilot, 2000, 1300, null, default, now.AddSeconds(3));
+        await store.RepairAtBaseAsync(pilot, now.AddHours(1), default);
+        Assert.That(store.CurrentHitPoints(pilot), Is.GreaterThan(980));
+    }
+    [Test]
+    public async Task PacketReader_CombinesPartialHeaderAndBody_AndReadsAdjacentPackets()
+    {
+        using var bytes = new MemoryStream();
+        var writer = new WorldPacketWriter(bytes);
+        await writer.WriteAsync(WorldCommandId.VersionRequest, new byte[] { 7, 8 });
+        await writer.WriteAsync(WorldCommandId.LoginRequest, new byte[] { 9 });
+        var encoded = bytes.ToArray();
+        Assert.That(encoded[..6], Is.EqualTo(new byte[] { 0, 0, 0, 4, 0, 1 }));
+        using var source = new ChunkedStream(encoded, 1);
+        var reader = new WorldPacketReader(source);
+        Assert.That((await reader.ReadAsync())!.Value.Payload.ToArray(), Is.EqualTo(new byte[] { 7, 8 }));
+        Assert.That((await reader.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.LoginRequest));
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [TestCase(0)] [TestCase(1)] [TestCase(65)]
+    public void PacketReader_RejectsInvalidLengths(int size)
+    {
+        var header = new byte[4];
+        BinaryPrimitives.WriteInt32BigEndian(header, size);
+        using var stream = new MemoryStream(header);
+        Assert.ThrowsAsync<InvalidDataException>(async () => await new WorldPacketReader(stream, 64).ReadAsync());
+    }
+
+    [Test]
+    public void PacketReader_RejectsTruncatedFrame()
+    {
+        using var stream = new MemoryStream(new byte[] { 0, 0, 0, 3, 0 });
+        Assert.ThrowsAsync<EndOfStreamException>(async () => await new WorldPacketReader(stream).ReadAsync());
+    }
+
+    [Test]
+    public async Task Loopback_VersionAndAuthenticatedLogin()
+    {
+        var pilot = new WorldPilot(42, "eic", 5, 2, "phoenix", 100, 5)
+        {
+            FactionId = 2, UserName = "pilot42",
+            Stats = new WorldShipStats(320, 4000, 5000, 100, 150,
+                [new LocalEquipmentAssignment(2, 1, "laser_lf3", 1)]),
+            Experience = 120, Honor = 30, Level = 2
+        };
+        var resolver = new FakeResolver((pilot, default));
+        var (client, server, worker) = await ConnectAsync(resolver);
+        using (client)
+        using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            var version = (await input.ReadAsync())!.Value;
+            Assert.That(version.Command, Is.EqualTo(WorldCommandId.VersionCommand));
+            Assert.That(WorldPayload.Decode(version.Payload, r =>
+                (WorldPayload.ReadString(r), r.ReadBoolean())), Is.EqualTo(("local-1", true)));
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(42, "opaque", "local-1"));
+            var response = (await input.ReadAsync())!.Value;
+            Assert.That(response.Command, Is.EqualTo(WorldCommandId.LoginResponse));
+            var received = WorldPayload.Decode(response.Payload, r =>
+                (Status: r.ReadByte(), User: WorldPayload.ReadInt64(r), Company: WorldPayload.ReadString(r),
+                    Map: BinaryPrimitives.ReverseEndianness(r.ReadInt32()), Slot: r.ReadByte(),
+                    Ship: WorldPayload.ReadString(r), Credits: WorldPayload.ReadInt64(r),
+                    Uridium: WorldPayload.ReadInt64(r)));
+            Assert.That(received, Is.EqualTo(((byte)1, 42L, "eic", 5, (byte)2, "phoenix", 100L, 5L)));
+            Assert.That(resolver.Calls, Is.EqualTo(1));
+            var mapPacket = (await input.ReadAsync())!.Value;
+            Assert.That(mapPacket.Command, Is.EqualTo(WorldCommandId.MapInitializationCommand));
+            Assert.That(WorldPayload.Decode(mapPacket.Payload, r => (WorldPayload.ReadInt32(r),
+                WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r))),
+                Is.EqualTo((5, 21000, 13100, 2)));
+            var station = (await input.ReadAsync())!.Value;
+            Assert.That(station.Command, Is.EqualTo(WorldCommandId.SpaceStationCommand));
+            Assert.That(WorldPayload.Decode(station.Payload, r => (WorldPayload.ReadInt32(r),
+                WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r))),
+                Is.EqualTo((500, 2000, 1300, 1000)));
+            foreach (var destination in new[] { 6, 7 })
+            {
+                var gate = (await input.ReadAsync())!.Value;
+                Assert.That(gate.Command, Is.EqualTo(WorldCommandId.JumpgateCreateCommand));
+                Assert.That(WorldPayload.Decode(gate.Payload, r =>
+                {
+                    WorldPayload.ReadInt32(r); WorldPayload.ReadInt32(r); WorldPayload.ReadInt32(r);
+                    return WorldPayload.ReadInt32(r);
+                }), Is.EqualTo(destination));
+            }
+            var safeZone = (await input.ReadAsync())!.Value;
+            Assert.That(safeZone.Command, Is.EqualTo(WorldCommandId.SafeZoneCommand));
+            Assert.That(safeZone.Payload.ToArray(), Is.EqualTo(new byte[] { 1 }));
+            var hero = (await input.ReadAsync())!.Value;
+            Assert.That(hero.Command, Is.EqualTo(WorldCommandId.HeroInitCommand));
+            var heroState = WorldPayload.Decode(hero.Payload, r =>
+            {
+                var id = WorldPayload.ReadInt64(r);
+                var name = WorldPayload.ReadString(r);
+                var ship = WorldPayload.ReadString(r);
+                var faction = WorldPayload.ReadInt32(r);
+                var map = WorldPayload.ReadInt32(r);
+                var x = WorldPayload.ReadInt32(r);
+                var y = WorldPayload.ReadInt32(r);
+                var speed = WorldPayload.ReadInt32(r);
+                var hp = WorldPayload.ReadInt64(r);
+                var hpMax = WorldPayload.ReadInt64(r);
+                var shield = WorldPayload.ReadInt64(r);
+                var shieldMax = WorldPayload.ReadInt64(r);
+                var cargoLoad = WorldPayload.ReadInt32(r);
+                var cargoMax = WorldPayload.ReadInt32(r);
+                var laser = WorldPayload.ReadInt32(r);
+                var xp = WorldPayload.ReadInt64(r);
+                var honor = WorldPayload.ReadInt64(r);
+                var level = WorldPayload.ReadInt32(r);
+                var credits = WorldPayload.ReadInt64(r);
+                var uridium = WorldPayload.ReadInt64(r);
+                var slot = r.ReadByte();
+                var count = WorldPayload.ReadInt32(r);
+                var equipped = new List<(string, int)>();
+                for (var i = 0; i < count; i++) equipped.Add((WorldPayload.ReadString(r), WorldPayload.ReadInt32(r)));
+                return (id, name, ship, faction, map, x, y, speed, hp, hpMax, shield, shieldMax,
+                    cargoLoad, cargoMax, laser, xp, honor, level, credits, uridium, slot, equipped);
+            });
+            Assert.Multiple(() =>
+            {
+                Assert.That((heroState.id, heroState.name, heroState.ship, heroState.faction, heroState.map,
+                    heroState.x, heroState.y), Is.EqualTo((42L, "pilot42", "phoenix", 2, 5, 2000, 1300)));
+                Assert.That((heroState.speed, heroState.hp, heroState.hpMax, heroState.shield,
+                    heroState.shieldMax, heroState.cargoLoad, heroState.cargoMax, heroState.laser),
+                    Is.EqualTo((320, 4000L, 4000L, 5000L, 5000L, 0, 100, 150)));
+                Assert.That((heroState.xp, heroState.honor, heroState.level, heroState.credits,
+                    heroState.uridium, heroState.slot), Is.EqualTo((120L, 30L, 2, 100L, 5L, (byte)2)));
+                Assert.That(heroState.equipped, Is.EqualTo(new[] { ("laser_lf3", 1) }));
+            });
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker;
+        }
+    }
+
+    [Test]
+    public async Task SavedHangarAssignmentsAndPilotSkills_ChangeHeroStats()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var account = Guid.NewGuid();
+        var equipment = new LocalHangarEquipmentStore(cache);
+        Assert.That(await equipment.AssignAsync(account, 1, 1, "laser_lf3", 4, CancellationToken.None), Is.True);
+        Assert.That(await equipment.AssignAsync(account, 1, 1, "shield_sg3n_b02", 2, CancellationToken.None), Is.True);
+        var skills = new LocalPilotSkillStore(cache);
+        Assert.That(await skills.AllocateAsync(account, "hull", CancellationToken.None), Is.True);
+        Assert.That(await skills.AllocateAsync(account, "shields", CancellationToken.None), Is.True);
+        Assert.That(await skills.AllocateAsync(account, "lasers", CancellationToken.None), Is.True);
+        var stored = await equipment.GetAsync(account, CancellationToken.None);
+        var trained = await skills.GetAsync(account, CancellationToken.None);
+        var pusat = WorldShipStatCalculator.Calculate(1, stored, trained);
+        Assert.Multiple(() =>
+        {
+            Assert.That(pusat.Speed, Is.EqualTo(370));
+            Assert.That(pusat.MaxHitPoints, Is.EqualTo(130560));
+            Assert.That(pusat.MaxShield, Is.EqualTo(10200));
+            Assert.That(pusat.CargoCapacity, Is.EqualTo(1500));
+            Assert.That(pusat.LaserDamage, Is.EqualTo(612));
+            Assert.That(pusat.Equipment.Count, Is.EqualTo(2));
+        });
+        var phoenix = WorldShipStatCalculator.Calculate(2, stored, trained);
+        Assert.That(phoenix.Speed, Is.EqualTo(320));
+        Assert.That(phoenix.MaxShield, Is.Zero);
+        Assert.That(phoenix.LaserDamage, Is.Zero);
+    }
+
+    [Test]
+    public void EquippedSpeedGenerator_UsesGeneratorSlotsAndRaisesSpeed()
+    {
+        var item = new LocalEquipmentItem("generator_g3n_3310", "G3N-3310", "Equipment", 2, "generator");
+        Assert.That(LocalHangarEquipmentStore.CapacityKind(item),
+            Is.EqualTo(LocalHangarEquipmentStore.GeneratorKind));
+        var equipment = new LocalEquipmentState([item],
+            [new LocalEquipmentAssignment(1, 1, item.Id, 2)]);
+        var stats = WorldShipStatCalculator.Calculate(1, equipment,
+            new LocalPilotSkillState(new Dictionary<string, int>()));
+        Assert.That(stats.Speed, Is.EqualTo(450));
+        var alternate = new LocalEquipmentState([item],
+            [new LocalEquipmentAssignment(1, 2, item.Id, 2)]);
+        Assert.That(WorldShipStatCalculator.Calculate(1, alternate,
+            new LocalPilotSkillState(new Dictionary<string, int>()), configuration: 2).Speed,
+            Is.EqualTo(450));
+        Assert.That(WorldShipStatCalculator.Calculate(1, alternate,
+            new LocalPilotSkillState(new Dictionary<string, int>()), configuration: 1).Speed,
+            Is.EqualTo(370));
+    }
+
+    [Test]
+    public void SavedCatalogStats_OverrideLocalEquipmentDefaults()
+    {
+        var item = new LocalEquipmentItem("laser_lf3", "LF-3", "Equipment", 1, "laser");
+        var equipment = new LocalEquipmentState([item], [new LocalEquipmentAssignment(1, 1, item.Id, 1)]);
+        var listing = new EconomyListing("lf3", item.Id, item.Name, "laser", "common",
+            JsonSerializer.Deserialize<JsonElement>("{\"damage\":200}"), null,
+            JsonSerializer.Deserialize<JsonElement>("{}"), null, null, true);
+        var stats = WorldShipStatCalculator.Calculate(1, equipment,
+            new LocalPilotSkillState(new Dictionary<string, int>()), [listing]);
+        Assert.That(stats.LaserDamage, Is.EqualTo(200));
+    }
+
+    [Test]
+    public async Task WorldSessionStore_TracksConnectionAndReloadsSavedPosition()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var store = new WorldSessionStore(cache);
+        var pilot = new WorldPilot(42, "mmo", 1, 1, "ship_pusat-plus", 10, 2)
+            { X = 3000, Y = 4000 };
+        var entered = await store.EnterAsync(pilot, CancellationToken.None);
+        Assert.That(store.Connected(1), Has.Count.EqualTo(1));
+        store.Leave(entered);
+        Assert.That(store.Connected(1), Is.Empty);
+        var reopened = await new WorldSessionStore(cache).EnterAsync(pilot with { X = 2000, Y = 1300 },
+            CancellationToken.None);
+        Assert.That((reopened.X, reopened.Y), Is.EqualTo((3000, 4000)));
+    }
+
+    [Test]
+    public async Task Movement_InterpolatesCourseChanges_AndRestoresMidFlightPosition()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var store = new WorldSessionStore(cache);
+        var pilot = await store.EnterAsync(new WorldPilot(87, "mmo", 1, 1, "ship", 0, 0)
+            { X = 1000, Y = 1000, Stats = new WorldShipStats(100, 1, 0, 0, 0, []) }, CancellationToken.None);
+        var start = DateTimeOffset.UtcNow;
+        var first = await store.MoveAsync(pilot, 2000, 1000, null, CancellationToken.None, start);
+        Assert.That(first.TimeToTargetMs, Is.EqualTo(10000));
+        Assert.That(store.CurrentPosition(pilot, start.AddSeconds(5)), Is.EqualTo((1500, 1000)));
+        var second = await store.MoveAsync(pilot, 1500, 2000, null, CancellationToken.None, start.AddSeconds(5));
+        Assert.That(second.TimeToTargetMs, Is.EqualTo(10000));
+        Assert.That(store.CurrentPosition(pilot, start.AddSeconds(10)), Is.EqualTo((1500, 1500)));
+        var reopened = await new WorldSessionStore(cache).EnterAsync(pilot with { X = 2000, Y = 1300 },
+            CancellationToken.None);
+        Assert.That(reopened.X, Is.EqualTo(1500));
+        Assert.That(reopened.Y, Is.InRange(1000, 2000));
+    }
+
+    [Test]
+    public async Task Movement_ClampsBounds_AndUsesSelectedConfigurationSpeed()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var pilot = await store.EnterAsync(new WorldPilot(88, "mmo", 1, 1, "ship", 0, 0)
+            { X = 0, Y = 0, Stats = new WorldShipStats(100, 1, 0, 0, 0, []),
+                ConfigurationTwoSpeed = 200 }, CancellationToken.None);
+        var now = DateTimeOffset.UtcNow;
+        var edge = await store.MoveAsync(pilot, -100, 15000, null, CancellationToken.None, now);
+        Assert.That((edge.X, edge.Y, edge.RadiationWarning), Is.EqualTo((0, 13100, true)));
+        var switched = await store.MoveAsync(pilot, 0, 13100, 2, CancellationToken.None, now);
+        Assert.That(switched.TimeToTargetMs, Is.EqualTo(65500));
+        Assert.That((await store.MoveAsync(pilot, 21001, 0, null, CancellationToken.None, now))
+            .RadiationWarning, Is.True);
+        Assert.That((await store.MoveAsync(pilot, 21000, 13100, null, CancellationToken.None, now))
+            .RadiationWarning, Is.False);
+        Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await store.MoveAsync(pilot, 0, 0, 3, CancellationToken.None, now));
+    }
+
+    [Test]
+    public async Task Loopback_MoveRequest_BroadcastsClampedDestinationAndWarning()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var pilot = new WorldPilot(89, "mmo", 1, 1, "ship", 0, 0)
+            { Stats = new WorldShipStats(100, 1, 0, 0, 0, []), ConfigurationTwoSpeed = 200 };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), store);
+        using (client)
+        using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(89, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++) await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt32(w, 9999); // untrusted reported X
+                WorldPayload.WriteInt32(w, 1300); // target Y
+                WorldPayload.WriteInt32(w, 22000); // target X
+                WorldPayload.WriteInt32(w, 9999); // untrusted reported Y
+            }));
+            var move = (await input.ReadAsync())!.Value;
+            Assert.That(move.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+            var values = WorldPayload.Decode(move.Payload, r => (WorldPayload.ReadInt64(r),
+                WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r)));
+            Assert.That(values, Is.EqualTo((89L, 21000, 1300, 190000)));
+            Assert.That((await input.ReadAsync())!.Value.Command,
+                Is.EqualTo(WorldCommandId.RadiationWarningCommand));
+            await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt32(w, 0); WorldPayload.WriteInt32(w, 1300);
+                WorldPayload.WriteInt32(w, 21000); WorldPayload.WriteInt32(w, 0);
+            }));
+            Assert.That((await input.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+            var cleared = (await input.ReadAsync())!.Value;
+            Assert.That(cleared.Command, Is.EqualTo(WorldCommandId.RadiationWarningCommand));
+            Assert.That(cleared.Payload.ToArray(), Is.EqualTo(new byte[] { 0 }));
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker;
+        }
+    }
+
+    [Test]
+    public async Task Loopback_ConfigurationSwitch_RecalculatesRemainingTravelTime()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var pilot = new WorldPilot(90, "mmo", 1, 1, "ship", 0, 0)
+            { Stats = new WorldShipStats(100, 1, 1000, 0, 100, []),
+                ConfigurationTwoStats = new WorldShipStats(200, 1, 2000, 0, 300, []) };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), store);
+        using (client)
+        using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(90, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++) await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt32(w, 2000); WorldPayload.WriteInt32(w, 1300);
+                WorldPayload.WriteInt32(w, 3000); WorldPayload.WriteInt32(w, 1300);
+            }));
+            var first = (await input.ReadAsync())!.Value;
+            var duration = WorldPayload.Decode(first.Payload, r =>
+            {
+                WorldPayload.ReadInt64(r); WorldPayload.ReadInt32(r); WorldPayload.ReadInt32(r);
+                return WorldPayload.ReadInt32(r);
+            });
+            Assert.That(duration, Is.EqualTo(10000));
+            await output.WriteAsync(WorldCommandId.ConfigurationRequest, new byte[] { 2 });
+            var second = (await input.ReadAsync())!.Value;
+            var remaining = WorldPayload.Decode(second.Payload, r =>
+            {
+                WorldPayload.ReadInt64(r); WorldPayload.ReadInt32(r); WorldPayload.ReadInt32(r);
+                return WorldPayload.ReadInt32(r);
+            });
+            Assert.That(remaining, Is.InRange(1, 5000));
+            var attributes = (await input.ReadAsync())!.Value;
+            Assert.That(attributes.Command, Is.EqualTo(WorldCommandId.ShipAttributesCommand));
+            var changed = WorldPayload.Decode(attributes.Payload, r =>
+                (WorldPayload.ReadInt64(r), r.ReadByte(), WorldPayload.ReadInt32(r),
+                    WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r),
+                    WorldPayload.ReadInt32(r)));
+            Assert.That(changed.Item2, Is.EqualTo((byte)2));
+            Assert.That(changed.Item3, Is.EqualTo(200));
+            Assert.That(changed.Item6, Is.EqualTo(2000));
+            Assert.That(changed.Item7, Is.EqualTo(300));
+            await output.WriteAsync(WorldCommandId.ConfigurationRequest, new byte[] { 1 });
+            var cooldown = (await input.ReadAsync())!.Value;
+            Assert.That(cooldown.Command, Is.EqualTo(WorldCommandId.ConfigurationCooldownCommand));
+            Assert.That(WorldPayload.Decode(cooldown.Payload, WorldPayload.ReadInt32), Is.InRange(1, 5000));
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker;
+        }
+    }
+
+    [Test]
+    public async Task Loopback_CompanionsSpawnAndFollowMove()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var pilot = new WorldPilot(504, "mmo", 1, 1, "ship", 0, 0)
+        {
+            Stats = new WorldShipStats(100, 1, 0, 0, 0, []),
+            Companions = [new("drone", "drone_flax", 0, "standard"),
+                new("pet", "pet_10", 0, "standard")]
+        };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), store);
+        using (client)
+        using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(504, "opaque", "local-1"));
+            for (var i = 0; i < 7; i++) await input.ReadAsync();
+            var spawned = (await input.ReadAsync())!.Value;
+            Assert.That(spawned.Command, Is.EqualTo(WorldCommandId.CompanionStateCommand));
+            var original = WorldPayload.Decode(spawned.Payload, r =>
+            {
+                WorldPayload.ReadInt64(r);
+                var count = WorldPayload.ReadInt32(r);
+                var companions = new List<(string Kind, string Item, int X, int Y)>();
+                for (var i = 0; i < count; i++)
+                {
+                    var kind = WorldPayload.ReadString(r);
+                    var item = WorldPayload.ReadString(r);
+                    WorldPayload.ReadInt32(r); WorldPayload.ReadString(r);
+                    var x = WorldPayload.ReadInt32(r);
+                    var y = WorldPayload.ReadInt32(r);
+                    WorldPayload.ReadInt32(r); WorldPayload.ReadInt32(r); WorldPayload.ReadInt32(r);
+                    companions.Add((kind, item, x, y));
+                }
+                return companions;
+            });
+            Assert.That(original.Select(c => c.Item), Is.EqualTo(new[] { "drone_flax", "pet_10" }));
+            await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt32(w, 2000); WorldPayload.WriteInt32(w, 1300);
+                WorldPayload.WriteInt32(w, 3000); WorldPayload.WriteInt32(w, 1300);
+            }));
+            Assert.That((await input.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+            var followed = (await input.ReadAsync())!.Value;
+            Assert.That(followed.Command, Is.EqualTo(WorldCommandId.CompanionStateCommand));
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker;
+        }
+    }
+
+    [Test]
+    public async Task Loopback_MoveBroadcast_ReachesAnotherPilotOnSameMap()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var pilot = new WorldPilot(91, "mmo", 1, 1, "ship", 0, 0)
+            { Stats = new WorldShipStats(100, 1, 0, 0, 0, []) };
+        var first = await ConnectAsync(new FakeResolver((pilot, default)), store);
+        var second = await ConnectAsync(new FakeResolver((pilot with { UserId = 92 }, default)), store);
+        using (first.Client) using (first.Server) using (second.Client) using (second.Server)
+        {
+            async Task<WorldPacketReader> LoginPilot(TcpClient client, long id)
+            {
+                var reader = new WorldPacketReader(client.GetStream());
+                var writer = new WorldPacketWriter(client.GetStream());
+                await writer.WriteAsync(WorldCommandId.VersionRequest,
+                    WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+                await reader.ReadAsync();
+                await writer.WriteAsync(WorldCommandId.LoginRequest, Login(id, "opaque", "local-1"));
+                for (var i = 0; i < 7; i++) await reader.ReadAsync();
+                return reader;
+            }
+            var firstReader = await LoginPilot(first.Client, 91);
+            var secondReader = await LoginPilot(second.Client, 92);
+            await new WorldPacketWriter(first.Client.GetStream()).WriteAsync(WorldCommandId.MoveRequest,
+                WorldPayload.Encode(w =>
+                {
+                    WorldPayload.WriteInt32(w, 2000); WorldPayload.WriteInt32(w, 1300);
+                    WorldPayload.WriteInt32(w, 3000); WorldPayload.WriteInt32(w, 1300);
+                }));
+            Assert.That((await firstReader.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+            var observed = (await secondReader.ReadAsync())!.Value;
+            Assert.That(observed.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+            Assert.That(WorldPayload.Decode(observed.Payload, r =>
+            {
+                var id = WorldPayload.ReadInt64(r);
+                WorldPayload.ReadInt32(r); WorldPayload.ReadInt32(r); WorldPayload.ReadInt32(r);
+                return id;
+            }), Is.EqualTo(91L));
+            first.Client.Client.Shutdown(SocketShutdown.Send);
+            second.Client.Client.Shutdown(SocketShutdown.Send);
+            await Task.WhenAll(first.Worker, second.Worker);
+        }
+    }
+
+    [Test]
+    public async Task HostedListener_BindsConfiguredLoopbackPort()
+    {
+        var reservation = new TcpListener(IPAddress.Loopback, 0);
+        reservation.Start();
+        var port = ((IPEndPoint)reservation.LocalEndpoint).Port;
+        reservation.Stop();
+        var options = new WorldServerOptions { Enabled = true, Port = port };
+        using var services = new ServiceCollection()
+            .AddSingleton<IWorldPilotResolver>(new FakeResolver((null, WorldLoginError.UnknownSession)))
+            .AddDistributedMemoryCache()
+            .AddSingleton<WorldSessionStore>()
+            .BuildServiceProvider();
+        var hosted = new WorldServerHostedService(Options.Create(options), services,
+            NullLogger<WorldServerHostedService>.Instance);
+        await hosted.StartAsync(CancellationToken.None);
+        try
+        {
+            using var client = new TcpClient();
+            for (var attempt = 0; attempt < 25 && !client.Connected; attempt++)
+            {
+                try { await client.ConnectAsync(IPAddress.Loopback, port); }
+                catch (SocketException) { await Task.Delay(20); }
+            }
+            Assert.That(client.Connected, Is.True);
+            await new WorldPacketWriter(client.GetStream()).WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            Assert.That((await new WorldPacketReader(client.GetStream()).ReadAsync())!.Value.Command,
+                Is.EqualTo(WorldCommandId.VersionCommand));
+        }
+        finally { await hosted.StopAsync(CancellationToken.None); hosted.Dispose(); }
+    }
+
+    [TestCase(WorldLoginError.UnknownSession)]
+    [TestCase(WorldLoginError.ExpiredSession)]
+    [TestCase(WorldLoginError.CompanyRequired)]
+    [TestCase(WorldLoginError.UserMismatch)]
+    public async Task Loopback_RejectsInvalidPilot(WorldLoginError reason)
+    {
+        var resolver = new FakeResolver((null, reason));
+        var (client, server, worker) = await ConnectAsync(resolver);
+        using (client)
+        using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync();
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(42, "opaque", "local-1"));
+            var response = (await input.ReadAsync())!.Value;
+            Assert.That(response.Command, Is.EqualTo(WorldCommandId.LoginErrorCommand));
+            Assert.That(response.Payload.ToArray(), Is.EqualTo(new byte[] { (byte)reason }));
+            await worker;
+        }
+    }
+
+    [Test]
+    public async Task Loopback_RejectsLoginBeforeVersionWithoutResolvingSession()
+    {
+        var resolver = new FakeResolver((null, WorldLoginError.UnknownSession));
+        var (client, server, worker) = await ConnectAsync(resolver);
+        using (client)
+        using (server)
+        {
+            await new WorldPacketWriter(client.GetStream()).WriteAsync(WorldCommandId.LoginRequest,
+                Login(42, "opaque", "local-1"));
+            var response = (await new WorldPacketReader(client.GetStream()).ReadAsync())!.Value;
+            Assert.That(response.Payload.ToArray(), Is.EqualTo(new byte[] { (byte)WorldLoginError.UnsupportedVersion }));
+            Assert.That(resolver.Calls, Is.Zero);
+            await worker;
+        }
+    }
+
+    [TestCase(0)]
+    [TestCase(1)]
+    [TestCase(2)]
+    public async Task Loopback_MalformedVersionRequest_ReturnsMalformedWithoutIdentityLookup(int shape)
+    {
+        var resolver = new FakeResolver((null, WorldLoginError.UnknownSession));
+        var (client, server, worker) = await ConnectAsync(resolver);
+        using (client)
+        using (server)
+        {
+            var payload = shape switch
+            {
+                0 => new byte[] { 0 }, // truncated length prefix
+                1 => new byte[] { 0, 1, 0xff }, // invalid UTF-8
+                _ => new byte[] { 0, 0, 0x7f } // trailing byte
+            };
+            await new WorldPacketWriter(client.GetStream()).WriteAsync(WorldCommandId.VersionRequest, payload);
+            var response = (await new WorldPacketReader(client.GetStream()).ReadAsync()
+                .WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.Command, Is.EqualTo(WorldCommandId.LoginErrorCommand));
+                Assert.That(response.Payload.ToArray(), Is.EqualTo(new[] { (byte)WorldLoginError.Malformed }));
+                Assert.That(resolver.Calls, Is.Zero);
+            });
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.That(worker.IsCompletedSuccessfully, Is.True);
+        }
+    }
+
+    [TestCase(0)]
+    [TestCase(1)]
+    [TestCase(2)]
+    public async Task Loopback_MalformedLoginAfterVersion_ReturnsMalformedWithoutIdentityLookup(int shape)
+    {
+        var resolver = new FakeResolver((null, WorldLoginError.UnknownSession));
+        var (client, server, worker) = await ConnectAsync(resolver);
+        using (client)
+        using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            Assert.That((await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value.Command,
+                Is.EqualTo(WorldCommandId.VersionCommand));
+            var payload = shape switch
+            {
+                0 => new byte[] { 0 }, // truncated user ID
+                1 => WorldPayload.Encode(w =>
+                {
+                    WorldPayload.WriteInt64(w, 42);
+                    w.Write((byte)0);
+                    w.Write((byte)1);
+                    w.Write((byte)0xff);
+                }),
+                _ => Login(42, "opaque", "local-1").Concat(new byte[] { 0x7f }).ToArray()
+            };
+            await output.WriteAsync(WorldCommandId.LoginRequest, payload);
+            var response = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.Command, Is.EqualTo(WorldCommandId.LoginErrorCommand));
+                Assert.That(response.Payload.ToArray(), Is.EqualTo(new[] { (byte)WorldLoginError.Malformed }));
+                Assert.That(resolver.Calls, Is.Zero);
+            });
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.That(worker.IsCompletedSuccessfully, Is.True);
+        }
+    }
+
+    [Test]
+    public async Task Loopback_LoginBeforeVersion_ReportsHandshakeErrorBeforeDecodingMalformedPayload()
+    {
+        var resolver = new FakeResolver((null, WorldLoginError.UnknownSession));
+        var (client, server, worker) = await ConnectAsync(resolver);
+        using (client)
+        using (server)
+        {
+            await new WorldPacketWriter(client.GetStream()).WriteAsync(WorldCommandId.LoginRequest, new byte[] { 0 });
+            var response = (await new WorldPacketReader(client.GetStream()).ReadAsync()
+                .WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.Multiple(() =>
+            {
+                Assert.That(response.Command, Is.EqualTo(WorldCommandId.LoginErrorCommand));
+                Assert.That(response.Payload.ToArray(), Is.EqualTo(new[] { (byte)WorldLoginError.UnsupportedVersion }));
+                Assert.That(resolver.Calls, Is.Zero);
+            });
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.That(worker.IsCompletedSuccessfully, Is.True);
+        }
+    }
+
+    [TestCase(WorldCommandId.VersionCommand, false)]
+    [TestCase(WorldCommandId.LoginResponse, true)]
+    [TestCase(WorldCommandId.MoveRequest, false)]
+    [TestCase((WorldCommandId)ushort.MaxValue, true)]
+    public async Task Loopback_NonHandshakePreloginCommand_ReturnsUnknownCommandWithoutDecodingOrResolving(
+        WorldCommandId command, bool acceptedVersion)
+    {
+        var resolver = new FakeResolver((null, WorldLoginError.UnknownSession));
+        var (client, server, worker) = await ConnectAsync(resolver);
+        using (client)
+        using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            if (acceptedVersion)
+            {
+                await output.WriteAsync(WorldCommandId.VersionRequest,
+                    WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+                var version = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+                Assert.That(version.Command, Is.EqualTo(WorldCommandId.VersionCommand));
+            }
+
+            await output.WriteAsync(command, new byte[] { 0xff });
+            var error = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.Multiple(() =>
+            {
+                Assert.That(error.Command, Is.EqualTo(WorldCommandId.LoginErrorCommand));
+                Assert.That(error.Payload.ToArray(), Is.EqualTo(new[] { (byte)WorldLoginError.UnknownCommand }));
+                Assert.That(resolver.Calls, Is.Zero);
+            });
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.That(worker.IsCompletedSuccessfully, Is.True);
+        }
+    }
+
+    [TestCase(WorldCommandId.VersionRequest)]
+    [TestCase(WorldCommandId.LoginRequest)]
+    [TestCase(WorldCommandId.LoginResponse)]
+    [TestCase(WorldCommandId.MoveRequest)]
+    [TestCase((WorldCommandId)ushort.MaxValue)]
+    public async Task Loopback_UnsupportedAuthenticatedCommand_ReturnsUnknownCommandAndEndsSession(
+        WorldCommandId command)
+    {
+        var pilot = new WorldPilot(42, "mmo", 1, 1, "phoenix", 100, 5);
+        var resolver = new FakeResolver((pilot, default));
+        var (client, server, worker) = await ConnectAsync(resolver);
+        using (client)
+        using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            Assert.That((await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value.Command,
+                Is.EqualTo(WorldCommandId.VersionCommand));
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(42, "opaque", "local-1"));
+            Assert.That((await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value.Command,
+                Is.EqualTo(WorldCommandId.LoginResponse));
+            for (var i = 0; i < 6; i++)
+                Assert.That((await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value.Command,
+                    Is.Not.EqualTo(WorldCommandId.LoginErrorCommand));
+
+            await output.WriteAsync(command, new byte[] { 0xff });
+            var error = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.Multiple(() =>
+            {
+                Assert.That(error.Command, Is.EqualTo(WorldCommandId.LoginErrorCommand));
+                Assert.That(error.Payload.ToArray(), Is.EqualTo(new[] { (byte)WorldLoginError.UnknownCommand }));
+                Assert.That(resolver.Calls, Is.EqualTo(1));
+            });
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.That(worker.IsCompletedSuccessfully, Is.True);
+        }
+    }
+
+    [Test]
+    public async Task Loopback_VersionRetry_ReplacesRejectedHandshakeBeforeLogin()
+    {
+        var pilot = new WorldPilot(42, "eic", 5, 2, "phoenix", 100, 5);
+        var resolver = new FakeResolver((pilot, default));
+        var (client, server, worker) = await ConnectAsync(resolver);
+        using (client)
+        using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "obsolete")));
+            var rejected = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(rejected.Command, Is.EqualTo(WorldCommandId.VersionCommand));
+            Assert.That(WorldPayload.Decode(rejected.Payload, r =>
+                (WorldPayload.ReadString(r), r.ReadBoolean())), Is.EqualTo(("local-1", false)));
+            Assert.That(resolver.Calls, Is.Zero);
+
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            var accepted = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(accepted.Command, Is.EqualTo(WorldCommandId.VersionCommand));
+            Assert.That(WorldPayload.Decode(accepted.Payload, r =>
+                (WorldPayload.ReadString(r), r.ReadBoolean())), Is.EqualTo(("local-1", true)));
+            Assert.That(resolver.Calls, Is.Zero);
+
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(42, "opaque", "local-1"));
+            var login = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(login.Command, Is.EqualTo(WorldCommandId.LoginResponse));
+            Assert.That(resolver.Calls, Is.EqualTo(1));
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Test]
+    public async Task Loopback_RejectedVersionRetry_RevokesEarlierAcceptance()
+    {
+        var resolver = new FakeResolver((null, WorldLoginError.UnknownSession));
+        var (client, server, worker) = await ConnectAsync(resolver);
+        using (client)
+        using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            foreach (var (requested, expected) in new[] { ("local-1", true), ("obsolete", false) })
+            {
+                await output.WriteAsync(WorldCommandId.VersionRequest,
+                    WorldPayload.Encode(w => WorldPayload.WriteString(w, requested)));
+                var reply = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+                Assert.That(reply.Command, Is.EqualTo(WorldCommandId.VersionCommand));
+                Assert.That(WorldPayload.Decode(reply.Payload, r =>
+                    (WorldPayload.ReadString(r), r.ReadBoolean())), Is.EqualTo(("local-1", expected)));
+            }
+
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(42, "opaque", "local-1"));
+            var error = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.Multiple(() =>
+            {
+                Assert.That(error.Command, Is.EqualTo(WorldCommandId.LoginErrorCommand));
+                Assert.That(error.Payload.ToArray(), Is.EqualTo(new byte[] { (byte)WorldLoginError.UnsupportedVersion }));
+                Assert.That(resolver.Calls, Is.Zero);
+            });
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [TestCase(0)]
+    [TestCase(129)]
+    public async Task Loopback_InvalidInstanceIdLength_RejectsBeforeIdentityResolution(int length)
+    {
+        var resolver = new FakeResolver((null, WorldLoginError.UnknownSession));
+        var (client, server, worker) = await ConnectAsync(resolver);
+        using (client)
+        using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            await output.WriteAsync(WorldCommandId.LoginRequest, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt64(w, 42);
+                WorldPayload.WriteString(w, "opaque");
+                WorldPayload.WriteString(w, "local-1");
+                WorldPayload.WriteString(w, new string('i', length));
+            }));
+            var error = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.Multiple(() =>
+            {
+                Assert.That(error.Command, Is.EqualTo(WorldCommandId.LoginErrorCommand));
+                Assert.That(error.Payload.ToArray(), Is.EqualTo(new byte[] { (byte)WorldLoginError.UnsupportedVersion }));
+                Assert.That(resolver.Calls, Is.Zero);
+            });
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Test]
+    public async Task Loopback_LoginVersionMismatchAfterAcceptedHandshake_EndsHandlerWithoutResolvingSession()
+    {
+        var resolver = new FakeResolver((null, WorldLoginError.UnknownSession));
+        var (client, server, worker) = await ConnectAsync(resolver);
+        using (client)
+        using (server)
+        {
+            var input = new WorldPacketReader(client.GetStream());
+            var output = new WorldPacketWriter(client.GetStream());
+            await output.WriteAsync(WorldCommandId.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
+            var version = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.That(WorldPayload.Decode(version.Payload, r =>
+                (WorldPayload.ReadString(r), r.ReadBoolean())), Is.EqualTo(("local-1", true)));
+
+            await output.WriteAsync(WorldCommandId.LoginRequest, Login(42, "opaque", "obsolete"));
+            var error = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            Assert.Multiple(() =>
+            {
+                Assert.That(error.Command, Is.EqualTo(WorldCommandId.LoginErrorCommand));
+                Assert.That(error.Payload.ToArray(), Is.EqualTo(new byte[] { (byte)WorldLoginError.UnsupportedVersion }));
+                Assert.That(resolver.Calls, Is.Zero);
+            });
+            await worker.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.That(worker.IsCompletedSuccessfully, Is.True);
+        }
+    }
+
+    [Test]
+    public void MapCatalogue_AdvertisesSameConfiguredLoopbackPortForEveryCompany()
+    {
+        var options = new WorldServerOptions { Enabled = true, Port = 61000 };
+        var xml = System.Xml.Linq.XDocument.Parse(LocalMapsXml.XmlFor(options));
+        foreach (var company in CompanyCatalog.Companies)
+            Assert.That(xml.Root!.Elements("map").Single(e => (string)e.Attribute("ID")! == company.StarterMap)
+                .Attribute("GameServerIP")!.Value, Is.EqualTo("127.0.0.1:61000"));
+    }
+
+    [TestCase(null, WorldLoginError.UnknownSession)]
+    [TestCase("", WorldLoginError.CompanyRequired)]
+    [TestCase("invalid", WorldLoginError.CompanyRequired)]
+    [TestCase("mmo", WorldLoginError.UserMismatch, 99L)]
+    public async Task Resolver_RejectsMissingCompanyOrWrongUserBeforeAccountLookup(string? company,
+        WorldLoginError expected, long userId = 42)
+    {
+        var session = company is null ? null : new GameAuthSession
+        {
+            AccountId = Guid.NewGuid(), GameUserId = 42, Company = company,
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5)
+        };
+        var state = new FakeAccountState();
+        var (pilot, error) = await new WorldPilotResolver(new FakeSessions(session), state)
+            .ResolveAsync(userId, "test-token", CancellationToken.None);
+        Assert.That(pilot, Is.Null);
+        Assert.That(error, Is.EqualTo(expected));
+        Assert.That(state.Calls, Is.Zero);
+    }
+
+    [Test]
+    public async Task Resolver_RejectsExpiredSessionBeforeAccountLookup()
+    {
+        var session = new GameAuthSession
+        {
+            AccountId = Guid.NewGuid(), GameUserId = 42, Company = "mmo",
+            ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(-1)
+        };
+        var state = new FakeAccountState();
+        var (pilot, error) = await new WorldPilotResolver(new FakeSessions(session), state)
+            .ResolveAsync(42, "test-token", CancellationToken.None);
+        Assert.That(pilot, Is.Null);
+        Assert.That(error, Is.EqualTo(WorldLoginError.ExpiredSession));
+        Assert.That(state.Calls, Is.Zero);
+    }
+
+    [TestCase("mmo", 1)] [TestCase("eic", 5)]
+    [TestCase("vru", 9)] [TestCase("tst", 13)]
+    public async Task Resolver_LoadsSavedShipAndBalancesForCompany(string company, int map)
+    {
+        var session = new GameAuthSession
+        {
+            AccountId = Guid.NewGuid(), GameUserId = 42, Company = company,
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5)
+        };
+        var state = new FakeAccountState();
+        var (pilot, _) = await new WorldPilotResolver(new FakeSessions(session), state)
+            .ResolveAsync(42, "test-token", CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(pilot?.UserId, Is.EqualTo(42));
+            Assert.That(pilot?.Company, Is.EqualTo(company));
+            Assert.That(pilot?.MapId, Is.EqualTo(map));
+            Assert.That(pilot?.FactionId, Is.EqualTo((map + 3) / 4));
+            Assert.That(pilot?.HangarSlot, Is.EqualTo(2));
+            Assert.That(pilot?.ShipId, Is.EqualTo("phoenix"));
+            Assert.That(pilot?.Credits, Is.EqualTo(100));
+            Assert.That(pilot?.Uridium, Is.EqualTo(5));
+        });
+        Assert.That(state.Calls, Is.EqualTo(1));
+    }
+
+    [TestCase("owner", false, true)]
+    [TestCase("pilot", true, true)]
+    [TestCase("pilot", false, false)]
+    public async Task Resolver_MapsAuthenticatedAdminEligibility(string name, bool markedAdmin, bool expected)
+    {
+        var session = new GameAuthSession
+        {
+            AccountId = Guid.NewGuid(), Username = name, IsAdmin = markedAdmin,
+            GameUserId = 42, Company = "mmo", ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5)
+        };
+        var (pilot, _) = await new WorldPilotResolver(new FakeSessions(session), new FakeAccountState())
+            .ResolveAsync(42, "test-token", CancellationToken.None);
+        Assert.That(pilot?.IsAdmin, Is.EqualTo(expected));
+    }
+
+    private static byte[] Login(long userId, string dosid, string version) => WorldPayload.Encode(w =>
+    {
+        WorldPayload.WriteInt64(w, userId);
+        WorldPayload.WriteString(w, dosid);
+        WorldPayload.WriteString(w, version);
+        WorldPayload.WriteString(w, "test-instance");
+    });
+
+    private static async Task<(TcpClient Client, TcpClient Server, Task Worker)> ConnectAsync(FakeResolver resolver,
+        WorldSessionStore? sessions = null, IServerMeshRegistry? registry = null, string? nodeId = null,
+        WorldNpcs? npcs = null, WorldAdminEvents? adminEvents = null,
+        IAdminCommandDispatcher? adminCommands = null, IRuntimeVariableRegistry? variables = null)
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var client = new TcpClient();
+        await client.ConnectAsync(IPAddress.Loopback, ((IPEndPoint)listener.LocalEndpoint).Port);
+        var server = await listener.AcceptTcpClientAsync();
+        listener.Stop();
+        var worker = new WorldSessionHandler(resolver, new WorldServerOptions(), sessions, registry, nodeId,
+            npcs: npcs, adminEvents: adminEvents, adminCommands: adminCommands, variables: variables)
+            .RunAsync(server.GetStream());
+        return (client, server, worker);
+    }
+
+    private sealed class FakeResolver((WorldPilot? Pilot, WorldLoginError Error) answer) : IWorldPilotResolver
+    {
+        public int Calls { get; private set; }
+        public Task<(WorldPilot? Pilot, WorldLoginError Error)> ResolveAsync(long userId, string dosid,
+            CancellationToken ct)
+        {
+            Calls++;
+            return Task.FromResult(answer);
+        }
+    }
+
+    private sealed class FakeAccountState : IWorldAccountState
+    {
+        public int Calls { get; private set; }
+        public Task<(int Slot, string ShipId, long Credits, long Uridium)> GetAsync(GameAuthSession session,
+            CancellationToken ct)
+        {
+            Calls++;
+            return Task.FromResult((2, "phoenix", 100L, 5L));
+        }
+    }
+
+    private sealed class FakeSessions(GameAuthSession? session) : IGameAuthSessionStore
+    {
+        public Task<GameAuthSession?> TryGetByDosidAsync(string dosid, CancellationToken ct) =>
+            Task.FromResult(session);
+        public Task<GameAuthSessionCreateResult> CreateSessionAsync(AccountSummary account, string? token,
+            CancellationToken ct) => throw new NotSupportedException();
+        public Task<GameAuthTokenRotationResult?> RotateRedirectTokenAsync(string token, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task<GameAuthSession?> TryGetByRedirectTokenAsync(string token, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task<bool> SelectCompanyAsync(string dosid, string company, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task InvalidateAsync(string dosid, CancellationToken ct) => throw new NotSupportedException();
+    }
+
+    private sealed class ChunkedStream(byte[] data, int chunkSize) : MemoryStream(data)
+    {
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            base.ReadAsync(buffer[..Math.Min(buffer.Length, chunkSize)], cancellationToken);
+    }
+}

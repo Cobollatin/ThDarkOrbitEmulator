@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -22,7 +22,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="Infrastructure\Cluster\" />
+    <EmbeddedResource Include="Features\Resources\CommandCenter\command-center-resources.20261021.xml"
+                      LogicalName="CommandCenterResources.xml" />
+    <EmbeddedResource Include="Features\Resources\CommandCenter\command-center-categories.20261022.xml"
+                      LogicalName="CommandCenterCategories.xml" />
   </ItemGroup>
 
 </Project>
+

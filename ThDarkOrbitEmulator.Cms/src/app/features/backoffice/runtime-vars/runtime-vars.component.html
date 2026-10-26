@@ -1,0 +1,129 @@
+<app-page-card [full]="true" title="Admin Commands & Runtime Variables" subtitle="Execute server console commands, tune live world variables, and audit or roll back changes across nodes.">
+  @if (error()) { <p role="alert" class="mb-4 rounded-lg border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300">{{ error() }}</p> }
+  @if (notice()) { <p role="status" class="mb-4 rounded-lg border border-emerald-500/40 bg-emerald-950/40 px-4 py-3 text-sm text-emerald-300">{{ notice() }}</p> }
+
+  <section aria-label="Admin command console" class="rounded-xl border border-slate-800 bg-slate-950/50 p-5 space-y-3">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h2 class="text-base font-semibold text-slate-100">Admin Command Console</h2>
+      @if (canWrite) {
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="text-xs text-slate-400">Quick commands:</span>
+          @for (quick of ['var list', 'mesh status', 'world status']; track quick) {
+            <button type="button" class="rounded-md border border-slate-700 bg-slate-800/80 px-2.5 py-1 font-mono text-xs text-slate-200 transition hover:border-blue-500/50 hover:bg-slate-700" (click)="useCommand(quick)">{{ quick }}</button>
+          }
+        </div>
+      }
+    </div>
+    @if (canWrite) {
+      <form (ngSubmit)="execute()" class="flex flex-wrap gap-2 sm:flex-nowrap">
+        <input aria-label="Admin command" name="command" class="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3.5 py-2 font-mono text-sm text-slate-100 placeholder-slate-500 focus:border-blue-500 focus:outline-none" [(ngModel)]="command" placeholder="Enter admin command (e.g. var list, mesh status, world status)">
+        <button type="submit" class="rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50" [disabled]="busy() || !command.trim()">Execute</button>
+      </form>
+    }
+    @if (output()) { <pre aria-label="Command result" class="max-h-72 overflow-auto whitespace-pre-wrap rounded-lg border border-slate-800 bg-slate-950 p-3.5 font-mono text-xs text-slate-200">{{ output() }}</pre> }
+  </section>
+
+  <section aria-label="Runtime Variables Live Editor" class="mt-6 space-y-4">
+    <div class="flex flex-wrap items-end justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-4">
+      <div>
+        <h2 class="text-base font-semibold text-slate-100">Runtime Variables Live Editor</h2>
+        <p class="mt-0.5 text-xs text-slate-400">Filter by category or key, provide a reason, and apply changes live across all world nodes.</p>
+      </div>
+      <div class="flex flex-wrap items-end gap-3">
+        <label class="block text-xs font-medium text-slate-300">Category
+          <select class="mt-1 block rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none" [(ngModel)]="category">@for (item of categories; track item) { <option [value]="item">{{ item }}</option> }</select>
+        </label>
+        <label class="block text-xs font-medium text-slate-300">Search
+          <input class="mt-1 block w-48 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm text-slate-100 placeholder-slate-500 focus:border-blue-500 focus:outline-none" [(ngModel)]="search" placeholder="Variable key">
+        </label>
+        @if (canWrite) {
+          <label class="block text-xs font-medium text-slate-300">Reason
+            <input class="mt-1 block w-56 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm text-slate-100 placeholder-slate-500 focus:border-blue-500 focus:outline-none" [(ngModel)]="reason" placeholder="Required for changes">
+          </label>
+        }
+        <button type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-3.5 py-1.5 text-sm font-medium text-blue-300 transition hover:bg-slate-700" (click)="refresh()">Refresh</button>
+      </div>
+    </div>
+
+    <div class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/40">
+      <table class="min-w-full divide-y divide-slate-800 text-left text-sm">
+        <thead class="bg-slate-900/90 text-xs font-semibold uppercase tracking-wider text-slate-400">
+          <tr>
+            <th class="px-4 py-3">Variable</th>
+            <th class="px-4 py-3">Category</th>
+            <th class="px-4 py-3">Default</th>
+            <th class="px-4 py-3">Current value</th>
+            <th class="px-4 py-3 text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-800/70">
+          @for (variable of filteredVariables(); track variable.key) {
+            <tr class="transition hover:bg-slate-800/30">
+              <td class="px-4 py-2.5 font-mono text-xs text-slate-100">{{ variable.key }}</td>
+              <td class="px-4 py-2.5"><span class="rounded-md border border-slate-700 bg-slate-800/80 px-2 py-0.5 text-xs text-slate-300">{{ variable.category }}</span></td>
+              <td class="px-4 py-2.5 font-mono text-xs text-slate-400">{{ variable.defaultValue }}</td>
+              <td class="px-4 py-2.5">
+                @if (canWrite) {
+                  <input class="w-40 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 font-mono text-xs text-slate-100 focus:border-blue-500 focus:outline-none" [attr.aria-label]="'Value for ' + variable.key" [(ngModel)]="values[variable.key]">
+                } @else {
+                  <span class="font-mono text-xs text-slate-200">{{ variable.currentValue }}</span>
+                }
+              </td>
+              <td class="px-4 py-2.5 text-right whitespace-nowrap">
+                @if (canWrite) {
+                  <button type="button" class="mr-2 rounded-lg bg-blue-600/20 border border-blue-500/40 px-3 py-1 text-xs font-medium text-blue-300 transition hover:bg-blue-600/30 disabled:opacity-50" [disabled]="busy()" (click)="save(variable)">Save / Apply Live</button>
+                  <button type="button" class="rounded-lg bg-amber-600/15 border border-amber-500/30 px-3 py-1 text-xs font-medium text-amber-300 transition hover:bg-amber-600/25 disabled:opacity-50" [disabled]="busy()" (click)="reset(variable)">Reset to Default</button>
+                }
+              </td>
+            </tr>
+          } @empty {
+            <tr><td colspan="5" class="px-4 py-6 text-center text-slate-400">No variables match.</td></tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-label="Runtime Variable Change History" class="mt-8 space-y-3">
+    <h2 class="text-base font-semibold text-slate-100">Runtime Variable Change History</h2>
+    <div class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/40">
+      <table class="min-w-full divide-y divide-slate-800 text-left text-sm">
+        <thead class="bg-slate-900/90 text-xs font-semibold uppercase tracking-wider text-slate-400">
+          <tr>
+            <th class="px-3.5 py-3">Change ID</th>
+            <th class="px-3.5 py-3">Changed at UTC</th>
+            <th class="px-3.5 py-3">Variable key</th>
+            <th class="px-3.5 py-3">Previous → New</th>
+            <th class="px-3.5 py-3">Surface</th>
+            <th class="px-3.5 py-3">Changed by</th>
+            <th class="px-3.5 py-3">Node ID</th>
+            <th class="px-3.5 py-3">Reason</th>
+            <th class="px-3.5 py-3 text-right">Action</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-800/70">
+          @for (change of history(); track change.changeId) {
+            <tr class="transition hover:bg-slate-800/30">
+              <td class="px-3.5 py-2.5 font-mono text-xs text-slate-400">#{{ change.changeId }}</td>
+              <td class="px-3.5 py-2.5 text-xs text-slate-400 whitespace-nowrap">{{ change.changedAtUtc }}</td>
+              <td class="px-3.5 py-2.5 font-mono text-xs text-slate-100">{{ change.variableKey }}</td>
+              <td class="px-3.5 py-2.5 font-mono text-xs text-slate-200 whitespace-nowrap">{{ change.previousValue }} → {{ change.newValue }}</td>
+              <td class="px-3.5 py-2.5"><span class="rounded-md bg-blue-900/70 border border-blue-700/50 px-2 py-0.5 text-xs text-blue-200">{{ change.surface }}</span></td>
+              <td class="px-3.5 py-2.5 text-xs text-slate-300">{{ change.changedBy }}</td>
+              <td class="px-3.5 py-2.5 font-mono text-xs text-slate-400">{{ change.nodeId }}</td>
+              <td class="px-3.5 py-2.5 text-xs text-slate-300">{{ change.reason }}</td>
+              <td class="px-3.5 py-2.5 text-right whitespace-nowrap">
+                @if (canWrite) {
+                  <button type="button" class="rounded-lg bg-amber-600/15 border border-amber-500/30 px-2.5 py-1 text-xs font-medium text-amber-300 transition hover:bg-amber-600/25 disabled:opacity-50" [disabled]="busy()" (click)="rollback(change)">Rollback</button>
+                }
+              </td>
+            </tr>
+          } @empty {
+            <tr><td colspan="9" class="px-4 py-6 text-center text-slate-400">No changes recorded.</td></tr>
+          }
+        </tbody>
+      </table>
+    </div>
+    @if (hasMore()) { <button type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-sm text-blue-300 hover:bg-slate-700" [disabled]="busy()" (click)="moreHistory()">Load older changes</button> }
+  </section>
+</app-page-card>

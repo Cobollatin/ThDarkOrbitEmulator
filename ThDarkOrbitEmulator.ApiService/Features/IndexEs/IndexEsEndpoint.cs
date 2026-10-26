@@ -1,10 +1,11 @@
-using FastEndpoints;
+﻿using FastEndpoints;
+using ThDarkOrbitEmulator.ApiService.Features.GameAuth;
 using ThDarkOrbitEmulator.ApiService.Features.Mocks.Common;
 
 namespace ThDarkOrbitEmulator.ApiService.Features.IndexEs;
 
 // DNS: gbl3.darkorbit.com | GET /index.es | flow ids: 0ff970ae-5ab2-405b-b2c7-336e4ba15efb [new]
-public sealed class IndexEsEndpoint(ILogger<IndexEsEndpoint> logger) : EndpointWithoutRequest
+public sealed class IndexEsEndpoint(ILogger<IndexEsEndpoint> logger, IGameAuthSessionStore sessions) : EndpointWithoutRequest
 {
     private const string FrameAncestorsPolicy = "frame-ancestors https://*.darkorbit.com/;";
 
@@ -18,6 +19,16 @@ public sealed class IndexEsEndpoint(ILogger<IndexEsEndpoint> logger) : EndpointW
 
     public override async Task HandleAsync(CancellationToken ct)
     {
+        if (LocalLauncherDownload.Targets(HttpContext.Request.Query))
+        {
+            // Static client URL only; no official response or installer was captured. The page reads
+            // an existing dosid for its sign-in card but never creates one.
+            HttpContext.Request.Cookies.TryGetValue("dosid", out var launcherDosid);
+            await LocalLauncherDownload.WriteAsync(HttpContext.Response,
+                await LocalLauncherDownload.ResolveAsync(HttpContext.Request.Query, launcherDosid, sessions, ct), ct);
+            return;
+        }
+
         var dosid = HttpContext.Request.Cookies.TryGetValue("dosid", out var existingDosid) && !string.IsNullOrWhiteSpace(existingDosid)
             ? existingDosid
             : Guid.NewGuid().ToString("N");
@@ -40,7 +51,8 @@ public sealed class IndexEsEndpoint(ILogger<IndexEsEndpoint> logger) : EndpointW
         HttpContext.Response.Headers.Append("Content-Language", "es");
         HttpContext.Response.Headers.Append("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
 
-        var body = FlowCaptureLoader.LoadResponseBody("0ff970ae-5ab2-405b-b2c7-336e4ba15efb");
+        var body = EmulatorRedirectHelper.RewriteLoginPageHtml(HttpContext.Request, FlowCaptureLoader.LoadResponseBody("0ff970ae-5ab2-405b-b2c7-336e4ba15efb"));
         await HttpContext.Response.WriteAsync(body, ct);
     }
 }
+

@@ -28,8 +28,27 @@ coverage/
 # Logs
 *.log
 
+# Local client testing (Aspire on-demand)
+client-testing/hardcoded-url-scan-*
+client-testing/client-traffic.jsonl
+client-testing/darkorbit_pids.log
+client-testing/mitmproxy.pid
+client-testing/url-replacement-*
+client-testing/.url-replacement-backups/
+client-testing/url-replacements.json
+
 # Local tools/config
 .ionide/
 
 # Reverse
 _reversing
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Runtime migration backups (written by the API on each migration run)
+ThDarkOrbitEmulator.ApiService/db-backups/
+
+# Agent loop state / scratch
+.ralph/

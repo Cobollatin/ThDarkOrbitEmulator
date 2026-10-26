@@ -1,11 +1,17 @@
 using FastEndpoints;
 using ThDarkOrbitEmulator.ApiService.Features.GameAuth;
+using ThDarkOrbitEmulator.ApiService.Features.IndexInternal.InternalStart;
+using ThDarkOrbitEmulator.ApiService.Features.World;
+using ThDarkOrbitEmulator.ApiService.Features.World.Mesh;
 
 namespace ThDarkOrbitEmulator.ApiService.Features.UnityApi.Login;
 
 public sealed class UnityLoginEndpoint(
     ILogger<UnityLoginEndpoint> logger,
-    IGameAuthSessionStore gameAuthSessionStore) : EndpointWithoutRequest<UnityLoginResponse>
+    IGameAuthSessionStore gameAuthSessionStore,
+    LocalHangarStore localHangarStore,
+    LocalAccountPreferencesStore preferencesStore, IServerMeshRegistry registry,
+    WorldServerOptions world, CockpitCatalogStore catalog) : EndpointWithoutRequest<UnityLoginResponse>
 {
     public override void Configure()
     {
@@ -26,27 +32,15 @@ public sealed class UnityLoginEndpoint(
             requestContext.Metadata.UserAgent,
             !string.IsNullOrWhiteSpace(dosid));
 
-        var session = !string.IsNullOrWhiteSpace(dosid)
-            ? await gameAuthSessionStore.TryGetByDosidAsync(dosid, ct)
-            : null;
-
-        if (session is null)
+        var innerPayload = await UnityLoginAction.HandleAsync(HttpContext, dosid, gameAuthSessionStore,
+            localHangarStore, preferencesStore, ct, registry, world, catalog);
+        if (innerPayload is null)
         {
-            logger.LogWarning("UnityApi login rejected: missing or unknown dosid session.");
+            logger.LogWarning("UnityApi login rejected: missing, oversized or unknown dosid session.");
             await Send.UnauthorizedAsync(cancellation: ct);
             return;
         }
 
-        HttpContext.Response.Headers.Append("X-Custom-Header", "DarkOrbitUnity");
-        HttpContext.Response.Cookies.Append("dosid", session.Dosid, new CookieOptions
-        {
-            Path = "/",
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.None
-        });
-
-        var innerPayload = UnityLoginPayloadBuilder.Build(session, HttpContext.Request);
         await Send.OkAsync(new UnityLoginResponse
         {
             Data = innerPayload

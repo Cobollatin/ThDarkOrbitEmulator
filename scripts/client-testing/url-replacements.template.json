@@ -1,0 +1,52 @@
+[
+  {
+    "from": "https://gbl3.darkorbit.com",
+    "to": "https://localhost:60952",
+    "note": "Must be same byte length in ASCII/UTF-16LE binaries. Pad or pick a host:port that fits."
+  },
+  {
+    "from": "http://gbl3.darkorbit.com",
+    "to": "http://localhost:60953",
+    "note": "Optional HTTP variant if present in client."
+  },
+  {
+    "from": "https://gbl6.darkorbit.com",
+    "to": "https://localhost:60952",
+    "note": "Observed company-choice game host; server number comes from redirect/session data, not a literal in the IL2CPP metadata."
+  },
+  {
+    "from": "http://gbl6.darkorbit.com",
+    "to": "http://localhost:60953",
+    "note": "Optional HTTP variant for the observed gbl6 game host."
+  },
+  {
+    "from": "https://www.darkorbit.com",
+    "to": "https://localhost:60952",
+    "note": "Home / ProjectApi flows."
+  },
+  {
+    "from": "https://darkorbit-22.bpsecure.com",
+    "to": "https://localhost:60952",
+    "note": "Static assets (css/js/do_img)."
+  },
+  {
+    "from": "https://sas.bpsecure.com",
+    "to": "https://localhost:60952",
+    "note": "SAS authentication."
+  },
+  {
+    "from": "https://alicdn-oss-prod.darkorbit.com/",
+    "to": "https://localhost:60952/",
+    "note": "Production asset CDN literal in IL2CPP metadata; use only when redirecting client assets."
+  },
+  {
+    "from": "https://alicdn-oss-dev.darkorbit.com/",
+    "to": "https://localhost:60952/",
+    "note": "Development asset CDN literal in IL2CPP metadata; conditional client configuration."
+  },
+  {
+    "from": "https://steam.partner.darkorbit.com/",
+    "to": "https://localhost:60952/",
+    "note": "Steam partner authentication literal; conditional Steam flow only."
+  }
+]

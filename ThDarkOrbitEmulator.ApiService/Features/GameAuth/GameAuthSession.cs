@@ -8,9 +8,13 @@ public sealed class GameAuthSession
 
     public long GameUserId { get; init; }
 
+    public string? Company { get; set; }
+
     public string Dosid { get; init; } = string.Empty;
 
     public string? KeycloakAccessToken { get; init; }
+
+    public bool IsAdmin { get; init; }
 
     public DateTimeOffset CreatedAt { get; init; }
 

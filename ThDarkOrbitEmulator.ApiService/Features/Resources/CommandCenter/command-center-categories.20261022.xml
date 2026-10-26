@@ -1,0 +1,7 @@
+<root>
+  <category id="sales" prio="5" textKey="bn_category_sales" isSpecial="true"/>
+  <category id="events" prio="1" textKey="bn_category_events"/>
+  <category id="news" prio="3" textKey="bn_category_news"/>
+  <category id="deals" prio="2" textKey="bn_category_deals"/>
+  <category id="upselling" prio="5" textKey="bn_category_upselling"/>
+</root>

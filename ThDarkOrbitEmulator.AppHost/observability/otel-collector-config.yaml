@@ -8,6 +8,11 @@ receivers:
 
 processors:
   batch:
+  resource:
+    attributes:
+      - key: service.namespace
+        value: thdarkorbit
+        action: upsert
 
 exporters:
   prometheus:
@@ -21,13 +26,13 @@ service:
   pipelines:
     metrics:
       receivers: [otlp]
-      processors: [batch]
+      processors: [resource, batch]
       exporters: [prometheus]
     traces:
       receivers: [otlp]
-      processors: [batch]
+      processors: [resource, batch]
       exporters: [otlp/aspire]
     logs:
       receivers: [otlp]
-      processors: [batch]
+      processors: [resource, batch]
       exporters: [otlp/aspire]

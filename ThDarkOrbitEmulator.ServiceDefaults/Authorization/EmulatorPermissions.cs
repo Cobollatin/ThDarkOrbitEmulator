@@ -14,6 +14,7 @@ public static class EmulatorPermissions
     public const string KeycloakRead = "backoffice.keycloak.read";
     public const string CacheWrite = "backoffice.cache.write";
     public const string OpsRead = "backoffice.ops.read";
+    public const string OpsWrite = "backoffice.ops.write";
 
     public static IReadOnlyList<string> All { get; } =
     [
@@ -22,7 +23,8 @@ public static class EmulatorPermissions
         IdentityDelete,
         KeycloakRead,
         CacheWrite,
-        OpsRead
+        OpsRead,
+        OpsWrite
     ];
 
     public static string PolicyName(string permission) => PolicyPrefix + permission;

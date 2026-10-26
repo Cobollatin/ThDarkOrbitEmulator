@@ -1,0 +1,21 @@
+{
+  "$comment": "Login selectors were verified on 2026-10-21. The Unity menu has no visible CDP DOM controls (2026-10-22 frame dump). Menu navigation uses action links observed in earlier captures, on the logged-in game host. Other menu routes remain unknown.",
+  "login": {
+    "preSteps": [
+      { "name": "cookie-consent", "enabled": true, "urlPattern": "darkorbit", "selector": "button.qc-cmp2-summary-buttons button[mode='primary'], #qc-cmp2-ui button[mode='primary']", "waitMs": 1000, "timeoutSeconds": 15 }
+    ],
+    "urlPattern": "darkorbit\\.com",
+    "usernameSelector": "#bgcdw_login_form_username",
+    "passwordSelector": "#bgcdw_login_form_password",
+    "submitSelector": "form[name='bgcdw_login_form'] input.bgcdw_login_form_login",
+    "successUrlPattern": "gbl[0-9]+\\.darkorbit\\.com/indexInternal\\.es\\?action=internal(?:WebGL|CompanyChoose)(?:&|$)",
+    "successSelector": "",
+    "timeoutSeconds": 120,
+    "successTimeoutSeconds": 60
+  },
+  "menuSteps": [
+    { "name": "hangar-dock", "enabled": true, "optional": true, "navigate": "/indexInternal.es?action=internalDock", "waitMs": 2000 },
+    { "name": "galaxy-gates", "enabled": true, "optional": true, "navigate": "/indexInternal.es?action=internalGalaxyGates", "waitMs": 2000 },
+    { "name": "payment", "enabled": true, "optional": true, "navigate": "/indexInternal.es?action=internalPayment", "waitMs": 2000 }
+  ]
+}

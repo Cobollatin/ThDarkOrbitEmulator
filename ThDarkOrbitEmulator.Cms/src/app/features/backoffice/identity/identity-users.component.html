@@ -1,33 +1,33 @@
-<app-page-card [title]="'backoffice.identity.title' | translate">
+<app-page-card [full]="true" [title]="'backoffice.identity.title' | translate">
   <p class="mb-4 text-sm text-slate-400">
-    {{ 'backoffice.identity.count' | translate }}: <strong class="text-slate-200">{{ count() ?? '…' }}</strong>
+    {{ 'backoffice.identity.count' | translate }}: <strong class="text-slate-200">{{ count() ?? '...' }}</strong>
   </p>
 
   @if (message()) {
     <p class="mb-3 text-sm text-amber-300">{{ message() }}</p>
   }
 
-  <div class="overflow-x-auto rounded-lg border border-slate-800">
-    <table class="min-w-full text-left text-sm">
-      <thead class="bg-slate-900 text-slate-400">
+  <div class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/40">
+    <table class="min-w-full divide-y divide-slate-800 text-left text-sm">
+      <thead class="bg-slate-900/90 text-xs font-semibold uppercase tracking-wider text-slate-400">
         <tr>
-          <th class="px-3 py-2">Id</th>
-          <th class="px-3 py-2">{{ 'backoffice.table.username' | translate }}</th>
-          <th class="px-3 py-2">{{ 'backoffice.table.email' | translate }}</th>
-          <th class="px-3 py-2">Game user id</th>
+          <th class="px-4 py-3">Id</th>
+          <th class="px-4 py-3">{{ 'backoffice.table.username' | translate }}</th>
+          <th class="px-4 py-3">{{ 'backoffice.table.email' | translate }}</th>
+          <th class="px-4 py-3">Game user id</th>
         </tr>
       </thead>
-      <tbody>
+      <tbody class="divide-y divide-slate-800/70">
         @for (user of users(); track user.id) {
-          <tr class="border-t border-slate-800">
-            <td class="px-3 py-2 font-mono text-xs text-slate-400">{{ user.id }}</td>
-            <td class="px-3 py-2 text-slate-200">{{ user.username }}</td>
-            <td class="px-3 py-2 text-slate-400">{{ user.email }}</td>
-            <td class="px-3 py-2 text-slate-400">{{ user.gameUserId }}</td>
+          <tr class="transition hover:bg-slate-800/30">
+            <td class="px-4 py-2.5 font-mono text-xs text-slate-400">{{ user.id }}</td>
+            <td class="px-4 py-2.5 font-medium text-slate-200">{{ user.username }}</td>
+            <td class="px-4 py-2.5 text-slate-400">{{ user.email }}</td>
+            <td class="px-4 py-2.5 font-mono text-xs text-slate-300">{{ user.gameUserId }}</td>
           </tr>
         } @empty {
           <tr>
-            <td colspan="4" class="px-3 py-4 text-slate-500">{{ 'backoffice.identity.empty' | translate }}</td>
+            <td colspan="4" class="px-4 py-6 text-center text-slate-500">{{ 'backoffice.identity.empty' | translate }}</td>
           </tr>
         }
       </tbody>
@@ -37,7 +37,7 @@
   @if (rbac.hasPermission('backoffice.identity.delete')) {
     <button
       type="button"
-      class="mt-4 rounded-lg bg-red-700 px-4 py-2 text-sm text-white hover:bg-red-600"
+      class="mt-4 rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-600"
       (click)="deleteAll()"
     >
       {{ 'backoffice.identity.deleteAll' | translate }}

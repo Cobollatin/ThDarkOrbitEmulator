@@ -1,0 +1,344 @@
+openapi: 3.0.3
+info:
+  title: ThDarkOrbitEmulator economy administration
+  version: 1.0.0
+  description: Emulator-only economy definitions and audited manual changes. Requires the Keycloak emulator-admin realm role.
+servers:
+  - url: /api/v1/economy
+security:
+  - bearerAuth: []
+tags:
+  - name: Economy administration
+paths:
+  /assets:
+    get:
+      tags: [Economy administration]
+      summary: List currencies and resources
+      responses:
+        '200': { description: Asset definitions }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /assets/{id}:
+    put:
+      tags: [Economy administration]
+      summary: Create or update a currency or resource
+      description: Kind is immutable after creation. Set enabled to false when a referenced asset cannot be deleted.
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { $ref: '#/components/requestBodies/Asset' }
+      responses:
+        '204': { description: Saved }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [Economy administration]
+      summary: Delete an unused currency or resource
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /items:
+    get:
+      tags: [Economy administration]
+      summary: List items
+      responses:
+        '200': { description: Item definitions }
+  /items/{id}:
+    put:
+      tags: [Economy administration]
+      summary: Create or update an item
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { $ref: '#/components/requestBodies/Item' }
+      responses:
+        '204': { description: Saved }
+        '400': { $ref: '#/components/responses/Invalid' }
+    delete:
+      tags: [Economy administration]
+      summary: Delete an unused item
+      description: In-use items return 409; disable them through PUT instead.
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /recipes:
+    get:
+      tags: [Economy administration]
+      summary: List crafting recipes
+      responses:
+        '200': { description: Recipe definitions }
+  /recipes/{id}:
+    put:
+      tags: [Economy administration]
+      summary: Create or update a crafting recipe
+      description: Inputs and outputs must reference known items or matching currency/resource assets.
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { $ref: '#/components/requestBodies/Recipe' }
+      responses:
+        '204': { description: Saved }
+        '400': { $ref: '#/components/responses/Invalid' }
+    delete:
+      tags: [Economy administration]
+      summary: Delete a recipe
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /listings:
+    get:
+      tags: [Economy administration]
+      summary: List shop listings and stock
+      responses:
+        '200':
+          description: Shop listings with current stock and saved restock settings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [id, itemId, name, type, rarity, stats, prices, enabled]
+                  properties:
+                    id: { type: string }
+                    itemId: { type: string }
+                    name: { type: string }
+                    type: { type: string }
+                    rarity: { type: string }
+                    stats: { type: object, additionalProperties: true }
+                    assetKey: { type: string, nullable: true }
+                    prices: { type: object, additionalProperties: { type: integer, format: int64 } }
+                    stockAvailable: { type: integer, format: int64, nullable: true }
+                    perAccountLimit: { type: integer, format: int64, nullable: true }
+                    restockIntervalSeconds: { type: integer, nullable: true }
+                    restockAmount: { type: integer, format: int64, nullable: true }
+                    enabled: { type: boolean }
+  /listings/{id}:
+    put:
+      tags: [Economy administration]
+      summary: Create or update a shop listing
+      description: Editing an existing listing preserves its current stock; use the stock endpoint to adjust it.
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { $ref: '#/components/requestBodies/Listing' }
+      responses:
+        '204': { description: Saved }
+        '400': { $ref: '#/components/responses/Invalid' }
+    delete:
+      tags: [Economy administration]
+      summary: Delete an unused shop listing
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /listings/{id}/stock:
+    post:
+      tags: [Economy administration]
+      summary: Adjust finite stock
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { $ref: '#/components/requestBodies/Stock' }
+      responses:
+        '200': { description: Applied and audited with admin subject }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /listings/{id}/stock-audit:
+    get:
+      tags: [Economy administration]
+      summary: Page through stock audit entries
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/BeforeId' }
+        - { name: reason, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Entries in descending ID order; use the final ID as beforeId on the next page }
+        '400': { $ref: '#/components/responses/Invalid' }
+  /accounts/{accountId}/balances:
+    get:
+      tags: [Economy administration]
+      summary: Read account balances
+      parameters: [{ $ref: '#/components/parameters/AccountId' }]
+      responses:
+        '200': { description: Currency and resource balances }
+  /accounts/{accountId}/balances/{assetId}:
+    post:
+      tags: [Economy administration]
+      summary: Grant or remove account currency or resources
+      description: Nonzero delta is applied through the append-only ledger with the Keycloak admin subject. menuSource is accepted for older clients but the server records admin.
+      parameters:
+        - { $ref: '#/components/parameters/AccountId' }
+        - { name: assetId, in: path, required: true, schema: { type: string } }
+      requestBody: { $ref: '#/components/requestBodies/Balance' }
+      responses:
+        '200': { description: Applied }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /accounts/{accountId}/ledger:
+    get:
+      tags: [Economy administration]
+      summary: Page through account ledger entries
+      parameters:
+        - { $ref: '#/components/parameters/AccountId' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/BeforeId' }
+        - { name: assetId, in: query, schema: { type: string } }
+        - { name: reason, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Entries in descending ID order; use the final ID as beforeId on the next page }
+        '400': { $ref: '#/components/responses/Invalid' }
+  /auction-lots:
+    get:
+      tags: [Economy administration]
+      summary: List personal auction lots
+      responses:
+        '200': { description: Auction lot definitions }
+  /auction-lots/{id}:
+    put:
+      tags: [Economy administration]
+      summary: Create or update a personal auction lot
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { $ref: '#/components/requestBodies/AuctionLot' }
+      responses:
+        '204': { description: Saved }
+        '400': { $ref: '#/components/responses/Invalid' }
+  /reward-offers:
+    get:
+      tags: [Economy administration]
+      summary: List reward offers
+      responses:
+        '200': { description: Reward offer definitions }
+  /reward-offers/{source}/{id}:
+    put:
+      tags: [Economy administration]
+      summary: Create or update a reward offer
+      parameters:
+        - { name: source, in: path, required: true, schema: { type: string, enum: [payment, voucher, quest, battle_pass] } }
+        - { $ref: '#/components/parameters/Id' }
+      requestBody: { $ref: '#/components/requestBodies/RewardOffer' }
+      responses:
+        '204': { description: Saved }
+        '400': { $ref: '#/components/responses/Invalid' }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string } }
+    AccountId: { name: accountId, in: path, required: true, schema: { type: string, format: uuid } }
+    Limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+    BeforeId: { name: beforeId, in: query, schema: { type: integer, format: int64, minimum: 1 } }
+  responses:
+    Unauthorized: { description: Missing or invalid token }
+    Forbidden: { description: Token lacks the emulator-admin realm role }
+    Invalid: { description: Invalid input; JSON error explains the rejected field or reference }
+    NotFound: { description: Account, asset, or definition not found }
+    Conflict: { description: In-use definition, duplicate key, insufficient balance, or unavailable stock }
+  requestBodies:
+    Asset:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [id, kind, name, enabled]
+            properties:
+              id: { type: string }
+              kind: { type: string, enum: [currency, resource] }
+              name: { type: string }
+              enabled: { type: boolean }
+    Item:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [id, name, type, rarity, statsJson, enabled]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              type: { type: string }
+              rarity: { type: string }
+              statsJson: { type: string, description: Serialized JSON object }
+              assetKey: { type: string, nullable: true }
+              enabled: { type: boolean }
+    Recipe:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [id, name, inputsJson, outputsJson, craftSeconds, enabled]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              inputsJson: { type: string, description: Serialized nonempty array of kind/id/positive quantity entries }
+              outputsJson: { type: string, description: Serialized nonempty array of kind/id/positive quantity entries }
+              craftSeconds: { type: integer, minimum: 0 }
+              enabled: { type: boolean }
+    Listing:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [id, itemId, pricesJson, enabled]
+            properties:
+              id: { type: string }
+              itemId: { type: string }
+              pricesJson: { type: string, description: Serialized object mapping enabled currency IDs to nonnegative integer prices }
+              stockAvailable: { type: integer, format: int64, minimum: 0, nullable: true }
+              perAccountLimit: { type: integer, format: int64, minimum: 1, nullable: true }
+              restockIntervalSeconds: { type: integer, minimum: 1, nullable: true }
+              restockAmount: { type: integer, format: int64, minimum: 1, nullable: true }
+              enabled: { type: boolean }
+    Stock:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [delta, reason]
+            properties:
+              delta: { type: integer, format: int64, description: Nonzero signed adjustment }
+              reason: { type: string }
+    Balance:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [delta, reason, idempotencyKey]
+            properties:
+              delta: { type: integer, format: int64, description: Nonzero signed adjustment }
+              reason: { type: string }
+              menuSource: { type: string, deprecated: true }
+              idempotencyKey: { type: string }
+    AuctionLot:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [id, itemId, openingBid, durationSeconds, enabled]
+            properties:
+              id: { type: string }
+              itemId: { type: string }
+              openingBid: { type: integer, format: int64, minimum: 1 }
+              durationSeconds: { type: integer, minimum: 1 }
+              enabled: { type: boolean }
+    RewardOffer:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [source, id, name, assetId, amount, progressKind, target, enabled]
+            properties:
+              source: { type: string, enum: [payment, voucher, quest, battle_pass] }
+              id: { type: string }
+              name: { type: string }
+              assetId: { type: string }
+              amount: { type: integer, format: int64, minimum: 1 }
+              progressKind: { type: string, enum: [none, purchases, crafts] }
+              target: { type: integer, format: int64, minimum: 0 }
+              enabled: { type: boolean }

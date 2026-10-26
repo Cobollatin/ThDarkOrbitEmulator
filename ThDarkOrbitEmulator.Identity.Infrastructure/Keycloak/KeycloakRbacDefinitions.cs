@@ -14,6 +14,7 @@ internal static class KeycloakRbacDefinitions
     public const string KeycloakRead = "backoffice.keycloak.read";
     public const string CacheWrite = "backoffice.cache.write";
     public const string OpsRead = "backoffice.ops.read";
+    public const string OpsWrite = "backoffice.ops.write";
 
     public static IReadOnlyList<string> AllPermissions { get; } =
     [
@@ -22,14 +23,15 @@ internal static class KeycloakRbacDefinitions
         IdentityDelete,
         KeycloakRead,
         CacheWrite,
-        OpsRead
+        OpsRead,
+        OpsWrite
     ];
 
     public static IReadOnlyDictionary<string, IReadOnlyList<string>> RealmRolePermissions { get; } =
         new Dictionary<string, IReadOnlyList<string>>
         {
             [AdminRole] = AllPermissions,
-            [OperatorRole] = [IdentityRead, IdentityWrite, KeycloakRead, CacheWrite, OpsRead],
+            [OperatorRole] = [IdentityRead, IdentityWrite, KeycloakRead, CacheWrite, OpsRead, OpsWrite],
             [ViewerRole] = [IdentityRead, KeycloakRead, OpsRead]
         };
 

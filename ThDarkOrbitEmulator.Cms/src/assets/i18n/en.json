@@ -1,7 +1,7 @@
 {
   "app": {
-    "title": "Dark Orbit Emulator CMS",
-    "brand": "Dark Orbit Emulator CMS"
+    "title": "Space Emulator CMS",
+    "brand": "Space Emulator CMS"
   },
   "a11y": {
     "skipToContent": "Skip to main content",
@@ -22,7 +22,7 @@
     "backoffice": "Backoffice"
   },
   "common": {
-    "loading": "Loading…"
+    "loading": "Loading..."
   },
   "backoffice": {
     "title": "Backoffice",
@@ -36,7 +36,8 @@
     "overview": {
       "title": "Stack overview",
       "services": "Services",
-      "links": "Quick links"
+      "links": "Quick links",
+      "redisInsightHint": "Open RedisInsight from the Aspire dashboard (Resources -> sessions-redis -> sessions-redisinsight). Direct http://localhost:5540 may fail on Docker Desktop."
     },
     "identity": {
       "title": "Identity accounts",
@@ -53,7 +54,19 @@
       "title": "Low-level operations",
       "hint": "Same actions as Aspire BO commands, via API.",
       "clearCache": "Clear Redis cache (FLUSHALL)",
-      "cacheCleared": "Redis cache cleared."
+      "cacheCleared": "Redis cache cleared.",
+      "activityTracking": "Manual activity tracking",
+      "subjectId": "Subject ID",
+      "reason": "Reason",
+      "startTracking": "Start tracking",
+      "trackingStarted": "Activity tracking session started.",
+      "sessionId": "Session ID",
+      "eventType": "Event type",
+      "eventSource": "Source",
+      "eventDetails": "Details",
+      "recordEvent": "Record event",
+      "refreshSnapshot": "Refresh snapshot",
+      "eventRecorded": "Activity event recorded."
     },
     "table": {
       "name": "Name",
@@ -70,23 +83,23 @@
   "auth": {
     "login": {
       "title": "Sign in",
-      "subtitle": "Sign in with your Dark Orbit emulator account.",
+      "subtitle": "Sign in with your local space emulator account.",
       "username": "Username",
       "password": "Password",
       "submit": "Sign in",
-      "submitting": "Signing in…",
+      "submitting": "Signing in...",
       "noAccount": "No account?",
       "registerLink": "Create one"
     },
     "register": {
       "title": "Create account",
-      "subtitle": "Register for the Dark Orbit emulator CMS.",
+      "subtitle": "Register a new pilot account for the local emulator portal.",
       "username": "Username",
       "email": "Email (optional)",
       "password": "Password",
       "confirmPassword": "Confirm password",
       "submit": "Register",
-      "submitting": "Creating account…",
+      "submitting": "Creating account...",
       "hasAccount": "Already have an account?",
       "loginLink": "Sign in",
       "passwordMismatch": "Passwords do not match."
@@ -94,7 +107,7 @@
     "profile": {
       "title": "Dashboard",
       "subtitle": "Signed-in user overview",
-      "loading": "Loading profile…",
+      "loading": "Loading profile...",
       "username": "Username",
       "email": "Email",
       "gameUserId": "Game user ID",

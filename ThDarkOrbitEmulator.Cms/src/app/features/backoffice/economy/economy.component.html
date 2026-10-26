@@ -1,0 +1,192 @@
+<section class="space-y-6 text-slate-200">
+  <h2 class="text-xl font-semibold">Local economy</h2>
+  @if (message()) { <p class="text-amber-300" role="status">{{ message() }}</p> }
+  @if (busy()) { <p role="status">Loading economy data...</p> }
+
+  <article class="rounded-xl border border-slate-700 bg-slate-900/80 p-5">
+    <h3 class="mb-3 font-semibold">Items</h3>
+    <button type="button" class="mb-2 rounded bg-slate-700 px-3 py-1" (click)="newItem()">New item</button>
+    <div class="mb-4 flex flex-wrap gap-2">
+      @for (value of items(); track value.id) {
+        <button type="button" class="rounded bg-slate-800 px-3 py-1 text-sm" (click)="editItem(value)">{{ value.name }} ({{ value.id }}) | {{ value.enabled ? 'Enabled' : 'Disabled' }}</button>
+      }
+    </div>
+    <form class="flex flex-wrap gap-2" (ngSubmit)="saveItem()">
+      <input class="rounded bg-slate-800 px-3 py-2" name="itemId" [(ngModel)]="item.id" placeholder="Item ID" required>
+      <input class="rounded bg-slate-800 px-3 py-2" name="itemName" [(ngModel)]="item.name" placeholder="Name" required>
+      <input class="rounded bg-slate-800 px-3 py-2" name="itemType" [(ngModel)]="item.type" placeholder="Type" required>
+      <input class="rounded bg-slate-800 px-3 py-2" name="itemRarity" [(ngModel)]="item.rarity" placeholder="Rarity" required>
+      <input class="rounded bg-slate-800 px-3 py-2" name="itemAsset" [(ngModel)]="item.asset_key" placeholder="Asset key (optional)">
+      <label class="flex items-center gap-2">Stats JSON <textarea class="rounded bg-slate-800 px-3 py-2" name="itemStats" [(ngModel)]="item.stats" required></textarea></label>
+      <label class="flex items-center gap-2"><input type="checkbox" name="itemEnabled" [(ngModel)]="item.enabled">Enabled</label>
+      <button class="rounded bg-blue-700 px-3 py-2" type="submit">Save item</button>
+    </form>
+  </article>
+
+  <article class="rounded-xl border border-slate-700 bg-slate-900/80 p-5">
+    <h3 class="mb-3 font-semibold">Crafting recipes</h3>
+    <button type="button" class="mb-2 rounded bg-slate-700 px-3 py-1" (click)="newRecipe()">New recipe</button>
+    <div class="mb-4 flex flex-wrap gap-2">
+      @for (value of recipes(); track value.id) {
+        <button type="button" class="rounded bg-slate-800 px-3 py-1 text-sm" (click)="editRecipe(value)">{{ value.name }} ({{ value.id }}) | {{ value.enabled ? 'Enabled' : 'Disabled' }}</button>
+      }
+    </div>
+    <form (ngSubmit)="saveRecipe()" class="space-y-3">
+      <div class="flex flex-wrap gap-2">
+        <input class="rounded bg-slate-800 px-3 py-2" name="recipeId" [(ngModel)]="recipe.id" placeholder="Recipe ID" required>
+        <input class="rounded bg-slate-800 px-3 py-2" name="recipeName" [(ngModel)]="recipe.name" placeholder="Name" required>
+        <label>Craft seconds <input class="w-28 rounded bg-slate-800 px-3 py-2" name="craftSeconds" type="number" min="0" [(ngModel)]="recipe.craft_seconds" required></label>
+        <label class="flex items-center gap-2"><input type="checkbox" name="recipeEnabled" [(ngModel)]="recipe.enabled">Enabled</label>
+      </div>
+      @for (side of ['inputs', 'outputs']; track side) {
+        <div><h4 class="font-medium">{{ side === 'inputs' ? 'Inputs' : 'Outputs' }}</h4>
+          @for (part of side === 'inputs' ? inputs : outputs; track $index) {
+            <div class="flex flex-wrap gap-2 py-1">
+              <select class="rounded bg-slate-800 px-3 py-2" [name]="side + 'Kind' + $index" [(ngModel)]="part.kind" (ngModelChange)="part.id = ''">
+                <option value="item">Item</option><option value="resource">Resource</option><option value="currency">Currency</option>
+              </select>
+              <select class="rounded bg-slate-800 px-3 py-2" [name]="side + 'Id' + $index" [(ngModel)]="part.id" required>
+                <option value="">Choose {{ part.kind }}</option>
+                @for (choice of partChoices(part.kind); track choice.id) { <option [value]="choice.id">{{ choice.name }} ({{ choice.id }})</option> }
+              </select>
+              <input class="w-24 rounded bg-slate-800 px-3 py-2" [name]="side + 'Qty' + $index" type="number" min="1" [(ngModel)]="part.quantity" required>
+              <button type="button" (click)="removePart(side === 'inputs' ? 'inputs' : 'outputs', $index)">Remove</button>
+            </div>
+          }
+          <button type="button" class="rounded bg-slate-700 px-3 py-2" (click)="addPart(side === 'inputs' ? 'inputs' : 'outputs')">Add {{ side === 'inputs' ? 'input' : 'output' }}</button>
+        </div>
+      }
+      <button class="rounded bg-blue-700 px-3 py-2" type="submit">Save recipe</button>
+    </form>
+  </article>
+
+  <article class="rounded-xl border border-slate-700 bg-slate-900/80 p-5">
+    <h3 class="mb-3 font-semibold">Currencies and resources</h3>
+    <div class="mb-4 flex flex-wrap gap-3">
+      @for (asset of assets(); track asset.id) {
+        <span class="rounded bg-slate-800 px-3 py-1 text-sm">{{ asset.name }} ({{ asset.id }}) | {{ asset.kind }}</span>
+      }
+    </div>
+    <form class="flex flex-wrap gap-2" (ngSubmit)="addAsset()">
+      <input class="rounded bg-slate-800 px-3 py-2" name="assetId" [(ngModel)]="newAssetId" placeholder="Asset ID" required>
+      <input class="rounded bg-slate-800 px-3 py-2" name="assetName" [(ngModel)]="newAssetName" placeholder="Name" required>
+      <select class="rounded bg-slate-800 px-3 py-2" name="assetKind" [(ngModel)]="newAssetKind">
+        <option value="currency">Currency</option><option value="resource">Resource</option>
+      </select>
+      <label class="flex items-center gap-2"><input type="checkbox" name="assetEnabled" [(ngModel)]="newAssetEnabled">Enabled</label>
+      <button class="rounded bg-blue-700 px-3 py-2" type="submit">Save asset</button>
+    </form>
+    <div class="mt-3 flex flex-wrap gap-2">@for (asset of assets(); track asset.id) {
+      <button type="button" class="rounded bg-slate-700 px-2 py-1" (click)="editAsset(asset)">Edit {{ asset.id }}</button>
+    }</div>
+  </article>
+
+  <article class="rounded-xl border border-slate-700 bg-slate-900/80 p-5">
+    <h3 class="mb-3 font-semibold">Personal auction lots</h3>
+    <div class="mb-4 flex flex-wrap gap-2">
+      @for (lot of auctionLots(); track lot.id) {
+        <span class="rounded bg-slate-800 px-3 py-1 text-sm">{{ lot.id }} | {{ lot.itemId }} | {{ lot.openingBid }} Credits | {{ lot.durationSeconds }}s | {{ lot.enabled ? 'Enabled' : 'Disabled' }}</span>
+      }
+    </div>
+    <form class="flex flex-wrap gap-2" (ngSubmit)="saveAuctionLot()">
+      <input class="rounded bg-slate-800 px-3 py-2" name="auctionId" [(ngModel)]="auctionId" placeholder="Lot ID" required>
+      <input class="rounded bg-slate-800 px-3 py-2" name="auctionItemId" [(ngModel)]="auctionItemId" placeholder="Catalog item ID" required>
+      <input class="w-28 rounded bg-slate-800 px-3 py-2" name="auctionOpeningBid" type="number" min="1" [(ngModel)]="auctionOpeningBid" required>
+      <input class="w-28 rounded bg-slate-800 px-3 py-2" name="auctionDurationSeconds" type="number" min="1" [(ngModel)]="auctionDurationSeconds" required>
+      <label class="flex items-center gap-2"><input name="auctionEnabled" type="checkbox" [(ngModel)]="auctionEnabled">Enabled</label>
+      <button class="rounded bg-blue-700 px-3 py-2" type="submit">Save lot</button>
+    </form>
+  </article>
+
+  <article class="rounded-xl border border-slate-700 bg-slate-900/80 p-5">
+    <h3 class="mb-3 font-semibold">Shop stock</h3>
+    <h4 class="mb-2">Listing editor</h4>
+    <button type="button" class="mb-2 rounded bg-slate-700 px-3 py-1" (click)="newListing()">New listing</button>
+    <form class="mb-5 space-y-3" (ngSubmit)="saveListing()">
+      <div class="flex flex-wrap gap-2">
+        <input class="rounded bg-slate-800 px-3 py-2" name="editListingId" [(ngModel)]="listing.id" placeholder="Listing ID" required>
+        <select class="rounded bg-slate-800 px-3 py-2" name="editListingItem" [(ngModel)]="listing.itemId" required>
+          <option value="">Choose item</option>@for (item of items(); track item.id) { <option [value]="item.id">{{ item.name }} ({{ item.id }})</option> }
+        </select>
+        <label>Initial stock (blank: unlimited) <input class="w-28 rounded bg-slate-800 px-3 py-2" name="editStock" type="number" min="0" [(ngModel)]="listing.stockAvailable"></label>
+        <label>Per-account limit <input class="w-28 rounded bg-slate-800 px-3 py-2" name="editLimit" type="number" min="1" [(ngModel)]="listing.perAccountLimit"></label>
+        <label>Restock seconds <input class="w-28 rounded bg-slate-800 px-3 py-2" name="editRestockSeconds" type="number" min="1" [(ngModel)]="listing.restockIntervalSeconds"></label>
+        <label>Restock amount <input class="w-28 rounded bg-slate-800 px-3 py-2" name="editRestockAmount" type="number" min="1" [(ngModel)]="listing.restockAmount"></label>
+        <label class="flex items-center gap-2"><input type="checkbox" name="editListingEnabled" [(ngModel)]="listing.enabled">Enabled</label>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <select class="rounded bg-slate-800 px-3 py-2" name="priceAsset" [(ngModel)]="priceAsset">@for (asset of assets(); track asset.id) { @if (asset.kind === 'currency' && asset.enabled) { <option [value]="asset.id">{{ asset.name }}</option> } }</select>
+        <input class="w-28 rounded bg-slate-800 px-3 py-2" name="priceAmount" type="number" min="0" [(ngModel)]="priceAmount">
+        <button type="button" class="rounded bg-slate-700 px-3 py-2" (click)="setPrice()">Set price</button>
+        @for (price of listing.prices | keyvalue; track price.key) { <button type="button" (click)="removePrice(price.key)">{{ price.key }}: {{ price.value }} [x]</button> }
+      </div>
+      <button class="rounded bg-blue-700 px-3 py-2" type="submit">Save listing</button>
+      <p class="text-sm">Existing stock changes through the audited stock controls below.</p>
+    </form>
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-left text-sm">
+        <thead><tr><th class="px-3 py-2">Item</th><th class="px-3 py-2">Price</th><th class="px-3 py-2">Stock</th><th class="px-3 py-2">Limit</th><th class="px-3 py-2">Status</th></tr></thead>
+        <tbody>
+          @for (listing of listings(); track listing.id) {
+            <tr class="border-t border-slate-800">
+              <td class="px-3 py-2"><button type="button" (click)="editListing(listing)">{{ listing.name }} ({{ listing.id }}) | Edit</button></td>
+              <td class="px-3 py-2">{{ listing.prices | json }}</td>
+              <td class="px-3 py-2">{{ listing.stockAvailable ?? 'Unlimited' }}</td>
+              <td class="px-3 py-2">{{ listing.perAccountLimit ?? 'None' }}</td>
+              <td class="px-3 py-2">{{ listing.stockAvailable === 0 ? 'Sold out' : listing.enabled ? 'Enabled' : 'Disabled' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+    <form class="mt-4 flex flex-wrap gap-2" (ngSubmit)="adjustStock()">
+      <select class="rounded bg-slate-800 px-3 py-2" name="listingId" [(ngModel)]="listingId" required>
+        <option value="">Choose a finite-stock listing</option>
+        @for (listing of listings(); track listing.id) {
+          @if (listing.stockAvailable !== null) { <option [value]="listing.id">{{ listing.name }}</option> }
+        }
+      </select>
+      <input class="w-28 rounded bg-slate-800 px-3 py-2" name="stockDelta" type="number" [(ngModel)]="stockDelta" required>
+      <input class="rounded bg-slate-800 px-3 py-2" name="stockReason" [(ngModel)]="stockReason" placeholder="Reason" required>
+      <button class="rounded bg-blue-700 px-3 py-2" type="submit">Adjust stock</button>
+    </form>
+    <div class="mt-3 flex flex-wrap gap-2">
+      <label>Set stock to <input class="w-28 rounded bg-slate-800 px-3 py-2" type="number" min="0" [(ngModel)]="stockTarget"></label>
+      <button type="button" class="rounded bg-blue-700 px-3 py-2" (click)="setStock()">Set stock</button>
+    </div>
+    <div class="mt-5"><h4 class="font-medium">Stock audit</h4>
+      <input class="rounded bg-slate-800 px-3 py-2" [(ngModel)]="stockAuditReason" placeholder="Reason filter">
+      <button type="button" class="rounded bg-blue-700 px-3 py-2" (click)="loadStockAudit()">Load audit</button>
+      @for (row of stockAudit(); track row.id) { <p class="border-b border-slate-800 py-1 text-sm">#{{ row.id }} | {{ row.occurred_at }} | {{ row.delta }} -> {{ row.stock_after }} | {{ row.reason }} | {{ row.admin_actor_subject || 'system/player' }}</p> }
+      @if (stockAudit().length === 50) { <button type="button" (click)="loadStockAudit(stockAudit()[49].id)">Next page</button> }
+    </div>
+  </article>
+
+  <article class="rounded-xl border border-slate-700 bg-slate-900/80 p-5">
+    <h3 class="mb-3 font-semibold">Account wallet</h3>
+    <form class="flex flex-wrap gap-2" (ngSubmit)="loadBalances()">
+      <input class="w-80 rounded bg-slate-800 px-3 py-2" name="accountId" [(ngModel)]="accountId" placeholder="Account UUID" required>
+      <button class="rounded bg-blue-700 px-3 py-2" type="submit">Load balances</button>
+    </form>
+    <div class="mt-5"><h4 class="font-medium">Account ledger</h4>
+      <select class="rounded bg-slate-800 px-3 py-2" [(ngModel)]="ledgerAssetId"><option value="">All assets</option>@for (asset of assets(); track asset.id) { <option [value]="asset.id">{{ asset.name }}</option> }</select>
+      <input class="rounded bg-slate-800 px-3 py-2" [(ngModel)]="ledgerReason" placeholder="Reason filter">
+      <button type="button" class="rounded bg-blue-700 px-3 py-2" (click)="loadLedger()">Load ledger</button>
+      @for (row of ledger(); track row.id) { <p class="border-b border-slate-800 py-1 text-sm">#{{ row.id }} | {{ row.occurred_at }} | {{ row.asset_id }} {{ row.delta }} -> {{ row.balance_after }} | {{ row.reason }} | {{ row.admin_actor_subject || row.menu_source }}</p> }
+      @if (ledger().length === 50) { <button type="button" (click)="loadLedger(ledger()[49].id)">Next page</button> }
+    </div>
+    <div class="my-4 flex flex-wrap gap-2">
+      @for (balance of balances(); track balance.assetId) {
+        <span class="rounded bg-slate-800 px-3 py-1 text-sm">{{ balance.assetId }}: {{ balance.amount }}</span>
+      }
+    </div>
+    <form class="flex flex-wrap gap-2" (ngSubmit)="adjustBalance()">
+      <select class="rounded bg-slate-800 px-3 py-2" name="balanceAsset" [(ngModel)]="assetId">
+        @for (asset of assets(); track asset.id) { <option [value]="asset.id">{{ asset.name }}</option> }
+      </select>
+      <input class="w-28 rounded bg-slate-800 px-3 py-2" name="balanceDelta" type="number" [(ngModel)]="balanceDelta" required>
+      <input class="rounded bg-slate-800 px-3 py-2" name="balanceReason" [(ngModel)]="balanceReason" placeholder="Reason" required>
+      <button class="rounded bg-blue-700 px-3 py-2" type="submit">Grant currency/resources</button>
+    </form>
+  </article>
+</section>

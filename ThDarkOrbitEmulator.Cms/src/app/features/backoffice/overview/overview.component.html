@@ -26,6 +26,7 @@
       </div>
 
       <h2 class="text-sm font-medium text-slate-300">{{ 'backoffice.overview.links' | translate }}</h2>
+      <p class="text-xs text-slate-500">{{ 'backoffice.overview.redisInsightHint' | translate }}</p>
       <ul class="space-y-1 text-sm">
         @for (link of data.links; track link.url) {
           <li>

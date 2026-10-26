@@ -1,12 +1,122 @@
 <app-page-card [title]="'backoffice.operations.title' | translate">
-  <p class="mb-4 text-sm text-slate-400">{{ 'backoffice.operations.hint' | translate }}</p>
-  <button
-    type="button"
-    class="rounded-lg bg-amber-700 px-4 py-2 text-sm text-white hover:bg-amber-600"
-    (click)="clearCache()"
-  >
-    {{ 'backoffice.operations.clearCache' | translate }}
-  </button>
+  <div class="space-y-6">
+    <section>
+      <p class="mb-4 text-sm text-slate-400">{{ 'backoffice.operations.hint' | translate }}</p>
+      <button
+        type="button"
+        class="rounded-lg bg-amber-700 px-4 py-2 text-sm text-white hover:bg-amber-600"
+        (click)="clearCache()"
+      >
+        {{ 'backoffice.operations.clearCache' | translate }}
+      </button>
+    </section>
+
+    <section class="border-t border-slate-800 pt-5">
+      <h2 class="text-sm font-medium text-slate-300">
+        {{ 'backoffice.operations.activityTracking' | translate }}
+      </h2>
+      <div class="mt-3 grid gap-3 md:grid-cols-2">
+        <label class="block text-sm text-slate-300">
+          {{ 'backoffice.operations.subjectId' | translate }}
+          <input
+            class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100"
+            [(ngModel)]="subjectId"
+          />
+        </label>
+        <label class="block text-sm text-slate-300">
+          {{ 'backoffice.operations.reason' | translate }}
+          <input
+            class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100"
+            [(ngModel)]="reason"
+          />
+        </label>
+      </div>
+      <button
+        type="button"
+        class="mt-3 rounded-lg bg-blue-700 px-4 py-2 text-sm text-white hover:bg-blue-600"
+        [disabled]="!subjectId.trim() || !reason.trim()"
+        (click)="startTracking()"
+      >
+        {{ 'backoffice.operations.startTracking' | translate }}
+      </button>
+    </section>
+
+    <section class="border-t border-slate-800 pt-5">
+      <div class="grid gap-3 md:grid-cols-3">
+        <label class="block text-sm text-slate-300">
+          {{ 'backoffice.operations.sessionId' | translate }}
+          <input
+            class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100"
+            [(ngModel)]="sessionId"
+          />
+        </label>
+        <label class="block text-sm text-slate-300">
+          {{ 'backoffice.operations.eventType' | translate }}
+          <input
+            class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100"
+            [(ngModel)]="eventType"
+          />
+        </label>
+        <label class="block text-sm text-slate-300">
+          {{ 'backoffice.operations.eventSource' | translate }}
+          <input
+            class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100"
+            [(ngModel)]="eventSource"
+          />
+        </label>
+      </div>
+      <label class="mt-3 block text-sm text-slate-300">
+        {{ 'backoffice.operations.eventDetails' | translate }}
+        <textarea
+          rows="3"
+          class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100"
+          [(ngModel)]="eventDetails"
+        ></textarea>
+      </label>
+      <div class="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          class="rounded-lg bg-blue-700 px-4 py-2 text-sm text-white hover:bg-blue-600"
+          [disabled]="!sessionId.trim() || !eventType.trim() || !eventSource.trim()"
+          (click)="appendActivityEvent()"
+        >
+          {{ 'backoffice.operations.recordEvent' | translate }}
+        </button>
+        <button
+          type="button"
+          class="rounded-lg bg-slate-700 px-4 py-2 text-sm text-white hover:bg-slate-600"
+          [disabled]="!sessionId.trim()"
+          (click)="refreshActivitySnapshot()"
+        >
+          {{ 'backoffice.operations.refreshSnapshot' | translate }}
+        </button>
+      </div>
+      @if (activityEvents().length > 0) {
+        <div class="mt-4 overflow-x-auto rounded-lg border border-slate-800">
+          <table class="min-w-full text-left text-sm">
+            <thead class="bg-slate-900 text-slate-400">
+              <tr>
+                <th class="px-3 py-2">#</th>
+                <th class="px-3 py-2">{{ 'backoffice.operations.eventType' | translate }}</th>
+                <th class="px-3 py-2">{{ 'backoffice.operations.eventSource' | translate }}</th>
+                <th class="px-3 py-2">{{ 'backoffice.operations.eventDetails' | translate }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (event of activityEvents(); track event.sequence) {
+                <tr class="border-t border-slate-800">
+                  <td class="px-3 py-2 text-slate-400">{{ event.sequence }}</td>
+                  <td class="px-3 py-2 text-slate-200">{{ event.type }}</td>
+                  <td class="px-3 py-2 text-slate-400">{{ event.source }}</td>
+                  <td class="px-3 py-2 text-slate-400">{{ event.details }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+  </div>
   @if (message()) {
     <p class="mt-3 text-sm text-green-400">{{ message()! | translate }}</p>
   }

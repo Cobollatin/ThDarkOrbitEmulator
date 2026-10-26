@@ -1,5 +1,6 @@
 using FastEndpoints;
 using ThDarkOrbitEmulator.ApiService.Features.Mocks.Common;
+using ThDarkOrbitEmulator.ApiService.Features.Resources.CommandCenter;
 
 namespace ThDarkOrbitEmulator.ApiService.Features.Mocks.Darkorbit22BpsecureCom;
 
@@ -54,6 +55,21 @@ public sealed class DoImageEndpoint(ILogger<DoImageEndpoint> logger) : EndpointW
 
     public override async Task HandleAsync(CancellationToken ct)
     {
+        if (await CommandCenterVisualAssets.TryWriteArtworkAsync(HttpContext, ct))
+            return;
+        var icon = HttpContext.Request.Path.Value switch
+        {
+            LocalShipIcons.PusatPath => LocalShipIcons.Pusat,
+            LocalShipIcons.PhoenixPath => LocalShipIcons.Phoenix,
+            _ => null
+        };
+        if (icon is not null)
+        {
+            HttpContext.Response.StatusCode = StatusCodes.Status200OK;
+            HttpContext.Response.Headers.CacheControl = "public, max-age=3600";
+            await MockResponseHelpers.WriteBytesAsync(HttpContext.Response, icon, "image/png", ct);
+            return;
+        }
         logger.LogInformation("darkorbit-22 image mock matched wildcard response.");
         HttpContext.Response.StatusCode = StatusCodes.Status200OK;
         await MockResponseHelpers.WriteBytesAsync(HttpContext.Response, MockResponseHelpers.TinyPngBytes, "image/png", ct);

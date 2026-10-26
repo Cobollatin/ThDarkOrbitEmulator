@@ -63,22 +63,21 @@ public sealed class SasAuthenticationEndpoint(
             $"https://www.darkorbit.com/ProjectApi/Authentication?authUser=291&token={Uri.EscapeDataString(redirectToken)}",
             $"/ProjectApi/Authentication?authUser=291&token={Uri.EscapeDataString(redirectToken)}");
 
-        HttpContext.Response.Headers.Location = redirectUrl;
+        ClientRedirectResponse.Apply(HttpContext.Response, redirectUrl);
         HttpContext.Response.Headers.Append("Set-Cookie", $"aliyungf_tc={Guid.NewGuid():N}; Path=/; HttpOnly");
         HttpContext.Response.Headers.Append("Content-Security-Policy", "frame-ancestors 'none';");
         HttpContext.Response.Headers.Append("Strict-Transport-Security", "max-age=31536000");
 
-        HttpContext.Response.StatusCode = StatusCodes.Status302Found;
         await HttpContext.Response.CompleteAsync();
     }
 
     private async Task RedirectLoginFailureAsync(CancellationToken ct)
     {
-        HttpContext.Response.Headers.Location = EmulatorRedirectHelper.ToRedirectLocation(
+        var redirectUrl = EmulatorRedirectHelper.ToRedirectLocation(
             HttpContext.Request,
             "https://www.darkorbit.com/?loginError=94",
             "/?loginError=94");
-        HttpContext.Response.StatusCode = StatusCodes.Status302Found;
+        ClientRedirectResponse.Apply(HttpContext.Response, redirectUrl);
         await HttpContext.Response.CompleteAsync();
     }
 }

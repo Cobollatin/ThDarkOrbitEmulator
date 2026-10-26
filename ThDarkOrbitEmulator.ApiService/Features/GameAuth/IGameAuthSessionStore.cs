@@ -11,4 +11,8 @@ public interface IGameAuthSessionStore
     Task<GameAuthSession?> TryGetByRedirectTokenAsync(string redirectToken, CancellationToken cancellationToken);
 
     Task<GameAuthSession?> TryGetByDosidAsync(string dosid, CancellationToken cancellationToken);
+
+    Task<bool> SelectCompanyAsync(string dosid, string company, CancellationToken cancellationToken);
+
+    Task InvalidateAsync(string dosid, CancellationToken cancellationToken);
 }

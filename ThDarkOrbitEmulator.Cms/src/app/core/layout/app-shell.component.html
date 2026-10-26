@@ -6,13 +6,22 @@
 </a>
 
 <header class="sticky top-0 z-10 border-b border-slate-800 bg-slate-900/90 backdrop-blur">
-  <div class="mx-auto flex max-w-5xl items-center gap-4 px-4 py-3">
+  <div class="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 sm:px-6">
+    <span
+      class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-700 bg-slate-800 text-xs font-bold tracking-wider text-blue-300"
+      aria-hidden="true"
+      >LOGO</span
+    >
     <span class="font-semibold text-slate-100">{{ 'app.brand' | translate }}</span>
+    <span class="rounded border border-slate-700 bg-slate-800/80 px-2 py-0.5 text-xs text-slate-400">
+      PLACEHOLDER UI
+    </span>
     <nav class="ml-auto flex items-center gap-2" aria-label="Primary">
       @if (auth.isAuthenticated()) {
         <a
           routerLink="/"
           routerLinkActive="bg-blue-600/25 text-blue-200"
+          [routerLinkActiveOptions]="{ exact: true }"
           class="rounded-lg px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"
           >{{ 'nav.home' | translate }}</a
         >
@@ -42,7 +51,7 @@
 
 <main
   id="main-content"
-  class="mx-auto flex min-h-[calc(100vh-4rem)] max-w-5xl flex-1 items-center justify-center px-4 py-8"
+  class="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-7xl flex-1 flex-col items-stretch justify-start px-4 py-8 sm:px-6"
   tabindex="-1"
   [attr.aria-label]="'a11y.mainContent' | translate"
 >

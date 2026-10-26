@@ -28,13 +28,13 @@ public sealed class LoginEndpoint(
             return;
         }
 
-        var username = req.Username.Trim();
-        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(req.Password))
+        if (string.IsNullOrWhiteSpace(req.Username) || string.IsNullOrWhiteSpace(req.Password))
         {
             await HttpContext.WriteApiErrorAsync(ApiErrorCode.IdentityInvalidInput, StatusCodes.Status400BadRequest, cancellation: ct);
             return;
         }
 
+        var username = req.Username.Trim();
         var accountExists = await queryService.ExecuteAsync(new ValidateCredentialsQuery(username), ct);
         if (!accountExists)
         {

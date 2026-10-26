@@ -15,6 +15,7 @@ public static class DependencyInjection
     {
         services.Configure<IdentityDatabaseOptions>(configuration.GetSection(IdentityDatabaseOptions.SectionName));
         services.Configure<KeycloakAdminOptions>(configuration.GetSection(KeycloakAdminOptions.SectionName));
+        services.Configure<PlatformOwnerSeedOptions>(configuration.GetSection(PlatformOwnerSeedOptions.SectionName));
 
         services.AddDbContext<IdentityWriteDbContext>((serviceProvider, optionsBuilder) =>
         {
@@ -68,6 +69,7 @@ public static class DependencyInjection
         services.AddScoped<IBackofficeKeycloakService, BackofficeKeycloakService>();
         services.AddHostedService<SqlMigrationHostedService>();
         services.AddHostedService<KeycloakBootstrapHostedService>();
+        services.AddHostedService<PlatformOwnerSeedHostedService>();
 
         return services;
     }

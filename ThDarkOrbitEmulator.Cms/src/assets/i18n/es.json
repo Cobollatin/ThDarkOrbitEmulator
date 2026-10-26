@@ -1,7 +1,7 @@
 {
   "app": {
-    "title": "CMS emulador Dark Orbit",
-    "brand": "CMS emulador Dark Orbit"
+    "title": "CMS del Emulador Espacial",
+    "brand": "CMS del Emulador Espacial"
   },
   "a11y": {
     "skipToContent": "Saltar al contenido principal",
@@ -18,28 +18,88 @@
     "signIn": "Iniciar sesión",
     "register": "Registrarse",
     "signOut": "Cerrar sesión",
-    "home": "Panel"
+    "home": "Panel",
+    "backoffice": "Backoffice"
+  },
+  "common": {
+    "loading": "Cargando..."
+  },
+  "backoffice": {
+    "title": "Backoffice",
+    "subtitle": "Operaciones de plataforma protegidas por RBAC. Asigna roles en Keycloak para ampliar el acceso.",
+    "nav": {
+      "overview": "Resumen",
+      "identity": "Identidad DB",
+      "keycloak": "Keycloak",
+      "operations": "Operaciones"
+    },
+    "overview": {
+      "title": "Resumen del stack",
+      "services": "Servicios",
+      "links": "Enlaces rápidos",
+      "redisInsightHint": "Abre RedisInsight desde el dashboard de Aspire (Resources -> sessions-redis -> sessions-redisinsight). http://localhost:5540 puede fallar en Docker Desktop."
+    },
+    "identity": {
+      "title": "Cuentas de identidad",
+      "count": "Total de cuentas",
+      "empty": "No hay cuentas en identity.accounts.",
+      "deleteAll": "Eliminar todos los usuarios de identidad"
+    },
+    "keycloak": {
+      "title": "Usuarios de Keycloak",
+      "hint": "Usuarios del realm, separados de identity.accounts.",
+      "empty": "No hay usuarios en el realm."
+    },
+    "operations": {
+      "title": "Operaciones de bajo nivel",
+      "hint": "Las mismas acciones que los comandos BO de Aspire, vía API.",
+      "clearCache": "Limpiar cache Redis (FLUSHALL)",
+      "cacheCleared": "Cache Redis limpiada.",
+      "activityTracking": "Seguimiento manual de actividad",
+      "subjectId": "ID de sujeto",
+      "reason": "Reason",
+      "startTracking": "Iniciar seguimiento",
+      "trackingStarted": "Sesión de seguimiento iniciada.",
+      "sessionId": "ID de sesión",
+      "eventType": "Tipo de evento",
+      "eventSource": "Origen",
+      "eventDetails": "Detalle",
+      "recordEvent": "Registrar evento",
+      "refreshSnapshot": "Actualizar snapshot",
+      "eventRecorded": "Evento de actividad registrado."
+    },
+    "table": {
+      "name": "Nombre",
+      "role": "Rol",
+      "status": "Estado",
+      "username": "Usuario",
+      "email": "Correo",
+      "enabled": "Activo"
+    },
+    "error": {
+      "load": "No se pudo cargar la data de backoffice."
+    }
   },
   "auth": {
     "login": {
       "title": "Iniciar sesión",
-      "subtitle": "Accede con tu cuenta del emulador Dark Orbit.",
+      "subtitle": "Accede con tu cuenta local del emulador espacial.",
       "username": "Usuario",
       "password": "Contraseña",
       "submit": "Entrar",
-      "submitting": "Iniciando sesión…",
+      "submitting": "Iniciando sesión...",
       "noAccount": "¿No tienes cuenta?",
       "registerLink": "Crear una"
     },
     "register": {
       "title": "Crear cuenta",
-      "subtitle": "Regístrate en el CMS del emulador Dark Orbit.",
+      "subtitle": "Regístrate en el portal del emulador espacial local.",
       "username": "Usuario",
       "email": "Correo (opcional)",
       "password": "Contraseña",
       "confirmPassword": "Confirmar contraseña",
       "submit": "Registrarse",
-      "submitting": "Creando cuenta…",
+      "submitting": "Creando cuenta...",
       "hasAccount": "¿Ya tienes cuenta?",
       "loginLink": "Iniciar sesión",
       "passwordMismatch": "Las contraseñas no coinciden."
@@ -47,7 +107,7 @@
     "profile": {
       "title": "Panel",
       "subtitle": "Resumen del usuario conectado",
-      "loading": "Cargando perfil…",
+      "loading": "Cargando perfil...",
       "username": "Usuario",
       "email": "Correo",
       "gameUserId": "ID de usuario del juego",

@@ -20,7 +20,7 @@ public sealed class KeycloakClaimsTransformation : IClaimsTransformation
 
         var claims = new List<Claim>();
         AddRealmRoles(principal, identity, claims);
-        AddClientPermissions(principal, claims);
+        AddClientPermissions(principal, identity, claims);
 
         if (claims.Count > 0)
         {
@@ -46,12 +46,19 @@ public sealed class KeycloakClaimsTransformation : IClaimsTransformation
         }
     }
 
-    private static void AddClientPermissions(ClaimsPrincipal principal, List<Claim> claims)
+    private static void AddClientPermissions(ClaimsPrincipal principal, ClaimsIdentity identity, List<Claim> claims)
     {
-        foreach (var permission in ExtractClientRoles(principal, ApiClientId))
+        foreach (var permission in ExtractClientRoles(principal, ApiClientId).Distinct(StringComparer.Ordinal))
         {
-            claims.Add(new Claim(EmulatorClaimTypes.Permission, permission));
-            claims.Add(new Claim(ClaimTypes.Role, permission));
+            if (!identity.HasClaim(EmulatorClaimTypes.Permission, permission))
+            {
+                claims.Add(new Claim(EmulatorClaimTypes.Permission, permission));
+            }
+
+            if (!identity.HasClaim(ClaimTypes.Role, permission))
+            {
+                claims.Add(new Claim(ClaimTypes.Role, permission));
+            }
         }
     }
 
@@ -66,16 +73,19 @@ public sealed class KeycloakClaimsTransformation : IClaimsTransformation
         try
         {
             using var document = JsonDocument.Parse(realmAccess);
-            if (!document.RootElement.TryGetProperty("roles", out var roles)
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("roles", out var roles)
                 || roles.ValueKind != JsonValueKind.Array)
             {
                 return [];
             }
 
             return roles.EnumerateArray()
+                .Where(r => r.ValueKind == JsonValueKind.String)
                 .Select(r => r.GetString())
                 .Where(r => !string.IsNullOrWhiteSpace(r))
                 .Cast<string>()
+                .Distinct(StringComparer.Ordinal)
                 .ToArray();
         }
         catch (JsonException)
@@ -95,7 +105,9 @@ public sealed class KeycloakClaimsTransformation : IClaimsTransformation
         try
         {
             using var document = JsonDocument.Parse(resourceAccess);
-            if (!document.RootElement.TryGetProperty(clientId, out var client)
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty(clientId, out var client)
+                || client.ValueKind != JsonValueKind.Object
                 || !client.TryGetProperty("roles", out var roles)
                 || roles.ValueKind != JsonValueKind.Array)
             {
@@ -103,9 +115,11 @@ public sealed class KeycloakClaimsTransformation : IClaimsTransformation
             }
 
             return roles.EnumerateArray()
+                .Where(r => r.ValueKind == JsonValueKind.String)
                 .Select(r => r.GetString())
                 .Where(r => !string.IsNullOrWhiteSpace(r))
                 .Cast<string>()
+                .Distinct(StringComparer.Ordinal)
                 .ToArray();
         }
         catch (JsonException)

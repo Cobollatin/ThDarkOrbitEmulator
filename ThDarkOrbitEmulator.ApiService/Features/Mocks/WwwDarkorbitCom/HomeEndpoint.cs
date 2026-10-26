@@ -1,12 +1,26 @@
-using FastEndpoints;
+﻿using FastEndpoints;
+using ThDarkOrbitEmulator.ApiService.Features.GameAuth;
+using ThDarkOrbitEmulator.ApiService.Features.IndexInternal.InternalStart;
+using ThDarkOrbitEmulator.ApiService.Features.IndexInternal.InternalStart.Contracts;
 using ThDarkOrbitEmulator.ApiService.Features.Mocks.Common;
+using ThDarkOrbitEmulator.ApiService.Features.Economy;
 
 namespace ThDarkOrbitEmulator.ApiService.Features.Mocks.WwwDarkorbitCom;
 
-// DNS: www.darkorbit.com | GET / | flow ids: 3506f878-76e8-4780-9094-e59531a26ae7, 12941274-e50d-4750-bd26-f53eb59d974e
-public sealed class HomeEndpoint(ILogger<HomeEndpoint> logger) : EndpointWithoutRequest
+// GET / serves the public login page; the game-host internalPaymentProxy action
+// is a separate, session-bound local destination named by captured news XML.
+public sealed class HomeEndpoint(ILogger<HomeEndpoint> logger,
+    IGameAuthSessionStore gameAuthSessionStore,
+    LocalHangarEquipmentStore equipmentStore,
+    EconomyStore economyStore) : EndpointWithoutRequest
 {
     private static readonly string HomeHtml = MockResponseHelpers.LoadCapturedBody("_reversing\\Requests\\home_html_raw.log");
+    private const string FallbackHtml = "<!doctype html><html><head><title>Space Emulator Portal | Local Login (Placeholder)</title></head><body></body></html>";
+
+    public static string GetBody(HttpRequest request, string? capturedHtml)
+        => string.IsNullOrWhiteSpace(capturedHtml)
+            ? FallbackHtml
+            : EmulatorRedirectHelper.RewriteLoginPageHtml(request, capturedHtml);
 
     public override void Configure()
     {
@@ -18,6 +32,22 @@ public sealed class HomeEndpoint(ILogger<HomeEndpoint> logger) : EndpointWithout
 
     public override async Task HandleAsync(CancellationToken ct)
     {
+        if (LocalPaymentProxyResponse.IsRequest(HttpContext.Request))
+        {
+            var paymentDosid = HttpContext.Request.Cookies["dosid"];
+            var session = string.IsNullOrWhiteSpace(paymentDosid)
+                ? null : await gameAuthSessionStore.TryGetByDosidAsync(paymentDosid, ct);
+            await LocalPaymentProxyResponse.WriteAsync(HttpContext.Response, session is not null,
+                LocalCompanySelection.IsValid(session?.Company),
+                LocalCompanySelection.IsValid(session?.Company)
+                    ? await equipmentStore.GetAsync(session!.AccountId, ct) : null, ct,
+                session is not null && LocalCompanySelection.IsValid(session.Company)
+                    ? await economyStore.RewardOffersAsync("payment", ct) : null,
+                session is not null && LocalCompanySelection.IsValid(session.Company)
+                    ? await economyStore.BalancesAsync(session.AccountId, ct) : null);
+            return;
+        }
+
         logger.LogInformation("Home HTML mock matched wildcard response.");
 
         var dosid = HttpContext.Request.Cookies.TryGetValue("dosid", out var existingDosid) && !string.IsNullOrWhiteSpace(existingDosid)
@@ -37,6 +67,7 @@ public sealed class HomeEndpoint(ILogger<HomeEndpoint> logger) : EndpointWithout
         HttpContext.Response.Headers.Append("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
 
         HttpContext.Response.StatusCode = StatusCodes.Status200OK;
-        await MockResponseHelpers.WriteTextAsync(HttpContext.Response, string.IsNullOrWhiteSpace(HomeHtml) ? "<!doctype html><html><head><title>DarkOrbit</title></head><body></body></html>" : HomeHtml, "text/html; charset=UTF-8", ct);
+        await MockResponseHelpers.WriteTextAsync(HttpContext.Response, GetBody(HttpContext.Request, HomeHtml), "text/html; charset=UTF-8", ct);
     }
 }
+

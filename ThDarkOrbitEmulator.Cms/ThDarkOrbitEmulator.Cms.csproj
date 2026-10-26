@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <CopyBuildOutputToOutputDirectory>false</CopyBuildOutputToOutputDirectory>
+    <CopyOutputSymbolsToOutputDirectory>false</CopyOutputSymbolsToOutputDirectory>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="src\**\*" />
+    <None Include="public\**\*" />
+    <None Include="scripts\**\*" />
+    <None Include="angular.json;package.json;package-lock.json;proxy.conf.js;README.md;tsconfig*.json;.editorconfig;.prettierrc;.postcssrc.json" />
+  </ItemGroup>
+
+  <Target Name="CoreCompile" />
+  <Target Name="CreateManifestResourceNames" />
+
+</Project>

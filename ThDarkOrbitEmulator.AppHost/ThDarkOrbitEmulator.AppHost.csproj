@@ -1,6 +1,6 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <Sdk Name="Aspire.AppHost.Sdk" Version="13.3.5" />
+  <Sdk Name="Aspire.AppHost.Sdk" Version="13.6.4" />
 
   <ItemGroup>
     <InternalsVisibleTo Include="ThDarkOrbitEmulator.Tests" />
@@ -10,6 +10,7 @@
     <OutputType>Exe</OutputType>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <NoWarn>$(NoWarn);ASPIRE010</NoWarn>
     <UserSecretsId>b37ae8c8-1ba1-42e0-8415-f3eabe1f7ff9</UserSecretsId>
   </PropertyGroup>
 
@@ -19,6 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" />
     <PackageReference Include="Aspire.Hosting.AppHost" />
     <PackageReference Include="Aspire.Hosting.JavaScript" />
     <PackageReference Include="Aspire.Hosting.PostgreSQL" />
@@ -28,3 +30,5 @@
   </ItemGroup>
 
 </Project>
+
+

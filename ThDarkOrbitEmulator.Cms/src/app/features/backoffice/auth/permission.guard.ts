@@ -36,3 +36,11 @@ export const backofficeGuard: CanActivateFn = () => {
 
   return true;
 };
+
+export const economyAdminGuard: CanActivateFn = () => {
+  const auth = inject(AuthService);
+  const rbac = inject(RbacService);
+  const router = inject(Router);
+  if (!auth.isAuthenticated()) return router.createUrlTree(['/login']);
+  return rbac.getRealmRoles().includes('emulator-admin') ? true : router.createUrlTree(['/']);
+};

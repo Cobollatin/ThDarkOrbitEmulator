@@ -1,0 +1,68 @@
+<app-page-card [full]="true" title="Service Mesh & World Scaling" subtitle="Inspect world server nodes, scale map leases, and monitor or teleport online pilots.">
+  @if (error()) { <p role="alert" class="mb-4 rounded-lg border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300">{{ error() }}</p> }
+  @if (notice()) { <p role="status" class="mb-4 rounded-lg border border-emerald-500/40 bg-emerald-950/40 px-4 py-3 text-sm text-emerald-300">{{ notice() }}</p> }
+  @if (topology(); as mesh) {
+    <div class="grid gap-4 sm:grid-cols-4" aria-label="Mesh summary">
+      <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-4"><div class="text-xs font-medium uppercase tracking-wider text-slate-400">Active nodes / desired</div><strong class="mt-1 block text-2xl font-semibold text-slate-100">{{ mesh.activeNodeCount }} / {{ mesh.desiredReplicas }}</strong></div>
+      <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-4"><div class="text-xs font-medium uppercase tracking-wider text-slate-400">Online pilots</div><strong class="mt-1 block text-2xl font-semibold text-slate-100">{{ mesh.totalOnlinePilots }}</strong></div>
+      <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-4"><div class="text-xs font-medium uppercase tracking-wider text-slate-400">Active maps</div><strong class="mt-1 block text-2xl font-semibold text-slate-100">{{ activeMapCount(mesh) }}</strong></div>
+      <a class="flex flex-col justify-center rounded-xl border border-blue-700/50 bg-blue-950/60 p-4 text-sm font-medium text-blue-200 transition hover:bg-blue-900/60" [href]="mesh.aspireDashboardLink" target="_blank" rel="noopener noreferrer">Open Aspire Dashboard -></a>
+    </div>
+    <p class="mt-3 text-xs text-amber-300/90">The API saves a desired count and may register simulated nodes. Actual Aspire replicas require AppHost configuration.</p>
+
+    @if (canWrite) {
+      <section class="mt-6 rounded-xl border border-slate-800 bg-slate-950/50 p-5" aria-label="Scaling controls">
+        <h2 class="text-base font-semibold text-slate-100">Vertical / instance scaling</h2>
+        <div class="mt-3 flex flex-wrap items-end gap-4">
+          <label class="text-xs font-medium text-slate-300">Desired server instances (1-16)<input type="number" min="1" max="16" step="1" class="mt-1 block w-40 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100" [(ngModel)]="desiredReplicas"></label>
+          <label class="text-xs font-medium text-slate-300">Max maps per node (1-256)<input type="number" min="1" max="256" step="1" class="mt-1 block w-40 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100" [(ngModel)]="maxMapsPerNode"></label>
+          <button type="button" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50" [disabled]="busy()" (click)="scale()">Apply target</button>
+          <button type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-slate-700 disabled:opacity-50" [disabled]="busy()" (click)="rebalance()">Rebalance maps</button>
+        </div>
+      </section>
+    }
+
+    <section class="mt-6">
+      <div class="flex items-center justify-between"><h2 class="text-base font-semibold text-slate-100">Live nodes</h2><button type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-blue-300 hover:bg-slate-700" (click)="refresh()">Refresh</button></div>
+      <div class="mt-3 grid gap-4 lg:grid-cols-2">
+        @for (node of mesh.nodes; track node.nodeId) {
+          <article class="rounded-xl border border-slate-700/80 bg-slate-950/60 p-4">
+            <div class="flex items-center justify-between gap-2"><strong class="break-all font-mono text-sm text-slate-100">{{ node.nodeId }}</strong><span class="rounded-md border border-slate-700 bg-slate-800 px-2.5 py-0.5 text-xs font-medium text-slate-200">{{ node.status }}</span></div>
+            <p class="mt-1 text-xs text-slate-400">{{ node.instanceName }} @if (node.simulated) { - simulated }</p>
+            <dl class="mt-3 grid grid-cols-2 gap-3 text-sm">
+              <div><dt class="text-xs text-slate-400">TCP endpoint</dt><dd class="font-mono text-xs text-slate-200">{{ node.worldTcpHost }}:{{ node.worldTcpPort }}</dd></div>
+              <div><dt class="text-xs text-slate-400">Pilots</dt><dd class="font-medium text-slate-200">{{ node.activePilots }}</dd></div>
+              <div><dt class="text-xs text-slate-400">CPU / memory</dt><dd class="text-slate-200">{{ node.processCpuPercent.toFixed(1) }}% / {{ memoryMiB(node) }} MiB</dd></div>
+              <div><dt class="text-xs text-slate-400">Leased maps</dt><dd class="text-slate-200">@for (id of node.leasedMapIds; track id) { <span class="mr-1 inline-block rounded bg-slate-800 px-1.5 py-0.5 font-mono text-xs">{{ mapLabel(id) }}</span> } @if (!node.leasedMapIds.length) { - }</dd></div>
+            </dl>
+            @if (canWrite && node.status === 'Active') { <button type="button" class="mt-3 rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-600 disabled:opacity-50" [disabled]="busy() || mesh.activeNodeCount < 2 || (!node.simulated && node.activePilots > 0)" (click)="drain(node)">Drain node</button> }
+            @if (canWrite && node.status === 'Draining') { <button type="button" class="mt-3 rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600 disabled:opacity-50" [disabled]="busy()" (click)="activate(node)">Activate node</button> }
+          </article>
+        } @empty { <p class="text-slate-400">No mesh nodes registered.</p> }
+      </div>
+    </section>
+
+    <section class="mt-6">
+      <h2 class="text-base font-semibold text-slate-100">Live world pilots</h2>
+      <div class="mt-3 overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/40">
+        <table class="min-w-full divide-y divide-slate-800 text-left text-sm">
+          <thead class="bg-slate-900/90 text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <tr><th class="px-4 py-3">Pilot</th><th class="px-4 py-3">Map</th><th class="px-4 py-3">(X, Y)</th><th class="px-4 py-3">Ship</th><th class="px-4 py-3 text-right">Action</th></tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800/70">@for (pilot of world()?.pilots ?? []; track pilot.userId) {
+            <tr class="transition hover:bg-slate-800/30"><td class="px-4 py-2.5 text-slate-100">{{ pilot.userName || pilot.userId }} (#{{ pilot.userId }})</td><td class="px-4 py-2.5 font-mono text-xs text-slate-300">{{ mapLabel(pilot.mapId) }}</td><td class="px-4 py-2.5 font-mono text-xs text-slate-300">({{ pilot.x }}, {{ pilot.y }})</td><td class="px-4 py-2.5 font-mono text-xs text-slate-300">{{ pilot.shipId }}</td><td class="px-4 py-2.5 text-right">@if (canWrite) { <button type="button" class="rounded-lg bg-blue-600/20 border border-blue-500/40 px-3 py-1 text-xs font-medium text-blue-300 hover:bg-blue-600/30" (click)="selectPilot(pilot.userId)">Teleport</button> }</td></tr>
+          } @empty { <tr><td colspan="5" class="px-4 py-6 text-center text-slate-400">No pilots online.</td></tr> }</tbody></table>
+      </div>
+      @if (canWrite && selectedPilotId !== null) {
+        <form class="mt-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-4" (ngSubmit)="teleport()" aria-label="Teleport pilot">
+          <span class="font-medium text-slate-200">Pilot #{{ selectedPilotId }}</span>
+          <label class="text-xs font-medium text-slate-300">Map ID<input type="number" min="1" max="16" class="ml-2 w-20 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-sm text-slate-100" [(ngModel)]="targetMapId" name="map"></label>
+          <label class="text-xs font-medium text-slate-300">X<input type="number" min="0" max="21000" class="ml-2 w-24 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-sm text-slate-100" [(ngModel)]="targetX" name="x"></label>
+          <label class="text-xs font-medium text-slate-300">Y<input type="number" min="0" max="13100" class="ml-2 w-24 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-sm text-slate-100" [(ngModel)]="targetY" name="y"></label>
+          <label class="flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" [(ngModel)]="repair" name="repair"> Repair ship</label>
+          <button type="submit" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500" [disabled]="busy()">Teleport pilot</button>
+        </form>
+      }
+    </section>
+  } @else if (!error()) { <p class="text-sm text-slate-400">Loading mesh status...</p> }
+</app-page-card>

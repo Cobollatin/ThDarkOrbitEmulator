@@ -19,12 +19,12 @@ public sealed class BackofficeOverviewEndpoint : EndpointWithoutRequest<Backoffi
         {
             Services =
             [
-                new ServiceStatusDto("apiservice", "Game + identity API", "healthy"),
-                new ServiceStatusDto("gateway", "YARP reverse proxy", "healthy"),
-                new ServiceStatusDto("thdarkorbit-emulator", "PostgreSQL 16", "running"),
-                new ServiceStatusDto("cache", "Redis sessions", "running"),
-                new ServiceStatusDto("keycloak", "Authentication", "running"),
-                new ServiceStatusDto("cms", "Player CMS", "running")
+                new ServiceStatusDto("api-game", "Game + identity API", "healthy"),
+                new ServiceStatusDto("gateway-players", "YARP reverse proxy", "healthy"),
+                new ServiceStatusDto("data-postgres", "PostgreSQL 16", "running"),
+                new ServiceStatusDto("sessions-redis", "Redis sessions", "running"),
+                new ServiceStatusDto("auth-keycloak", "Authentication", "running"),
+                new ServiceStatusDto("cms-players", "Player CMS", "running")
             ],
             Links =
             [
@@ -32,7 +32,7 @@ public sealed class BackofficeOverviewEndpoint : EndpointWithoutRequest<Backoffi
                 new QuickLinkDto("pgAdmin", "http://localhost:5050"),
                 new QuickLinkDto("Grafana", "http://localhost:13000"),
                 new QuickLinkDto("Prometheus", "http://localhost:19090"),
-                new QuickLinkDto("RedisInsight", "http://localhost:5540"),
+                new QuickLinkDto("RedisInsight (Aspire → sessions-redis)", "https://localhost:17081"),
                 new QuickLinkDto("Keycloak admin", "http://localhost:8081")
             ]
         };

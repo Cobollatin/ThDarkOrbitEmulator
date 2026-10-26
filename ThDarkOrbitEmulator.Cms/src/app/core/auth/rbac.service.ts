@@ -51,7 +51,8 @@ export class RbacService {
         'backoffice.identity.delete',
         'backoffice.keycloak.read',
         'backoffice.cache.write',
-        'backoffice.ops.read'
+        'backoffice.ops.read',
+        'backoffice.ops.write'
       ];
     }
 

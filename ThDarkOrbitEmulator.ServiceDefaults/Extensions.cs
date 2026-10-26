@@ -11,6 +11,7 @@ using Microsoft.Extensions.ServiceDiscovery;
 using Npgsql;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Serilog;
 using Serilog.Events;
@@ -21,11 +22,14 @@ namespace Microsoft.Extensions.Hosting;
 // Adds common Aspire services: service discovery, resilience, health checks, and OpenTelemetry.
 public static class Extensions
 {
+    private static readonly string InstanceId = $"{Environment.MachineName}-{Environment.ProcessId}";
     private const string HealthEndpointPath = "/health";
     private const string AlivenessEndpointPath = "/alive";
 
     public static TBuilder AddServiceDefaults<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
     {
+        var instanceId = builder.Configuration["Cluster:NodeId"] is { Length: > 0 } nodeId
+            ? nodeId : InstanceId;
         var otlpEndpoint = builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]
             ?? builder.Configuration["ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL"];
 
@@ -48,7 +52,8 @@ public static class Extensions
                     options.Endpoint = otlpEndpoint;
                     options.ResourceAttributes = new Dictionary<string, object>
                     {
-                        ["service.name"] = builder.Environment.ApplicationName
+                        ["service.name"] = builder.Environment.ApplicationName,
+                        ["service.instance.id"] = instanceId
                     };
                 });
             }
@@ -65,7 +70,7 @@ public static class Extensions
             options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
             options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
             {
-                if (context.User.Identity?.IsAuthenticated == true)
+                if (context.User.Identity?.IsAuthenticated == true || context.Request.Path.StartsWithSegments("/spacemap/world") || context.Request.Cookies.ContainsKey("dosid"))
                 {
                     return RateLimitPartition.GetNoLimiter("authenticated");
                 }
@@ -108,6 +113,11 @@ public static class Extensions
         });
 
         var openTelemetryBuilder = builder.Services.AddOpenTelemetry()
+            .ConfigureResource(resource => resource.AddAttributes(new Dictionary<string, object>
+            {
+                ["service.instance.id"] = builder.Configuration["Cluster:NodeId"] is { Length: > 0 } nodeId
+                    ? nodeId : InstanceId
+            }))
             .WithMetrics(metrics =>
             {
                 metrics.AddAspNetCoreInstrumentation()

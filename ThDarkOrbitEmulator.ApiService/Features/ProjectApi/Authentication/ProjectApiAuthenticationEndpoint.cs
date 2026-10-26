@@ -31,8 +31,7 @@ public sealed class ProjectApiAuthenticationEndpoint(
             logger.LogWarning(
                 "ProjectApi authentication rejected. Invalid or expired token. AuthUser: {AuthUser}",
                 requestContext.Query.AuthUser);
-            HttpContext.Response.Headers.Location = "/indexInternal.es?action=externalLogout";
-            HttpContext.Response.StatusCode = StatusCodes.Status302Found;
+            ClientRedirectResponse.Apply(HttpContext.Response, "/indexInternal.es?action=externalLogout");
             await HttpContext.Response.CompleteAsync();
             return;
         }
@@ -49,20 +48,22 @@ public sealed class ProjectApiAuthenticationEndpoint(
 
         if (isInternalGbl3Step)
         {
-            HttpContext.Response.Headers.Location = EmulatorRedirectHelper.ToRedirectLocation(
+            var redirectUrl = EmulatorRedirectHelper.ToRedirectLocation(
                 HttpContext.Request,
                 "/indexInternal.es?action=internalStart&prc=100",
                 "/indexInternal.es?action=internalStart&prc=100");
+            ClientRedirectResponse.Apply(HttpContext.Response, redirectUrl);
 
             AppendSessionCookies(dosid, isEmulator, clearAcr: true);
         }
         else
         {
             var nextToken = rotation.RedirectToken;
-            HttpContext.Response.Headers.Location = EmulatorRedirectHelper.ToRedirectLocation(
+            var redirectUrl = EmulatorRedirectHelper.ToRedirectLocation(
                 HttpContext.Request,
                 $"https://gbl3.darkorbit.com/ProjectApi/Authentication?authUser=22&token={Uri.EscapeDataString(nextToken)}",
                 $"/ProjectApi/Authentication?authUser=22&token={Uri.EscapeDataString(nextToken)}");
+            ClientRedirectResponse.Apply(HttpContext.Response, redirectUrl);
 
             AppendSessionCookies(dosid, isEmulator, clearAcr: false);
         }
@@ -70,7 +71,6 @@ public sealed class ProjectApiAuthenticationEndpoint(
         HttpContext.Response.Headers.Append("Content-Security-Policy", FrameAncestorsPolicy);
         HttpContext.Response.Headers.Append("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
 
-        HttpContext.Response.StatusCode = StatusCodes.Status302Found;
         await HttpContext.Response.CompleteAsync();
     }
 

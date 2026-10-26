@@ -47,15 +47,22 @@ internal sealed class KeycloakRbacBootstrap(
         logger.LogInformation("Keycloak RBAC roles and permissions are configured.");
     }
 
-    public async Task AssignDefaultRealmRoleToUserAsync(string userId, CancellationToken cancellationToken)
+    public Task AssignDefaultRealmRoleToUserAsync(string userId, CancellationToken cancellationToken) =>
+        AssignRealmRoleToUserAsync(userId, KeycloakRbacDefinitions.DefaultRealmRole, cancellationToken);
+
+    public async Task AssignRealmRoleToUserAsync(string userId, string realmRole, CancellationToken cancellationToken)
     {
         using var getRole = new HttpRequestMessage(
             HttpMethod.Get,
-            $"{_rolesEndpoint}/{Uri.EscapeDataString(KeycloakRbacDefinitions.DefaultRealmRole)}");
+            $"{_rolesEndpoint}/{Uri.EscapeDataString(realmRole)}");
         getRole.Headers.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
         using var roleResponse = await httpClient.SendAsync(getRole, cancellationToken);
         if (!roleResponse.IsSuccessStatusCode)
         {
+            logger.LogWarning(
+                "Realm role '{Role}' was not found while assigning to user {UserId}.",
+                realmRole,
+                userId);
             return;
         }
 
@@ -66,7 +73,7 @@ internal sealed class KeycloakRbacBootstrap(
             return;
         }
 
-        var payload = JsonSerializer.Serialize(new[] { new { id = roleIdElement.GetString(), name = KeycloakRbacDefinitions.DefaultRealmRole } });
+        var payload = JsonSerializer.Serialize(new[] { new { id = roleIdElement.GetString(), name = realmRole } });
         using var assignRequest = new HttpRequestMessage(
             HttpMethod.Post,
             $"{realmEndpoint}/users/{userId}/role-mappings/realm");
@@ -77,7 +84,7 @@ internal sealed class KeycloakRbacBootstrap(
         {
             logger.LogWarning(
                 "Failed to assign realm role '{Role}' to user {UserId} (status {Status}).",
-                KeycloakRbacDefinitions.DefaultRealmRole,
+                realmRole,
                 userId,
                 (int)assignResponse.StatusCode);
         }

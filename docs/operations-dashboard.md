@@ -4,6 +4,10 @@ There is no separate backoffice web app for infrastructure. **Player CMS** inclu
 
 Local Aspire dashboard only (not Azure Container Apps).
 
+Resource naming follows **`{purpose}-{technology}`** — see [aspire-dashboard-naming.md](./aspire-dashboard-naming.md).
+
+**DarkOrbit client testing** (local game + mitmproxy): see [client-testing.md](./client-testing.md) — commands on **`gateway-players`**.
+
 ## RBAC (Keycloak)
 
 | Layer | Names | Purpose |
@@ -41,7 +45,7 @@ API policies: `Permission:backoffice.*` (see `ThDarkOrbitEmulator.ServiceDefault
 
 Run from **Aspire dashboard → Resources → ⋮ → command**, or CLI `aspire resource <name> <command-id>`.
 
-### Postgres (`thdarkorbit-emulator`)
+### Postgres (`data-postgres`)
 
 | Command id | Label | Action |
 |------------|-------|--------|
@@ -50,27 +54,27 @@ Run from **Aspire dashboard → Resources → ⋮ → command**, or CLI `aspire 
 | `bo-identity-delete-all` | BO: Delete all identity users | `DELETE FROM identity.accounts` (confirmation) |
 | `operations-database` | Operations: Database | Markdown schema layout |
 
-### Keycloak (`keycloak`)
+### Keycloak (`auth-keycloak`)
 
 | Command id | Label | Action |
 |------------|-------|--------|
 | `bo-keycloak-users` | BO: List Keycloak users | Admin REST API, realm `thdarkorbit` |
 
-### Redis (`cache`)
+### Redis (`sessions-redis`)
 
 | Command id | Label | Action |
 |------------|-------|--------|
 | `operations-redis-info` | Operations: Redis info | Markdown notes |
 | `operations-clear-cache` | Operations: Clear cache | `FLUSHALL` (confirmation) |
 
-### Gateway (`gateway`)
+### Gateway (`gateway-players`)
 
 | Command id | Label | Action |
 |------------|-------|--------|
 | `operations-overview` | Operations: Overview | Stack summary + links |
 | `operations-deployments` | Operations: Deployments | AppHost resource list |
 
-### ApiService (`apiservice`)
+### ApiService (`api-game`)
 
 | Command id | Label | Action |
 |------------|-------|--------|
@@ -89,17 +93,17 @@ Deleting identity rows does **not** remove Keycloak users.
 
 | UI | URL | Notes |
 |----|-----|-------|
-| **Aspire dashboard** | https://localhost:17081 | Traces, structured logs (OTLP from apps → collector → dashboard) |
-| **Prometheus** | http://localhost:19090 | Scrapes `otel-collector:8889` |
-| **Grafana** | http://localhost:13000 (admin/admin) | Prometheus datasource + emulator overview dashboard |
-| **RedisInsight** | http://localhost:5540 | Auto-connected to `cache` via `.WithRedisInsight()` (Aspire wires host, port, password) |
-| **pgAdmin** | http://localhost:5050 | Postgres admin |
+| **Aspire dashboard** | https://localhost:17081 | Traces, structured logs (OTLP from apps → telemetry-otel → dashboard) |
+| **Prometheus** | http://localhost:19090 | Scrapes `telemetry-otel:8889` (resource `metrics-prometheus`) |
+| **Grafana** | http://localhost:13000 (admin/admin) | **Emulator overview** + **HTTP RED** dashboards (resource `dashboards-grafana`) |
+| **RedisInsight** | Aspire dashboard → **sessions-redis** → **sessions-redisinsight** | Auto-connected; use the dashboard link (direct `http://localhost:5540` can show `ERR_EMPTY_RESPONSE` on some Docker setups) |
+| **pgAdmin** | http://localhost:5050 | Postgres admin (child of `data-postgres`) |
 
-`apiservice` and `gateway` send OTLP to **`otel-collector`** (`http://otel-collector:4318`). Metrics are exported to Prometheus; traces/logs are forwarded to the Aspire OTLP endpoint configured on the collector.
+`api-game` and `gateway-players` send OTLP to **`telemetry-otel`** (`http://telemetry-otel:4318`). Metrics are exported to Prometheus; traces/logs are forwarded to the Aspire OTLP endpoint configured on the collector.
 
 ## Traces and structured logs
 
-See previous sections in this doc: generate traffic on `apiservice` / `gateway`, filter by resource in the Aspire dashboard.
+Generate traffic on `api-game` / `gateway-players`, then filter by resource in the Aspire dashboard.
 
 ## Implementation
 
@@ -110,9 +114,9 @@ See previous sections in this doc: generate traffic on `apiservice` / `gateway`,
 ## CLI examples
 
 ```bash
-aspire resource thdarkorbit-emulator bo-identity-users
-aspire resource thdarkorbit-emulator bo-identity-delete-all
-aspire resource keycloak bo-keycloak-users
-aspire resource cache operations-clear-cache
-aspire resource gateway operations-overview
+aspire resource data-postgres bo-identity-users
+aspire resource data-postgres bo-identity-delete-all
+aspire resource auth-keycloak bo-keycloak-users
+aspire resource sessions-redis operations-clear-cache
+aspire resource gateway-players operations-overview
 ```
