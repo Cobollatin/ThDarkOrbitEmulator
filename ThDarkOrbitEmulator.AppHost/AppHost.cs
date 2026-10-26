@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration;
 using ThDarkOrbitEmulator.AppHost;
 using Aspire.Hosting.ApplicationModel;
 using ThDarkOrbitEmulator.AppHost.ClientTesting;
@@ -105,7 +105,9 @@ builder.AddContainer(DashboardResourceNames.DashboardsGrafana, "grafana/grafana-
     .WithExternalDocLink("https://grafana.com/docs/", "Grafana docs")
     .WaitFor(telemetryOtel);
 
-var apiGame = builder.AddProject<Projects.ThDarkOrbitEmulator_ApiService>(DashboardResourceNames.ApiGame)
+// Launch profile "https" binds 60952/443, which are the gateway's Unity listeners under Aspire.
+// Importing them into api-game steals the ports and breaks the /health check (it probes https first).
+var apiGame = builder.AddProject<Projects.ThDarkOrbitEmulator_ApiService>(DashboardResourceNames.ApiGame, launchProfileName: "http")
     .WithReplicas(desiredReplicas)
     .WithHttpEndpoint(name: "http")
     .WithPurposeIcon("Cube")

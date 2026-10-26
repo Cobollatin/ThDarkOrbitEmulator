@@ -7,6 +7,7 @@ using ThDarkOrbitEmulator.ApiService.Features.Economy;
 namespace ThDarkOrbitEmulator.ApiService.Features.IndexInternal.InternalStart;
 
 // DNS: gbl3.darkorbit.com | GET /indexInternal.es | flow ids: 771b953a-11da-47a5-9b69-8736a73849f0, 5ac0f020-1134-40af-9d67-7fd7ab4fa419
+[method: Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
 public sealed class IndexInternalStartEndpoint(ILogger<IndexInternalStartEndpoint> logger,
     IGameAuthSessionStore gameAuthSessionStore,
     IIdentityCommandService identityCommandService,

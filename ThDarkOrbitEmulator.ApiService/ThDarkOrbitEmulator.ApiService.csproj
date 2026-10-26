@@ -22,6 +22,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="ThDarkOrbitEmulator.ApiService.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <EmbeddedResource Include="Features\Resources\CommandCenter\command-center-resources.20261021.xml"
                       LogicalName="CommandCenterResources.xml" />
     <EmbeddedResource Include="Features\Resources\CommandCenter\command-center-categories.20261022.xml"

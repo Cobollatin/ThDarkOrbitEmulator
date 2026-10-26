@@ -12,7 +12,7 @@ public sealed class IdentityDatabaseOptions
 
     public string BackupDirectory { get; set; } = "db-backups";
 
-    public bool BackupBeforeMigration { get; set; } = true;
+    public bool BackupBeforeMigration { get; set; } = false;
 
     public string PgDumpExecutable { get; set; } = "pg_dump";
 
