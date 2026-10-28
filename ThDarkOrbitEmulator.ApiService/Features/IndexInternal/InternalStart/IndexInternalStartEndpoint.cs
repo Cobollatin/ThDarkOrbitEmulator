@@ -1065,7 +1065,7 @@ public sealed class IndexInternalStartEndpoint(ILogger<IndexInternalStartEndpoin
                 && string.Equals(requestContext.Query.Action, "internalWebGL", StringComparison.OrdinalIgnoreCase))
             {
                 HttpContext.Response.StatusCode = StatusCodes.Status200OK;
-                HttpContext.Response.ContentType = "text/plain; charset=UTF-8";
+                HttpContext.Response.ContentType = "text/html; charset=UTF-8";
                 HttpContext.Response.ContentLength = System.Text.Encoding.UTF8.GetByteCount(session.Dosid);
                 await HttpContext.Response.WriteAsync(session.Dosid, ct);
                 await HttpContext.Response.CompleteAsync();
