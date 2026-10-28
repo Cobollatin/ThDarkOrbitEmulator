@@ -194,8 +194,8 @@ public sealed class WorldRocketAndNpcAggroTests
         Assert.Multiple(() =>
         {
             Assert.That(moved.X, Is.EqualTo(npc.X + 100));
-            Assert.That(sessions.CurrentShield(pilot), Is.EqualTo(10));
-            Assert.That(sessions.CurrentHitPoints(pilot), Is.EqualTo(100));
+            Assert.That(sessions.CurrentShield(pilot), Is.EqualTo(18));
+            Assert.That(sessions.CurrentHitPoints(pilot), Is.EqualTo(92));
         });
         clock.Advance(TimeSpan.FromSeconds(2));
         await npcs.TickAggroAsync(1, sessions, default);

@@ -1269,13 +1269,15 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         }
     }
 
-    public async Task ApplyNpcDamageAsync(WorldPilot pilot, int npcId, int damage, CancellationToken ct)
+    public async Task ApplyNpcDamageAsync(WorldPilot pilot, int npcId, int damage, CancellationToken ct,
+        double shieldAbsorption = 1)
     {
         var expectedMapId = pilot.MapId;
         pilot = await RestoreAsync(pilot, ct);
         if (pilot.MapId != expectedMapId || CurrentHitPoints(pilot) <= 0) return;
         await MarkCombatAsync(pilot, ct);
-        var absorbed = Math.Min(CurrentShield(pilot), damage);
+        var absorbed = Math.Min(CurrentShield(pilot),
+            (long)Math.Round(Math.Max(0, damage) * Math.Clamp(shieldAbsorption, 0, 1)));
         shields[pilot.UserId] = CurrentShield(pilot) - absorbed;
         hitPoints[pilot.UserId] = Math.Max(0, CurrentHitPoints(pilot) - (damage - absorbed));
         await PersistRuntimeAsync(pilot, ct);
