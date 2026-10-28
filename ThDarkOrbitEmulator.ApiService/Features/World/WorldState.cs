@@ -177,6 +177,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private static string RuntimeKey(long userId) => $"world:runtime:{userId}";
     private static string CombatKey(long userId) => $"world:combat:{userId}";
     private static string ShieldRecoveryKey(long userId) => $"world:shield-recovery:{userId}";
+    private static string HullRecoveryKey(long userId) => $"world:hull-recovery:{userId}";
     private static string PresenceKey(int mapId) => $"world:presence:map:{mapId}";
     private static readonly TimeSpan PortalCombatWindow = TimeSpan.FromSeconds(10);
 
@@ -218,6 +219,40 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 shields[pilot.UserId] = Math.Min(maxShield, shield + Math.Max(1, maxShield / 25));
                 await PersistRuntimeAsync(pilot, ct);
                 await cache.SetStringAsync(ShieldRecoveryKey(pilot.UserId), now.ToUnixTimeMilliseconds().ToString(),
+                    new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);
+            }
+            finally { gate.Release(); }
+        }
+    }
+
+    // Field repair runs only for a stopped, living pilot after combat has ended.
+    // The shared tick marker prevents a lease handoff from granting an extra repair.
+    public async Task RecoverHullAsync(int mapId, CancellationToken ct, WorldLeaseFence? fence = null)
+    {
+        foreach (var connectedPilot in await ConnectedAsync(mapId, ct))
+        {
+            var gate = movementGates.GetOrAdd(connectedPilot.UserId, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync(ct);
+            try
+            {
+                await using var held = meshMutex is null ? null : await meshMutex.AcquireAsync(ct);
+                await CheckLeaseAsync(mapId, fence, ct);
+                var pilot = await RefreshAsync(connectedPilot, ct);
+                if (pilot.MapId != mapId) continue;
+                var now = combatClock.GetUtcNow();
+                var hitPointMaximum = ActiveStats(pilot).MaxHitPoints;
+                var current = CurrentHitPoints(pilot);
+                if (current <= 0 || current >= hitPointMaximum || CurrentPosition(pilot, now) != Destination(pilot))
+                    continue;
+                var combat = await cache.GetStringAsync(CombatKey(pilot.UserId), ct);
+                if (long.TryParse(combat, out var combatMs) &&
+                    now - DateTimeOffset.FromUnixTimeMilliseconds(combatMs) < PortalCombatWindow) continue;
+                var recovery = await cache.GetStringAsync(HullRecoveryKey(pilot.UserId), ct);
+                if (long.TryParse(recovery, out var recoveryMs) &&
+                    now - DateTimeOffset.FromUnixTimeMilliseconds(recoveryMs) < TimeSpan.FromSeconds(1)) continue;
+                hitPoints[pilot.UserId] = Math.Min(hitPointMaximum, current + Math.Max(1, hitPointMaximum / 40));
+                await PersistRuntimeAsync(pilot, ct);
+                await cache.SetStringAsync(HullRecoveryKey(pilot.UserId), now.ToUnixTimeMilliseconds().ToString(),
                     new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);
             }
             finally { gate.Release(); }

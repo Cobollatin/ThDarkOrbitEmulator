@@ -1150,6 +1150,44 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(store.CurrentShield(pilot), Is.EqualTo(400));
     }
 
+    [Test]
+    public async Task PilotHullRecovery_RequiresQuietAndStoppedShip_AndSurvivesReplicaHandoff()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingClock();
+        var store = new WorldSessionStore(cache, clock: clock);
+        var pilot = await store.EnterAsync(Pilot() with
+        {
+            UserId = 906, X = 5000, Y = 5000,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 60, default);
+        await store.MoveAsync(pilot, 10000, 5000, null, default, clock.GetUtcNow());
+
+        clock.Advance(TimeSpan.FromSeconds(9));
+        await store.RecoverHullAsync(pilot.MapId, default);
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(940));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await store.RecoverHullAsync(pilot.MapId, default);
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(940));
+        clock.Advance(TimeSpan.FromSeconds(7));
+        await store.RecoverHullAsync(pilot.MapId, default);
+        await store.RecoverHullAsync(pilot.MapId, default);
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(965));
+
+        var replica = new WorldSessionStore(cache, clock: clock);
+        await replica.EnterAsync(pilot, default);
+        await replica.RecoverHullAsync(pilot.MapId, default);
+        Assert.That(replica.CurrentHitPoints(pilot), Is.EqualTo(965));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await replica.RecoverHullAsync(pilot.MapId, default);
+        Assert.That(replica.CurrentHitPoints(pilot), Is.EqualTo(990));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await replica.RecoverHullAsync(pilot.MapId, default);
+        Assert.That(replica.CurrentHitPoints(pilot), Is.EqualTo(1000));
+    }
+
     [TestCase("0", 0)]
     [TestCase("1000000", 1000000)]
     [TestCase("-1", 150)]

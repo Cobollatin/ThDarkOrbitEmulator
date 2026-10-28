@@ -44,6 +44,7 @@ public sealed class WorldNpcSimulationService(WorldNpcs npcs, WorldSessionStore 
                     await npcs.TickAggroAsync(lease.MapId, sessions, stoppingToken, fence);
                     await npcs.TickLasersAsync(lease.MapId, sessions, stoppingToken, fence);
                     await sessions.RecoverShieldsAsync(lease.MapId, stoppingToken, fence);
+                    await sessions.RecoverHullAsync(lease.MapId, stoppingToken, fence);
                 }
                 catch (WorldLeaseLostException) { continue; }
                 var visible = await npcs.VisibleAsync(lease.MapId, stoppingToken);
