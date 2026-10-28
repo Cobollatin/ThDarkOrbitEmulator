@@ -30,7 +30,7 @@ public class ApiServiceVerticalSliceTests
             "CompanyCatalog.Find(session.Company)",
             "if (company is null)",
             "state.GetAsync(session, ct)",
-            "state.DetailsAsync(session, account.Slot, ct)"
+            "state.DetailsAsync(session, account.Slot, account.ShipId, ct)"
         };
         var positions = stages.Select(stage => resolver.IndexOf(stage, StringComparison.Ordinal)).ToArray();
         Assert.Multiple(() =>

@@ -907,6 +907,18 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public void ShipStats_UseAssignedShipForHullCargoAndSpeed_WhileEquipmentFollowsSlot()
+    {
+        var equipment = new LocalEquipmentState(
+            [new("laser_lf3", "", "", 1)], [new(1, 1, "laser_lf3", 1)]);
+        var stats = WorldShipStatCalculator.Calculate(1, equipment, new LocalPilotSkillState([]),
+            shipId: "ship_phoenix");
+
+        Assert.That((stats.Speed, stats.MaxHitPoints, stats.CargoCapacity, stats.LaserDamage),
+            Is.EqualTo((320, 4000L, 100, 150)));
+    }
+
+    [Test]
     public void MapGraph_StaysInsideFaction_AndLeavesFourthMapWithoutInboundPortal()
     {
         var maps = Enumerable.Range(1, 16).Select(WorldMapInstance.Starter).ToArray();
@@ -1029,6 +1041,27 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(990));
         await store.RepairAtBaseAsync(pilot, now.AddSeconds(1), default);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(1000));
+    }
+
+    [Test]
+    public async Task StationRepair_RechargesShieldWhenHullIsAlreadyFull()
+    {
+        using var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection()
+            .AddDistributedMemoryCache().BuildServiceProvider();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var pilot = new WorldPilot(904, "mmo", 1, 1, "ship_pusat-plus", 0, 0)
+            { Stats = new WorldShipStats(300, 1000, 500, 0, 0, []) };
+        await store.EnterAsync(pilot, default);
+        store.SetCurrentShield(pilot, 400);
+
+        await store.RepairAtBaseAsync(pilot, DateTimeOffset.UtcNow, default);
+
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(1000));
+        Assert.That(store.CurrentShield(pilot), Is.EqualTo(410));
+        var replica = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var restored = await replica.RestoreAsync(pilot, default);
+        Assert.That(restored.ShipId, Is.EqualTo("ship_pusat-plus"));
+        Assert.That(replica.CurrentShield(restored), Is.EqualTo(410));
     }
 
     [TestCase("0", 0)]

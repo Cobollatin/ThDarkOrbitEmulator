@@ -51,10 +51,11 @@ public static class WorldShipStatCalculator
     };
 
     public static WorldShipStats Calculate(int slot, LocalEquipmentState equipment, LocalPilotSkillState skills,
-        IReadOnlyList<EconomyListing>? catalog = null, int configuration = 1, int? baseSpeed = null)
+        IReadOnlyList<EconomyListing>? catalog = null, int configuration = 1, int? baseSpeed = null,
+        string? shipId = null)
     {
         if (configuration is not (1 or 2)) throw new ArgumentOutOfRangeException(nameof(configuration));
-        var spec = LocalHangars.Spec(slot);
+        var spec = shipId is null ? LocalHangars.Spec(slot) : LocalHangars.SpecForShip(shipId, slot);
         var assigned = equipment.Assignments.Where(a => a.HangarSlot == slot && a.Configuration == configuration)
             .Where(a => a.Quantity > 0 && equipment.Inventory.Any(i => i.Id == a.ItemId && i.Quantity >= a.Quantity))
             .ToArray();
@@ -332,9 +333,11 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private async Task<int> EffectiveSpeedAsync(WorldPilot pilot, WorldShipStats stats, CancellationToken ct)
     {
         if (variables is null) return stats.Speed;
-        var key = pilot.HangarSlot == 2 ? "world.ship.phoenix_base_speed" : "world.ship.pusat_plus_base_speed";
+        var key = pilot.ShipId == "ship_phoenix" || pilot.ShipId != "ship_pusat-plus" && pilot.HangarSlot == 2
+            ? "world.ship.phoenix_base_speed" : "world.ship.pusat_plus_base_speed";
         var currentBase = (int)await variables.NumberAsync(key, ct);
-        var loadedBase = pilot.BaseSpeedAtLoad > 0 ? pilot.BaseSpeedAtLoad : LocalHangars.Spec(pilot.HangarSlot).Speed;
+        var loadedBase = pilot.BaseSpeedAtLoad > 0 ? pilot.BaseSpeedAtLoad
+            : LocalHangars.SpecForShip(pilot.ShipId, pilot.HangarSlot).Speed;
         var multiplier = await variables.NumberAsync("world.movement.speed_multiplier", ct);
         return Math.Max(1, (int)Math.Round((stats.Speed + currentBase - loadedBase) * multiplier));
     }
@@ -901,11 +904,19 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         var peaceRadius = variables is null ? station.PeaceRadius
             : (int)await variables.NumberAsync("world.station.peace_radius", ct);
         if (position != target || dx * dx + dy * dy > (long)peaceRadius * peaceRadius) return;
+        var stats = ActiveStats(pilot);
         var current = CurrentHitPoints(pilot);
-        var full = ActiveStats(pilot).MaxHitPoints;
-        if (current >= full) return;
-        var repair = variables is null ? 0 : (long)await variables.NumberAsync("world.station.repair_hp_per_tick", ct);
-        hitPoints[pilot.UserId] = Math.Min(full, current + (repair > 0 ? repair : Math.Max(1, full / 50)));
+        var shield = CurrentShield(pilot);
+        if (current >= stats.MaxHitPoints && shield >= stats.MaxShield) return;
+        if (current < stats.MaxHitPoints)
+        {
+            var repair = variables is null ? 0 : (long)await variables.NumberAsync("world.station.repair_hp_per_tick", ct);
+            hitPoints[pilot.UserId] = Math.Min(stats.MaxHitPoints,
+                current + (repair > 0 ? repair : Math.Max(1, stats.MaxHitPoints / 50)));
+        }
+        if (shield < stats.MaxShield)
+            shields[pilot.UserId] = Math.Min(stats.MaxShield,
+                shield + Math.Max(1, stats.MaxShield / 50));
         await PersistRuntimeAsync(pilot, ct);
     }
 

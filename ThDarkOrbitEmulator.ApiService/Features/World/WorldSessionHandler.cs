@@ -40,6 +40,8 @@ public interface IWorldAccountState
         CancellationToken ct);
     Task<WorldAccountDetails?> DetailsAsync(GameAuthSession session, int slot, CancellationToken ct) =>
         Task.FromResult<WorldAccountDetails?>(null);
+    Task<WorldAccountDetails?> DetailsAsync(GameAuthSession session, int slot, string shipId, CancellationToken ct) =>
+        DetailsAsync(session, slot, ct);
 }
 
 public sealed record WorldAccountDetails(WorldShipStats Stats, long Experience, long Honor, int Level,
@@ -67,19 +69,29 @@ public sealed class WorldAccountState(LocalHangarStore hangars, EconomyStore eco
 
     public async Task<WorldAccountDetails?> DetailsAsync(GameAuthSession session, int slot, CancellationToken ct)
     {
+        var ship = catalog is null ? LocalHangars.For(session, slot)[slot - 1].ShipId
+            : (await catalog.HangarsAsync(session, slot, ct)).FirstOrDefault(item => item.SlotNumber == slot)?.ShipId
+                ?? LocalHangars.For(session, slot)[slot - 1].ShipId;
+        return await DetailsAsync(session, slot, ship, ct);
+    }
+
+    public async Task<WorldAccountDetails?> DetailsAsync(GameAuthSession session, int slot, string shipId, CancellationToken ct)
+    {
         var assigned = await equipment.GetAsync(session.AccountId, ct);
         var trained = await skills.GetAsync(session.AccountId, ct);
         var catalog = await economy.ListingsAsync(ct);
         var balances = await economy.BalancesAsync(session.AccountId, ct);
         long Balance(string id) => balances.FirstOrDefault(item => item.AssetId == id)?.Amount ?? 0;
+        var spec = LocalHangars.SpecForShip(shipId, slot);
         var baseSpeed = variables is null ? (int?)null : (int)await variables.NumberAsync(
-            slot == 2 ? "world.ship.phoenix_base_speed" : "world.ship.pusat_plus_base_speed", ct);
-        var first = WorldShipStatCalculator.Calculate(slot, assigned, trained, catalog, baseSpeed: baseSpeed);
-        var second = WorldShipStatCalculator.Calculate(slot, assigned, trained, catalog, 2, baseSpeed);
+            shipId == "ship_phoenix" || shipId != "ship_pusat-plus" && slot == 2
+                ? "world.ship.phoenix_base_speed" : "world.ship.pusat_plus_base_speed", ct);
+        var first = WorldShipStatCalculator.Calculate(slot, assigned, trained, catalog, baseSpeed: baseSpeed, shipId: shipId);
+        var second = WorldShipStatCalculator.Calculate(slot, assigned, trained, catalog, 2, baseSpeed, shipId);
         var pet = await pets.GetAsync(session.AccountId, ct);
         return new WorldAccountDetails(first, Balance("experience"), Balance("honor"), 1, second.Speed, second,
             WorldCompanions.FromEquipment(assigned, slot, pet),
-            WorldCompanions.FromEquipment(assigned, slot, pet, 2), baseSpeed ?? LocalHangars.Spec(slot).Speed);
+            WorldCompanions.FromEquipment(assigned, slot, pet, 2), baseSpeed ?? spec.Speed);
     }
 }
 
@@ -96,7 +108,7 @@ public sealed class WorldPilotResolver(IGameAuthSessionStore sessions, IWorldAcc
         var company = CompanyCatalog.Find(session.Company);
         if (company is null) return (null, WorldLoginError.CompanyRequired);
         var account = await state.GetAsync(session, ct);
-        var details = await state.DetailsAsync(session, account.Slot, ct);
+        var details = await state.DetailsAsync(session, account.Slot, account.ShipId, ct);
         return (new WorldPilot(userId, company.Code, int.Parse(company.StarterMap), account.Slot,
             account.ShipId, account.Credits, account.Uridium)
         {

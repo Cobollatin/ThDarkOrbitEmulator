@@ -8,5 +8,7 @@
 - `_reversing/`: local analysis artifacts and captured sessions; `scripts/client-testing/` contains capture helpers.
 - `_reversing/Analysis/trace_il2cpp.py`: bounded native disassembly using the ignored `il2cpp-dump/` method map; findings are recorded in `docs/cockpit-catalog.md`.
 - `ThDarkOrbitEmulator.AppHost/`: Aspire wiring, including HTTPS and world listener ports.
+- `ThDarkOrbitEmulator.Tests/Integration/WorldAssignedHangarPostgresTests.cs`: PostgreSQL cockpit assignment to world stat entry regression.
+- `.ralph/memory-index.json`: focused world entry, transport, simulation, and test paths; records the currently missing requested spec files.
 
 Read the relevant feature directory and documentation before broader searches. Update this index when adding or moving modules.

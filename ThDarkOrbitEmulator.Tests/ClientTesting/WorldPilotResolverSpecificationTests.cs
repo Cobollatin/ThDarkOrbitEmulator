@@ -123,6 +123,7 @@ public sealed class WorldPilotResolverSpecificationTests
             Assert.That(account.GetCalls, Is.EqualTo(1));
             Assert.That(account.DetailCalls, Is.EqualTo(1));
             Assert.That(account.DetailSlot, Is.EqualTo(2));
+            Assert.That(account.DetailShipId, Is.EqualTo("ship-2"));
         });
     }
 
@@ -137,6 +138,7 @@ public sealed class WorldPilotResolverSpecificationTests
         public int GetCalls { get; private set; }
         public int DetailCalls { get; private set; }
         public int DetailSlot { get; private set; }
+        public string? DetailShipId { get; private set; }
         public WorldAccountDetails Details { get; } = new(
             new WorldShipStats(390, 1000, 500, 50, 25, []), 789, 321, 7, 465,
             new WorldShipStats(465, 1200, 600, 60, 30, []), [], [], 390);
@@ -153,6 +155,13 @@ public sealed class WorldPilotResolverSpecificationTests
             DetailCalls++;
             DetailSlot = slot;
             return Task.FromResult<WorldAccountDetails?>(Details);
+        }
+
+        public Task<WorldAccountDetails?> DetailsAsync(GameAuthSession session, int slot, string shipId,
+            CancellationToken ct)
+        {
+            DetailShipId = shipId;
+            return DetailsAsync(session, slot, ct);
         }
     }
 

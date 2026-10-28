@@ -1,0 +1,24 @@
+{
+  "world": {
+    "entry": "ThDarkOrbitEmulator.ApiService/Features/World/WorldSessionHandler.cs",
+    "tcpListener": "ThDarkOrbitEmulator.ApiService/Features/World/WorldServerHostedService.cs",
+    "httpBridge": "ThDarkOrbitEmulator.ApiService/Features/World/WorldHttpBridge.cs",
+    "movementAndVitals": "ThDarkOrbitEmulator.ApiService/Features/World/WorldState.cs",
+    "npcCombatAndRewards": "ThDarkOrbitEmulator.ApiService/Features/World/WorldNpcs.cs",
+    "npcSpawning": "ThDarkOrbitEmulator.ApiService/Features/World/WorldNpcSimulationService.cs",
+    "assignedHangars": "ThDarkOrbitEmulator.ApiService/Features/UnityApi/Login/CockpitCatalogStore.cs",
+    "tests": [
+      "ThDarkOrbitEmulator.Tests/ClientTesting/WorldPilotResolverSpecificationTests.cs",
+      "ThDarkOrbitEmulator.Tests/ClientTesting/WorldAndSpacemapSpecificationTests.cs",
+      "ThDarkOrbitEmulator.Tests/ClientTesting/WorldTransportTests.cs",
+      "ThDarkOrbitEmulator.Tests/ClientTesting/WorldHttpBridgeTests.cs"
+    ],
+    "contractNotes": "docs/world-protocol.md",
+    "availableSpec": "docs/specs/06-world-server-and-spacemap.md"
+  },
+  "missingRequestedSpecs": [
+    "docs/specs/04-world-simulation-and-movement.md",
+    "docs/specs/05-combat-weapons-and-damage.md",
+    "docs/specs/06-npcs-ai-and-spawning.md"
+  ]
+}

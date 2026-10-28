@@ -32,6 +32,13 @@ public static class LocalHangars
         ? new ShipSpec(4000, 320, 100, 1, 1, 1)
         : new ShipSpec(128000, 370, 1500, 5, 12, 2);
 
+    public static ShipSpec SpecForShip(string shipId, int fallbackSlot) => shipId switch
+    {
+        "ship_phoenix" => Spec(2),
+        "ship_pusat-plus" => Spec(1),
+        _ => Spec(fallbackSlot)
+    };
+
     public static bool IsValidSlot(int slot) => slot is 1 or 2;
 
     // Strict slot parser: only the canonical "1" or "2", no signs, spaces or leading zeros.
