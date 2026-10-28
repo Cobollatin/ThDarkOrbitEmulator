@@ -1226,8 +1226,9 @@ public sealed class WorldAndSpacemapSpecificationTests
             ("bonus", "credits", 200), ("bonus", "uridium", 5), ("bonus", "galaxy_energy", 1),
             ("ore", "prometium", 10), ("ore", "endurium", 8), ("ore", "terbium", 6)
         }));
-        Assert.That(first[0].Id, Is.EqualTo(1001));
-        Assert.That(WorldCollectibles.Spawn(2, 100)[0].Id, Is.EqualTo(2001));
+        Assert.That(first[0].Id, Is.EqualTo((1 << 26) | (100 << 10) | 1));
+        Assert.That(WorldCollectibles.Spawn(2, 100)[0].Id, Is.Not.EqualTo(first[0].Id));
+        Assert.That(WorldCollectibles.Spawn(1, 101)[0].Id, Is.Not.EqualTo(first[0].Id));
         Assert.That(WorldCollectibles.Spawn(1, 101)[0].X, Is.Not.EqualTo(first[0].X));
         Assert.That(WorldCollectibles.Spawn(1, 100, -1), Is.Empty);
         Assert.That(WorldCollectibles.Spawn(1, 100, 1001).Count, Is.EqualTo(1000));

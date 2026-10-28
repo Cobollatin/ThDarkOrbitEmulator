@@ -50,7 +50,10 @@ public sealed class WorldCollectibles(IDistributedCache cache, IServerMeshMutex 
         {
             var reward = rewards[index % rewards.Length];
             var seed = (long)mapId * 1709 + index * 7919 + cycle * 31;
-            return new WorldCollectible(mapId * 1000 + index + 1, reward.Kind,
+            // The wire ID identifies this spawn, not a reusable map slot. A delayed
+            // pickup from the previous cycle must not claim its replacement.
+            var id = (mapId << 26) | ((int)(cycle & 0xffff) << 10) | (index + 1);
+            return new WorldCollectible(id, reward.Kind,
                 2600 + (int)(seed % 15800), 2200 + (int)((seed * 37) % 8700),
                 reward.Asset, reward.Amount);
         }).ToArray();

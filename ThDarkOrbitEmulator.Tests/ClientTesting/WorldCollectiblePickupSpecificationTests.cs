@@ -16,7 +16,7 @@ public sealed class WorldCollectiblePickupSpecificationTests
         var boxes = WorldCollectibles.Spawn(3, 42, 8);
         Assert.Multiple(() =>
         {
-            Assert.That(boxes.Select(b => b.Id), Is.EqualTo(Enumerable.Range(3001, 8)));
+            Assert.That(boxes.Select(b => b.Id), Is.EqualTo(Enumerable.Range((3 << 26) | (42 << 10) | 1, 8)));
             Assert.That(boxes.Select(b => (b.Kind, b.AssetId, b.Amount)), Is.EqualTo(new[]
             {
                 ("bonus", "credits", 200), ("bonus", "uridium", 5), ("bonus", "galaxy_energy", 1),
@@ -137,9 +137,12 @@ public sealed class WorldCollectiblePickupSpecificationTests
         Assert.That((await world.Collectibles.VisibleAsync(1, default)).Any(b => b.Id == box.Id), Is.False);
 
         world.Clock.Now = Start.AddSeconds(60);
-        var respawned = (await world.Collectibles.VisibleAsync(1, default)).Single(b => b.Id == box.Id);
+        var respawned = (await world.Collectibles.VisibleAsync(1, default)).Single(b => b.AssetId == box.AssetId);
         Assert.That(respawned, Is.EqualTo(WorldCollectibles.Spawn(1, cycle + 1)[0]),
             "the next runtime-length cycle respawns the slot at its new coordinates");
+        Assert.That(respawned.Id, Is.Not.EqualTo(box.Id));
+        Assert.That((await world.Collectibles.CollectAsync(pilot, box.Id, world.Sessions, default)).Status,
+            Is.EqualTo("missing"), "a delayed pickup cannot claim the next spawn");
     }
 
     [Test]
@@ -159,7 +162,7 @@ public sealed class WorldCollectiblePickupSpecificationTests
     {
         var world = World.Create(new() { ["world.spawn.bonus_box_count"] = 2 });
         Assert.That((await world.Collectibles.VisibleAsync(4, default)).Select(b => b.Id),
-            Is.EqualTo(new[] { 4001, 4002 }));
+            Is.EqualTo(WorldCollectibles.Spawn(4, Start.ToUnixTimeSeconds() / 300, 2).Select(b => b.Id)));
         var pilot = await world.Sessions.EnterAsync(Pilot(Guid.NewGuid(), 5000, 5000) with { MapId = 4 }, default);
         Assert.That((await world.Collectibles.CollectAsync(pilot, 4003, world.Sessions, default)).Status,
             Is.EqualTo("missing"), "slots beyond the runtime count cannot be collected");
