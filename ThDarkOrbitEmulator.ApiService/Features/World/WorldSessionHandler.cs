@@ -201,7 +201,7 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
             try
             {
                 using var readStop = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                var pendingRead = reader.ReadAsync(readStop.Token);
+                var pendingRead = reader.ReadAsync(readStop.Token, preLogin: connected is null);
                 while (connected is not null && !pendingRead.IsCompleted)
                 {
                     await Task.WhenAny(pendingRead, Task.Delay(TimeSpan.FromSeconds(1), ct));
@@ -262,6 +262,7 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                 packet = await pendingRead;
             }
             catch (EndOfStreamException) { return; }
+            catch (NativeWorldProtocolException) { return; }
             catch (InvalidDataException)
             {
                 await ErrorAsync(writer, WorldLoginError.Malformed, ct);

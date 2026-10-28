@@ -61,19 +61,29 @@ public enum WorldLoginError : byte
 
 public sealed class WorldPacketReader(Stream stream, int maximumPacketBytes = 65536)
 {
-    public async Task<WorldPacket?> ReadAsync(CancellationToken ct = default)
+    public async Task<WorldPacket?> ReadAsync(CancellationToken ct = default, bool preLogin = false)
     {
         var header = new byte[4];
         var count = await stream.ReadAsync(header, ct);
         if (count == 0) return null;
         await stream.ReadExactlyAsync(header.AsMemory(count), ct);
+        // The installed Unity client uses a three-byte length and libcom module IDs.
+        // Do not interpret its version frame as a large local-protocol allocation.
+        if (preLogin && header[0] == 0 && header[1] == 0 && header[2] >= 2
+            && header[3] == 0x9a)
+            throw new NativeWorldProtocolException();
         var length = BinaryPrimitives.ReadInt32BigEndian(header);
-        if (length < 2 || length > maximumPacketBytes)
+        if (length < 2 || length > maximumPacketBytes || preLogin && length > 4096)
             throw new InvalidDataException("Invalid world packet length.");
         var body = new byte[length];
         await stream.ReadExactlyAsync(body, ct);
         return new WorldPacket((WorldCommandId)BinaryPrimitives.ReadUInt16BigEndian(body), body.AsMemory(2));
     }
+}
+
+public sealed class NativeWorldProtocolException : IOException
+{
+    public NativeWorldProtocolException() : base("Native Unity world protocol is not implemented.") { }
 }
 
 public readonly record struct WorldPacket(WorldCommandId Command, ReadOnlyMemory<byte> Payload);

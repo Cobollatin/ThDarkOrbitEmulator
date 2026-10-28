@@ -1899,6 +1899,40 @@ public class WorldTransportTests
         }
     }
 
+    [Test]
+    public async Task Loopback_NativeVersionPreamble_ClosesWithoutWaitingForLocalFrameOrResolvingSession()
+    {
+        var resolver = new FakeResolver((null, WorldLoginError.UnknownSession));
+        var (client, server, worker) = await ConnectAsync(resolver);
+        using (client)
+        using (server)
+        {
+            // Native PacketParser uses a three-byte length; 0x029a is VersionRequest.
+            await client.GetStream().WriteAsync(new byte[] { 0, 0, 40, 0x9a, 0x02 });
+            await worker.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.That(worker.IsCompletedSuccessfully, Is.True);
+            Assert.That(resolver.Calls, Is.Zero);
+        }
+    }
+
+    [Test]
+    public async Task Loopback_OversizedPreloginFrame_RejectsHeaderWithoutWaitingForBody()
+    {
+        var resolver = new FakeResolver((null, WorldLoginError.UnknownSession));
+        var (client, server, worker) = await ConnectAsync(resolver);
+        using (client)
+        using (server)
+        {
+            await client.GetStream().WriteAsync(new byte[] { 0, 0, 0x20, 1 });
+            var error = (await new WorldPacketReader(client.GetStream()).ReadAsync()
+                .WaitAsync(TimeSpan.FromSeconds(2)))!.Value;
+            Assert.That(error.Command, Is.EqualTo(WorldCommandId.LoginErrorCommand));
+            Assert.That(error.Payload.ToArray(), Is.EqualTo(new byte[] { (byte)WorldLoginError.Malformed }));
+            Assert.That(resolver.Calls, Is.Zero);
+            await worker.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+    }
+
     [TestCase(0)]
     [TestCase(1)]
     [TestCase(2)]

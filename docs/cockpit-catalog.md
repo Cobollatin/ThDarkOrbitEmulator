@@ -157,5 +157,34 @@ category mapping or client asset fix. Adding an emulator XML route cannot make
 the native mapping contain those keys. The current server-side locale override
 records are therefore not a repair for this log message.
 
-The native world socket login framing remains unobserved. The emulator's
+An actual native world socket login capture remains unavailable. The emulator's
 existing world protocol remains its documented local diagnostic contract.
+
+## Native world transport after START (installed 2026-10-28 build)
+
+The post-XML path is `NetConnectionHelper.ConnectToMap` (`0x2AB870`), which
+selects `MapsPattern.GameServerIP` from `maps.xml` (or the configured default)
+and calls `Connect` (`0x2ABBA0`). `Connect` creates a `SocketComponent` session
+and sends `VersionRequest`; `HandleVersionResponse` (`0x2AC810`) sends
+`LoginRequest` only when the server's `VersionCommand.equal` is true. This is
+native code and metadata evidence, not a captured START socket exchange.
+
+| IL2CPP method / RVA | Native module ID and structure |
+| --- | --- |
+| `VersionRequest.getLibcomModuleId` `0x15A8320`; `write` `0x15A8330` | `0x029A` (666). Writes the 16-bit ID, then a 16-bit UTF-8 byte count and the version bytes. The installed client literal is `05bcf83b06964a516a8282e10dbf3369` (`SendVersionRequest` `0x2AF370`). |
+| `VersionCommand.getLibcomModuleId` `0x15A81B0`; `read` `0x15660A0` | `0x029B` (667). Reads a length-prefixed UTF-8 `version` and a Boolean `equal`. |
+| `LoginRequest.getLibcomModuleId` `0x10A9A10`; `write` `0x1546DE0` | `0x0007`. Fields are `int32 userID`, `int16 factionID`, UTF-8 `sessionID`, UTF-8 `version`, `int32 instanceId`, Boolean `isMiniClient`, in that order after the ID. The integer writes rotate bits (`userID` by 3, `factionID` by 7, `instanceId` by 12); `SendLoginRequest` (`0x2AEAA0`) populates the fields from the current login data and settings. |
+| `LoginResponse.getLibcomModuleId` `0x1546F50`; `read` `0x14AC830` | Signed 16-bit ID `-23284` (`0xA50C`). Reads one 16-bit status enum. |
+| `MoveRequest.getLibcomModuleId` `0x1565050` | `0x0052` (82); metadata fields are `int32 positionX,targetY,targetX,positionY`. |
+| `JumpRequest.getLibcomModuleId` `0x10CA500`; `write` `0x153EC30` | `0x000A` (10), ID only; no portal ID field. `JumpToServerCommand` is ID `0x0014` (20), also ID only. |
+
+`PacketParser.Parse` (`0xF45420`) reads a **three-byte big-endian length** from
+its circular buffer before copying that many body bytes. `TcpChannel.Send`
+(`0xF49E90`) serializes `IModule.write` and reserves a three-byte frame header,
+with a special extra byte for `VersionRequest`. The precise first outbound
+frame bytes and server responses still require a native capture. The local
+world listener's four-byte length, two-byte big-endian command ID and
+`local-1` version are incompatible with these native module definitions.
+The listener now rejects a recognized native version preamble before treating
+it as a large local frame and bounds prelogin local frames to 4,096 bytes;
+it does not claim native gameplay compatibility.

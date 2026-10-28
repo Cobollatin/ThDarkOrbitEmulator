@@ -4,6 +4,31 @@
 
 This specifies the **local emulator** in `Features/World`: its provisional TCP listener, shared world state, and browser page reached through `action=internalMapRevolution`. The command numbers and JSON below are emulator contracts, not confirmed official Unity wire contracts. `docs/world-protocol.md` records incremental loopback and local HTTP evidence. World units are integer map coordinates; speed is units per second; server state is authoritative.
 
+### Installed Unity socket evidence (2026-10-28)
+
+After START queues dynamic XML, `NetConnectionHelper.ConnectToMap` resolves
+`MapsPattern.GameServerIP` and `Connect` creates the native socket session.
+It sends `VersionRequest` module `0x029A` with the installed 32-character
+version hash; `VersionCommand` `0x029B` carries a UTF-8 version and Boolean
+`equal`, and an equal result triggers `LoginRequest` module `0x0007`.
+Native login fields are `int32 userID`, `int16 factionID`, UTF-8 `sessionID`,
+UTF-8 `version`, `int32 instanceId`, Boolean `isMiniClient`; the three integer
+fields have generated bit rotations. `LoginResponse` is signed module ID
+`-23284` (`0xA50C`) with a 16-bit status. `MoveRequest` is `0x0052` with
+`positionX,targetY,targetX,positionY`; ID-only `JumpRequest` is `0x000A`.
+`PacketParser.Parse` consumes a three-byte big-endian length. Exact RVAs and
+method-level evidence are in `docs/cockpit-catalog.md`. This is static binary
+evidence; no native socket capture establishes the full initial frame or
+later world packets.
+
+The emulator's four-byte length, local command IDs 1..40, and `local-1`
+handshake remain a separate diagnostic protocol. A native version preamble
+is rejected without allocating or waiting for the misread local body. The
+prelogin local body is capped at 4,096 bytes; after login, the configured
+`MaximumPacketBytes` applies. Native world login and gameplay need a separate
+transport implementation and a recorded fixture before they can be claimed
+compatible.
+
 ## Listener options and binding
 
 `WorldServerOptions` binds from configuration section `WorldServer`. The defaults are: `Enabled=false`, `Host="127.0.0.1"`, `Port=60954`, `DynamicTcpPort=false`, `DynamicTcpPortRange=null`, `Version="local-1"` and `MaximumPacketBytes=65536`. The defaults are valid. `Validate()` throws `InvalidOperationException("Invalid loopback WorldServer configuration.")` if any of these rules fails:
