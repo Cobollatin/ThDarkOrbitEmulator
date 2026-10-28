@@ -62,5 +62,6 @@ public static class CockpitCatalogEndpoints
             Results.Json((await store.LanguagesAsync(ct)).Where(item => item.Enabled))).AllowAnonymous();
         app.MapGet("/unityApi/servers.php", async (CockpitCatalogStore store, CancellationToken ct) =>
             Results.Json((await store.ServersAsync(ct)).Where(item => item.Enabled))).AllowAnonymous();
+        app.MapPost("/unityApi/activate.php", UnityHangarActivateAction.HandleAsync).AllowAnonymous();
     }
 }

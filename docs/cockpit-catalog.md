@@ -1,6 +1,6 @@
 # Unity cockpit catalog and WebView diagnosis
 
-## Current cockpit / in-game WebView support (2026-10-25)
+## Current cockpit / in-game WebView support (2026-10-28)
 
 The cockpit opens portal pages in a Vuplex WebView on the advertised host,
 `https://localhost:60952` (see SPEC-02 "Dual HTTPS listeners"). "Served" means
@@ -13,7 +13,7 @@ button calling it.
 | News (green breaking-news button) | `/unityApi/news.php`, `/flashAPI/brNews.php`, then `indexInternal.es?action=internalCommandCenter` | Served; the button now opens the styled Command Center instead of the Dock. The cockpit preview can still show placeholder labels while the client-side localization lookup (`File Category Not Found`) is unresolved. |
 | Profile | `indexInternal.es?action=internalPilotSheet` (detail, skill tree, allocate/reset) | Served; the button click has not been re-tested in the client. |
 | Rank | `indexInternal.es?action=internalHallofFame` | Served; the button click has not been re-tested in the client. |
-| Hangar | `indexInternal.es?action=internalDock` / `internalDockEquipment`; ships from the cockpit catalog | Served. The native `GetHangerPost` 401 is **open**: its URL has not been captured, and 401s are now logged without cookies. |
+| Hangar | `indexInternal.es?action=internalDock` / `internalDockEquipment`; `POST /unityApi/activate.php` | Served. Native activation maps the submitted assigned `hangarId` to the player's PostgreSQL active slot. |
 | Shop | `indexInternal.es?action=internalShop`, `internalPayment` | Served. |
 | Forum / Help / Account | `boardLink`, `helpLink`, `/unityApi/links.php` (`forum`, `support`, `help`, `accountCenter`) | Served on the advertised `:60952` host. |
 | Open World / Spacemap | Portal `LAUNCH` link on `internalWebGL`; HTTP canvas `indexInternal.es?action=internalMapRevolution` (`/spacemap/world/*`); world TCP listener `127.0.0.1:60954` | The HTTP spacemap works. The portal link disappears by design when `OpenWebLogin` closes the WebView at the `internalWebGL` handoff. Native START → world socket entry is **unverified**. |
@@ -35,7 +35,10 @@ news action use that same host. The synthetic breaking-news button now opens
 the styled `internalCommandCenter` page instead of the Dock.
 
 The same console shows `File Category Not Found` for seven localization
-categories before cockpit initialization. The installed Unity client contains
+categories before cockpit initialization: `resource_breakingNews`,
+`resource_externalHome`, `resource_item_old`, `resource_localeBase`,
+`resource_premiumExtension`, `resource_upsellPackage`, and `resource_xtm`.
+The installed Unity client contains
 `localizations_assets_all.bundle`, and its Addressables `catalog.json` names
 all seven categories under both `en` and `es`. The saved Live HAR has no
 request for these categories. The failure is in the client-side localization
@@ -45,8 +48,23 @@ HTTP `resources.xml` would not repair that lookup. The current breaking-news
 XML still has sparse synthetic labels, so its cockpit preview may show
 placeholders until the bundle issue is diagnosed in a runtime capture.
 
-The console's `GetHangerPost` 401 has no request URL. The saved Live capture
-ends after initial news images. Metadata names `LaunchShow.GetHangerPost(url)`,
+The console's `DarkOrbit.<GetHangerPost>d__54` 401 has no request URL. The installed
+`DarkOrbit_Data/StreamingAssets/config.txt` contains `hangerChange:/unityApi/activate.php`
+and `localHost:localhost:60952`. The native config parser assigns that suffix to
+`Settings.HangerChangeHostSuffix`, and `Init.UpdateHost` combines it with its host.
+The resulting local URL is `https://localhost:60952/unityApi/activate.php`.
+The native request posts one `WWWForm` field, `hangarId`, and reads JSON
+`success` (integer, `1` on success) and `message` (null on success). The emulator
+returns HTTP 200 `{"success":1,"message":null}` after selecting an assigned ID;
+missing sessions and invalid or unassigned IDs receive JSON errors and do not
+change the selection. This response is supported by the native branch trace,
+but a redirected Unity activation capture is still needed for live confirmation.
+A targeted
+review of the retained session HARs found no 401 hangar request or native
+Profile, Rank, or News button navigation. One redirect capture contains a
+`GET /GameAPI.php?action=core.bpid` 401; it has no evidence tying it to
+`GetHangerPost`. The saved Live capture ends after initial news images.
+Metadata names `LaunchShow.GetHangerPost(url)`,
 `GetNewsRequest`, `Start`, and button callbacks but does not expose their native
 method bodies. Known `/unityApi/login.php`, `/unityApi/news.php`,
 `/unityApi/links.php`, and both `/indexInternal.es` endpoint methods already
@@ -54,8 +72,18 @@ allow anonymous HTTP routing and perform `dosid` checks themselves. An
 unmapped route can be rejected by the API fallback authorization policy; a
 mapped route can return 401 for a missing or expired `dosid`. The API logs the
 method, path, safe action, and endpoint name for future Unity 401 responses
-without logging the cookie. A redirected capture of the Hangar click is needed
-to choose the correct route and response shape.
+without logging the cookie. The mapped activation route now performs its own
+session check and logs rejection without the cookie.
+
+The existing portal destinations for the three cockpit controls are Profile:
+`https://localhost:60952/indexInternal.es?action=internalPilotSheet`, Rank:
+`https://localhost:60952/indexInternal.es?action=internalHallofFame`, and News:
+`https://localhost:60952/indexInternal.es?action=internalCommandCenter`.
+These are emulator menu destinations, not yet observed native button URLs.
+Integration tests exercise their action routes with a valid `dosid` and a
+selected company. Each action is mapped on the anonymous `/indexInternal.es`
+route and performs its own session check, so no missing route or HTTP fallback
+authorization has been demonstrated for these pages.
 
 The "Open world" link is the portal `LAUNCH` link on the
 `internalWebGL` menu page. Native `OpenWebLogin` closes its Vuplex WebView at
@@ -97,6 +125,10 @@ do not reconfigure the running mesh or redirect its TCP listener. A server
 choice in the native dropdown must be captured before binding these records to
 that client interaction.
 
+The Postgres catalog integration test persists all seven category names as
+locale overrides. That covers Backoffice storage only; it does not establish
+that the native Addressables lookup can read those values.
+
 ## Bounded IL2CPP trace (installed 2026-10-28 client)
 
 `GameAssembly.dll` SHA-256 is
@@ -112,7 +144,7 @@ from the local dump under `_reversing/Analysis/il2cpp-dump/`.
 | `LaunchShow.GetHangerPost` `0xEE0BD0`; iterator `MoveNext` `0xEEAE40` | The wrapper stores the supplied URL. At `0xEEAF75`–`0xEEAF8D` the iterator adds one `WWWForm` field named `hangarId` from `LaunchShow.hangarId` (`+0x94`) and calls `UnityWebRequest.Post(url, form)`. At `0xEEAFD2` it calls `Init.SetRequestHeader`, then sends. At `0xEEB141` it parses response text with `MessageData.FromJson` (Newtonsoft); `MessageData` has `Success` (64-bit integer) and `Message` (string). The branch at `0xEEB153` accepts `Success == 1` and a null `Message`; the other branch displays `Message`. A JSON body such as `{"success":1,"message":null}` is therefore the success candidate. |
 | `Init.SetRequestHeader` `0xEFC5B0` | It sets only `User-Agent`: `DarkOrbit Unity Client 1.1.100` in the normal branch, or `Steam-DROThinClient/1.0 (Unity)` in the Steam branch. The form POST itself supplies its content type. |
 | `<>c__DisplayClass77_0.<UpdatePageInfoShip>b__0` `0xEEEBF0` | At `0xEEECE4`–`0xEEED4C` an inactive selected hangar copies `HangarWebData.HangarId` to `LaunchShow.hangarId`, takes `Settings.HangerChangeHost` (`+0x218`) as URL, and starts the hangar POST iterator. Selecting an already active hangar calls `GameLoadingManager.StartGame` at `0xEEED7E`. |
-| `Init.UpdateHost` `0xEFD580`; `<LoadConfig>d__32.MoveNext` `0xF02FF0` | `UpdateHost` concatenates the host prefix with `Settings.HangerChangeHostSuffix` (`+0x23C`) and stores `HangerChangeHost` at `0xEFD73C`. The suffix is assigned by the `StreamingAssets/config.txt` parser at `0xF03539`. The exact route cannot be recovered from these method bodies alone. |
+| `Init.UpdateHost` `0xEFD580`; `<LoadConfig>d__32.MoveNext` `0xF02FF0` | `UpdateHost` concatenates the host prefix with `Settings.HangerChangeHostSuffix` (`+0x23C`) and stores `HangerChangeHost` at `0xEFD73C`. The suffix is assigned by the `StreamingAssets/config.txt` parser at `0xF03539`; the installed file supplies `/unityApi/activate.php`. |
 | `LaunchShow.Start` `0xEE1E70`; `<Start>b__55_0` `0xEE23A0`; `GameLoadingManager.StartGame` `0xF0E420` | `Start` reads `btnStart` at offset `+0x44`, installs an `onClick` listener at `0xEE1F84`, and that callback disables the button then tail-jumps to `StartGame` at `0xEE2404`. `StartGame` calls `InitDynamicXml` at `0xF0E808`, handles display setup and later calls `LaunchShow.UpdateButton`; this method does not itself call the provisional `/spacemap/world/*` HTTP bridge or prove a connection to `127.0.0.1:60954`. |
 | `GameLoadingManager.InitDynamicXml` `0xF0CC80` | The START path next obtains `Settings.get_MapXmlUrl` at `0xF0CD21` and queues it with the Command Center XMLs for `DownloadHelper.StartDownload` at `0xF0CE54`. This confirms a native XML loading stage before any established socket handshake. The emulator already serves `/xml/maps.xml`; the callback and subsequent transport still need a native trace or capture. |
 | `<LoadLocalizationData>d__8.MoveNext` `0xF03B60` | At `0xF03DB7` it calls `Addressables.LoadAssetsAsync`. At `0xF03F97` it gets each loaded asset's name; at `0xF03FA2`–`0xF03FCA` it logs `File Category Not Found:` when that name is absent from the in-memory category mapping. This is an in-process mapping failure after asset loading, not an HTTP response. |
@@ -125,8 +157,5 @@ category mapping or client asset fix. Adding an emulator XML route cannot make
 the native mapping contain those keys. The current server-side locale override
 records are therefore not a repair for this log message.
 
-The hangar request's URL suffix remains dependent on the client configuration
-file, and the native world socket login framing remains unobserved. Neither an
-HTTP hangar handler nor a native TCP handshake can be safely selected from the
-available static evidence alone. The emulator's existing world protocol remains
-its documented local diagnostic contract.
+The native world socket login framing remains unobserved. The emulator's
+existing world protocol remains its documented local diagnostic contract.

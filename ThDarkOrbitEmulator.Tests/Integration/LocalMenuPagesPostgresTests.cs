@@ -25,6 +25,18 @@ public sealed class LocalMenuPagesPostgresTests
     private IConfiguration _config = null!;
     private static int _nextGameUserId = 77_000;
 
+    [TestCase("internalPilotSheet", "<title>Pilot Sheet - DarkOrbit</title>")]
+    [TestCase("internalHallofFame", "id=\"localHallOfFame\"")]
+    [TestCase("internalCommandCenter", "id=\"commandCenter\"")]
+    public async Task CockpitWebViewDestination_WithSession_ReturnsPage(string action, string marker)
+    {
+        var context = await SendAsync($"?action={action}", await HarnessAsync());
+        var body = Body(context);
+
+        AssertPage(context, body);
+        Assert.That(body, Does.Contain(marker));
+    }
+
     [Test]
     public async Task Events_Search_UsesSeededBattlePassOffersThroughEndpoint()
     {

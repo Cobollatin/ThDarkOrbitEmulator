@@ -82,8 +82,14 @@ public class IdentityPostgresMigrationTests
         var assignedShips = await catalog.HangarsAsync(session, 1, cancellationToken);
         await catalog.UpsertLanguageAsync(new ClientLanguage("en", "English UK", true, true), cancellationToken);
         var defaultLanguage = (await catalog.LanguagesAsync(cancellationToken)).Single(item => item.IsDefault);
-        await catalog.UpsertLocaleOverrideAsync(new LocaleOverride("en", "resource_breakingNews", "bn_category_news", "News"), cancellationToken);
-        var locale = (await catalog.LocaleOverridesAsync(cancellationToken)).Single();
+        var cockpitCategories = new[]
+        {
+            "resource_breakingNews", "resource_externalHome", "resource_item_old", "resource_localeBase",
+            "resource_premiumExtension", "resource_upsellPackage", "resource_xtm"
+        };
+        foreach (var category in cockpitCategories)
+            await catalog.UpsertLocaleOverrideAsync(new LocaleOverride("en", category, "catalog_probe", category), cancellationToken);
+        var locales = await catalog.LocaleOverridesAsync(cancellationToken);
         await catalog.UpsertServerAsync(new ClientServer("global3", "Global 3", "127.0.0.1", 1,
             "online", true, true), cancellationToken);
         var defaultServer = (await catalog.ServersAsync(cancellationToken)).Single(item => item.IsDefault);
@@ -102,7 +108,7 @@ public class IdentityPostgresMigrationTests
             Assert.That(assignedShips[0].HangarId, Is.EqualTo("123456"));
             Assert.That(assignedShips[0].ShipName, Is.EqualTo("Phoenix Mk II"));
             Assert.That(defaultLanguage.Code, Is.EqualTo("en"));
-            Assert.That(locale.Value, Is.EqualTo("News"));
+            Assert.That(locales.Select(item => item.Category), Is.EquivalentTo(cockpitCategories));
             Assert.That(defaultServer.InstanceName, Is.EqualTo("Global 3"));
         });
     }
