@@ -42,6 +42,7 @@ client-testing/url-replacements.json
 
 # Reverse
 _reversing
+_reference/
 
 # Python caches
 __pycache__/

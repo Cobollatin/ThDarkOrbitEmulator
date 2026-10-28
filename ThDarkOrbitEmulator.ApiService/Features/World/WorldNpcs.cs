@@ -24,6 +24,7 @@ public sealed class WorldNpcOptions
     public int RocketDamage { get; set; } = 250;
     public int RocketCooldownSeconds { get; set; } = 3;
     public int AggroRange { get; set; } = 1200;
+    public int NpcStandoffRange { get; set; } = 300;
     public int NpcFireRange { get; set; } = 650;
     public int NpcDamage { get; set; } = 40;
     public int NpcFireCooldownSeconds { get; set; } = 2;
@@ -314,7 +315,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 .FirstOrDefault(t => t.Kind == npc.Kind)?.Speed ?? 0;
             var elapsed = vital.LastStepUnixMs == 0 ? 1d : Math.Clamp(
                 (now.ToUnixTimeMilliseconds() - vital.LastStepUnixMs) / 1000d, 0, 5);
-            var step = Math.Min(Math.Max(0, speed) * elapsed, distance);
+            var step = Math.Min(Math.Max(0, speed) * elapsed,
+                Math.Max(0, distance - Math.Max(0, settings.NpcStandoffRange)));
             var x = distance == 0 ? npc.X : npc.X + (int)Math.Round(dx * step / distance);
             var y = distance == 0 ? npc.Y : npc.Y + (int)Math.Round(dy * step / distance);
             npc = npc with { X = x, Y = y };

@@ -61,7 +61,8 @@ public sealed class WorldRocketAndNpcAggroTests
         var npcs = CreateNpcs(cache, mutex, new Rewards(), clock, new WorldNpcOptions
         {
             Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 100)],
-            AggroRange = 1000, NpcFireRange = 300, NpcDamage = 40, NpcFireCooldownSeconds = 2
+            AggroRange = 1000, NpcStandoffRange = 0, NpcFireRange = 300,
+            NpcDamage = 40, NpcFireCooldownSeconds = 2
         });
         var npc = (await npcs.VisibleAsync(1, default)).Single();
         var sessions = new WorldSessionStore(cache, mutex, clock: clock);
@@ -88,6 +89,31 @@ public sealed class WorldRocketAndNpcAggroTests
         var secondNode = new WorldSessionStore(cache, mutex, clock: clock);
         await secondNode.EnterAsync(pilot, default);
         Assert.That(secondNode.CurrentHitPoints(pilot), Is.EqualTo(70));
+    }
+
+    [Test]
+    public async Task AutonomousNpc_StopsAtConfiguredStandoffRange()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var npcs = CreateNpcs(cache, mutex, new Rewards(), clock, new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 500)],
+            AggroRange = 1000, NpcStandoffRange = 300, NpcFireRange = 200
+        });
+        var npc = (await npcs.VisibleAsync(1, default)).Single();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        await sessions.EnterAsync(Pilot(npc.X + 600, npc.Y), default);
+
+        await npcs.TickAggroAsync(1, sessions, default);
+        var approached = (await npcs.VisibleAsync(1, default)).Single();
+        Assert.That(approached.X, Is.EqualTo(npc.X + 300));
+
+        clock.Advance(TimeSpan.FromSeconds(2));
+        await npcs.TickAggroAsync(1, sessions, default);
+        Assert.That((await npcs.VisibleAsync(1, default)).Single().X, Is.EqualTo(approached.X));
     }
 
     private static WorldNpcs CreateNpcs(IDistributedCache cache, Mutex mutex, Rewards rewards,
