@@ -1,12 +1,13 @@
 using System.Buffers.Binary;
 using System.Numerics;
 using System.Text;
+using ThDarkOrbitEmulator.ApiService.Features.GameAuth;
 
 namespace ThDarkOrbitEmulator.ApiService.Features.World;
 
 // Native module IDs and field order are from the installed 2026-10-28 IL2CPP client.
 public sealed class NativeWorldHandshake(IWorldPilotResolver resolver, WorldServerOptions options,
-    WorldSessionStore? sessions = null)
+    WorldSessionStore? sessions = null, IGameAuthSessionStore? auth = null)
 {
     public const string ClientVersion = "05bcf83b06964a516a8282e10dbf3369";
     public const ushort VersionRequest = 0x029a;
@@ -61,7 +62,10 @@ public sealed class NativeWorldHandshake(IWorldPilotResolver resolver, WorldServ
                 if (payload.Position != payload.Length || version != ClientVersion || instanceId > int.MaxValue)
                     return;
                 var (pilot, _) = await resolver.ResolveAsync(userId, sessionId, ct);
-                if (pilot is null || pilot.FactionId != factionId)
+                var session = auth is null ? null : await auth.TryGetByDosidAsync(sessionId, ct);
+                if (pilot is null || pilot.FactionId != factionId ||
+                    (auth is not null && (session is null || session.GameUserId != userId ||
+                    session.InstanceId <= 0 || session.InstanceId != (int)instanceId)))
                 {
                     await WriteFrameAsync(stream, LoginResponse, new byte[] { 0, 1 }, ct);
                     return;

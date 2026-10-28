@@ -69,6 +69,7 @@ builder.Services.AddSingleton<WorldCollectibles>();
 builder.Services.Configure<WorldNpcOptions>(builder.Configuration.GetSection(WorldNpcOptions.SectionName));
 builder.Services.AddSingleton<IWorldNpcRewards, WorldNpcRewards>();
 builder.Services.AddSingleton<WorldNpcs>();
+builder.Services.AddSingleton<WorldGateCombat>();
 builder.Services.AddHostedService<WorldNpcSimulationService>();
 builder.Services.AddSingleton<LocalPetStore>();
 builder.Services.AddSingleton<WorldServerHostedService>();

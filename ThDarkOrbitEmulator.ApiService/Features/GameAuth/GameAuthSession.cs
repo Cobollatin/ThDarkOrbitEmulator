@@ -10,6 +10,8 @@ public sealed class GameAuthSession
 
     public string? Company { get; set; }
 
+    public int InstanceId { get; set; }
+
     public string Dosid { get; init; } = string.Empty;
 
     public string? KeycloakAccessToken { get; init; }

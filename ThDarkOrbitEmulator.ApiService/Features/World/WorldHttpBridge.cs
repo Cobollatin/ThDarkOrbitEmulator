@@ -398,6 +398,7 @@ public static class WorldHttpBridge
         var pilot = await PilotAsync(context, auth, resolver, sessions, ct);
         if (pilot is null) return;
         pilot = await sessions.GetOrEnterAsync(pilot, ct);
+        if (WorldMapInstance.IsGate(pilot.MapId)) { context.Response.StatusCode = 409; return; }
         await SetMeshHeadersAsync(context, pilot.MapId, ct);
         int id;
         int? expectedMapId;
@@ -444,8 +445,10 @@ public static class WorldHttpBridge
         if (expectedMapId is not null && expectedMapId != pilot.MapId)
         { await MapChangedAsync(context, pilot, sessions, ct); return; }
         WorldNpc? target;
-        try { target = await npcs.SelectAsync(pilot, id, ct,
-            await LeaseFenceAsync(context, pilot.MapId, ct), sessions, expectedMapId); }
+        try { target = WorldMapInstance.IsGate(pilot.MapId)
+            ? await context.RequestServices.GetRequiredService<WorldGateCombat>().SelectAsync(pilot, id, ct)
+            : await npcs.SelectAsync(pilot, id, ct,
+                await LeaseFenceAsync(context, pilot.MapId, ct), sessions, expectedMapId); }
         catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
         catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
         if (target is null) { context.Response.StatusCode = 404; return; }
@@ -477,12 +480,14 @@ public static class WorldHttpBridge
         if (expectedMapId is <= 0) { context.Response.StatusCode = 400; return; }
         if (expectedMapId is not null && expectedMapId != pilot.MapId)
         { await MapChangedAsync(context, pilot, sessions, ct); return; }
-        if (!await npcs.IsSelectedAsync(pilot, id, ct) &&
+        if (!WorldMapInstance.IsGate(pilot.MapId) && !await npcs.IsSelectedAsync(pilot, id, ct) &&
             !await npcs.CanRetryRewardAsync(pilot, id, ct))
         { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "not_selected" }, ct); return; }
         WorldNpcAttack result;
-        try { result = await npcs.AttackAsync(pilot, id, sessions, ct,
-            await LeaseFenceAsync(context, pilot.MapId, ct), expectedMapId, rocket); }
+        try { result = WorldMapInstance.IsGate(pilot.MapId)
+            ? await context.RequestServices.GetRequiredService<WorldGateCombat>().AttackAsync(pilot, id, sessions, ct)
+            : await npcs.AttackAsync(pilot, id, sessions, ct,
+                await LeaseFenceAsync(context, pilot.MapId, ct), expectedMapId, rocket); }
         catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
         catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
         if (result.Status != "hit") context.Response.StatusCode = 409;
@@ -535,20 +540,28 @@ public static class WorldHttpBridge
         var destination = sessions.Destination(pilot);
         var liveStats = await sessions.LiveStatsAsync(pilot, ct);
         context.Response.Headers.CacheControl = "no-store";
-        var occupants = await sessions.VisiblePilotsAsync(pilot.MapId, ct);
+        var occupants = await sessions.VisiblePilotsAsync(pilot.MapId, ct, pilot.AccountId);
         var collectibles = context.RequestServices?.GetService<WorldCollectibles>();
-        var boxes = collectibles is null
+        var boxes = WorldMapInstance.IsGate(pilot.MapId) ? [] : collectibles is null
             ? WorldCollectibles.Spawn(pilot.MapId, DateTimeOffset.UtcNow.ToUnixTimeSeconds()
                 / WorldCollectibles.RespawnSeconds)
             : await collectibles.VisibleAsync(pilot.MapId, ct);
         var npcs = context.RequestServices?.GetService<WorldNpcs>();
-        IReadOnlyList<WorldNpc> visibleNpcs = npcs is null ? [] : await npcs.VisibleForObserversAsync(pilot.MapId, ct);
+        var gateCombat = WorldMapInstance.IsGate(pilot.MapId)
+            ? context.RequestServices!.GetRequiredService<WorldGateCombat>() : null;
+        IReadOnlyList<WorldNpc> visibleNpcs = gateCombat is not null
+            ? await gateCombat.VisibleAsync(pilot, ct)
+            : npcs is null ? [] : await npcs.VisibleForObserversAsync(pilot.MapId, ct);
+        var gateState = gateCombat is null ? null : await gateCombat.StateAsync(pilot, ct);
         var adminEvents = context.RequestServices?.GetService<Admin.WorldAdminEvents>();
         var announcement = adminEvents is null ? null : await adminEvents.LatestAsync(ct);
         await context.Response.WriteAsJsonAsync(new
         {
-            map = new { id = map.MapId, name = $"{map.FactionId}-{(map.MapId - 1) % 4 + 1}", map.Width, map.Height,
+            map = new { id = map.MapId, name = gateCombat is null
+                ? $"{map.FactionId}-{(map.MapId - 1) % 4 + 1}"
+                : $"{WorldMapInstance.GateId(map.MapId)} gate", map.Width, map.Height,
                 station = map.HomeStation, portals = map.Portals },
+            gate = gateState,
             jump = jump is null ? null : new { jump.PortalId, jump.TargetNodeId, jump.TargetTcpHostPort },
             pilots = occupants.Select(item => new { id = item.UserId, name = item.UserName,
                 x = item.X, y = item.Y }).ToArray(),

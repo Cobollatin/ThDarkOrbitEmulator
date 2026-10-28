@@ -43,7 +43,22 @@ public static class UnityLoginAction
         var language = languages is null || languages.Any(item => item.Code == saved.Language && item.Enabled)
             ? saved.Language : languages.FirstOrDefault(item => item.IsDefault && item.Enabled)?.Code ?? "es";
         var servers = catalog is null ? null : await catalog.ServersAsync(ct);
-        var instance = servers?.FirstOrDefault(item => item.IsDefault && item.Enabled)?.InstanceName ?? "Local emulator";
+        var enabledServers = servers?.Where(item => item.Enabled).ToArray();
+        var selected = session.InstanceId;
+        if (enabledServers is { Length: > 0 } && (selected < 1 || selected > enabledServers.Length
+            || enabledServers[selected - 1].Status != "online"))
+        {
+            selected = Array.FindIndex(enabledServers, item => item.IsDefault && item.Status == "online") + 1;
+            if (selected == 0) selected = Array.FindIndex(enabledServers, item => item.Status == "online") + 1;
+            if (selected > 0) await sessions.SelectInstanceAsync(session.Dosid, selected, ct);
+        }
+        if (enabledServers is null && selected <= 0)
+        {
+            selected = 1;
+            await sessions.SelectInstanceAsync(session.Dosid, selected, ct);
+        }
+        var instance = enabledServers is not null && selected > 0 && selected <= enabledServers.Length
+            ? enabledServers[selected - 1].InstanceName : "Local emulator";
         return UnityLoginPayloadBuilder.Build(session, context.Request, activeSlot, language,
             registry is null ? null : await registry.GetSnapshotAsync(ct), world,
             catalog is null ? null : await catalog.HangarsAsync(session, activeSlot, ct), instance,

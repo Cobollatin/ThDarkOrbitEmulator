@@ -46,8 +46,14 @@ premium, jackpot, and captain values are zero/false. The ship type string is
 the local ship ID and portal design ID is zero, pending a captured native
 server burst. Prelogin frames are capped at 4,096 bytes in either mode;
 the configured `MaximumPacketBytes` applies to local frames after login.
-The session store has no persisted instance ID; native login decodes and bounds
-that field but cannot compare it with an account-specific value.
+`GameAuthSession.InstanceId` records the selected enabled-server index. A new
+session has no selection until `/unityApi/login.php` binds the online default
+server (or `/unityApi/changeInstance.php` selects an online entry). Native
+login compares its decoded integer with the saved ID after identity resolution;
+the local diagnostic login compares its decimal string with that same ID.
+Unknown, expired, user-mismatched, or instance-mismatched sessions cannot enter
+the world. The native mismatch returns the failure login status before map
+entry packets. Server list IDs follow the local enabled-server order.
 
 The installed readers also establish `MoveCommand` `0x005A`
 (`userId,x,y,timeToTarget`), `HeroMoveCommand` `0x001D` (`x,y`),
@@ -138,6 +144,13 @@ TCP login resolution applies these guards in order after the login packet is dec
 
 The entry burst is map, station, each gate, safe-zone flag, then hero. Login follows a matching version request. A local jump emits map change followed by a new entry burst; a remote owner receives handoff. TCP packet definitions remain provisional.
 
+On the hosted listener, both native and diagnostic socket login also reload
+the saved game session and require its positive selected `InstanceId` to match
+the socket field. The diagnostic field is parsed as a decimal integer and a
+mismatch returns `UserMismatch` before world entry. Tests that instantiate
+the protocol handler without an auth store exercise the standalone diagnostic
+transport; the hosted listener always supplies the store.
+
 Before login, each well-formed `VersionRequest` replaces the connection's previous version-accepted state. The server answers with `VersionCommand(str configuredVersion, u8 accepted)`; an unmatched request yields `accepted=0` and leaves the socket open for another version request, while a later exact match yields `accepted=1`. A later mismatch revokes earlier acceptance. No version request resolves an account. A `LoginRequest` first requires that accepted handshake, then decodes `i64 userId, str dosid, str version, str instanceId` with full payload consumption. The login's own version must still equal the configured version and its instance ID must contain 1–128 UTF-16 characters; zero or 129 characters are rejected. A failed login handshake, login-version, or instance-ID gate returns `LoginErrorCommand(UnsupportedVersion=2)` and ends the session handler before `IWorldPilotResolver.ResolveAsync`. The login-version gate is therefore independent of the earlier accepted version request. `WorldTransportTests` exercises both retry directions, successful login, rejected login version and instance-ID boundaries, resolver suppression, and handler completion; `ApiServiceVerticalSliceTests` pins the guard order inside the World session handler. These are provisional emulator handshake rules, not captured Unity behavior.
 
 A prelogin `VersionRequest` must contain exactly one ordinary string. A truncated two-byte length prefix, malformed UTF-8, or trailing payload byte produces one `LoginErrorCommand(Malformed=1)` and ends the handler without a version response or identity lookup. After an accepted version, the same malformed boundary applies to the `LoginRequest`'s fixed-width user ID and three strings, including a truncated ID, invalid UTF-8, and trailing bytes. Before a version is accepted, the handshake gate takes precedence over login payload decoding: even a malformed login payload returns `UnsupportedVersion=2`. `WorldTransportTests` pins these responses and successful handler completion on live loopback sockets; `ApiServiceVerticalSliceTests` guards decoding, handshake, and resolver order. These remain provisional emulator rules.
@@ -158,7 +171,31 @@ Cancellation also governs admission to that per-socket gate. A send canceled whi
 
 ## Maps and portal transitions
 
-`WorldMapInstance.Starter` supports IDs 1..16, each 21,000 × 13,100. `factionId=floor((mapId-1)/4)+1`; displayed name is `{factionId}-{((mapId-1)%4)+1}`. IDs 1, 2, 5, 6, 9, 10, 13 correspond to 1-1, 1-2, 2-1, 2-2, 3-1, 3-2, 4-1. A faction's first map has station (2,000,1,300), radius 1,000, and portals (19,500,1,300) to ID+1 and (19,500,11,800) to ID+2, arriving at (2,500,1,300)/(2,500,11,800). Other maps have station (19,000,1,300) and portal (1,500,1,300) to ID-1, arriving at (18,500,1,300). Portal ID is `mapId*100+1` or `+2`; default jump radius is 500. Squared Euclidean distance includes the boundary. Unknown or distant gates cannot jump. Jump persists map/arrival, clears travel and radiation, updates presence and owner routing. This synthetic graph has no inter-faction links; there is no in-world route from 1-1 to 4-1.
+### Galaxy Gate world instances
+
+Each faction starter map now exposes five additional portals for Alpha, Beta,
+Gamma, Delta, and Epsilon. Gate maps use IDs 101–120: five gate IDs per faction.
+Entry checks the account's durable active run and refuses an unactivated,
+completed, or exhausted gate. A gate map has one exit portal back to that
+faction's starter map. Saved position restores a player inside a gate after
+reconnect. The HTTP spacemap and local TCP transport use these map and portal
+records; native socket login includes gate-map entry packets when a saved
+position points there, although native gameplay event routing remains pending.
+
+Gate map NPCs come from the account's `economy.gate_runs` state through
+`WorldGateCombat`. The current NPC has a deterministic ID based on map, wave,
+and cleared count. A world target lock and a shot within 1,000 units call the
+durable gate attack transaction; the next NPC appears on the following HTTP
+state poll or TCP roster sync. Faction map IDs are shared for routing, but
+HTTP pilot lists, remote pilot presentation, and local TCP combat broadcasts
+are filtered by account on gate maps. Gate maps expose no collectibles.
+The HTTP state includes the current gate combat state and names the gate map.
+These locations, IDs, distances, and the one-at-a-time roster are provisional
+emulator contracts, not captured official client behavior.
+
+### Starter-map graph
+
+`WorldMapInstance.Starter` supports faction maps 1..16 and gate maps 101..120, each 21,000 × 13,100. `factionId=floor((mapId-1)/4)+1`; displayed name is `{factionId}-{((mapId-1)%4)+1}`. IDs 1, 2, 5, 6, 9, 10, 13 correspond to 1-1, 1-2, 2-1, 2-2, 3-1, 3-2, 4-1. A faction's first map has station (2,000,1,300), radius 1,000, and portals (19,500,1,300) to ID+1 and (19,500,11,800) to ID+2, arriving at (2,500,1,300)/(2,500,11,800). Other maps have station (19,000,1,300) and portal (1,500,1,300) to ID-1, arriving at (18,500,1,300). The two navigation portals use IDs `mapId*100+1` and `+2`; starter-map gate portals use `+3` through `+7`. Default jump radius is 500. Squared Euclidean distance includes the boundary. Unknown or distant gates cannot jump. Jump persists map/arrival, clears travel and radiation, updates presence and owner routing. This synthetic graph has no inter-faction links; there is no in-world route from 1-1 to 4-1.
 
 Graph invariants: every map is 21,000 × 13,100, its station ID is `mapId*100` with peace radius 1,000, portal IDs are contiguous from `mapId*100+1`, every destination stays in the source faction, and every jump radius is 500. Each faction's maps 1–3 are portal destinations, but its fourth map (IDs 4, 8, 12, 16) has a portal back to map 3 and no inbound portal, so it can be reached only by saved position or an admin teleport.
 

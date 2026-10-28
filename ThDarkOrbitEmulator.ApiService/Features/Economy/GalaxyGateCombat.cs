@@ -74,7 +74,7 @@ public sealed partial class EconomyStore
     }
 
     public async Task<ProgressionChange> AttackGateNpcAsync(Guid accountId, string gateId,
-        int expectedWave, DateTimeOffset now, string key, CancellationToken ct)
+        int expectedWave, DateTimeOffset now, string key, CancellationToken ct, int? expectedKills = null)
     {
         if (accountId == Guid.Empty || GateWaveAt(gateId, expectedWave) is null ||
             string.IsNullOrWhiteSpace(key)) return ProgressionChange.Invalid;
@@ -96,7 +96,8 @@ public sealed partial class EconomyStore
             shipHp = row.GetInt32(3); lives = row.GetInt32(4);
         }
         var composition = GateWaveAt(gateId, wave);
-        if (wave != expectedWave || composition is null || lives == 0 || kills >= composition.Count)
+        if (wave != expectedWave || expectedKills is not null && kills != expectedKills ||
+            composition is null || lives == 0 || kills >= composition.Count)
             return ProgressionChange.Conflict;
         // A server-owned hit removes health from exactly one NPC. Retaliation can destroy
         // the ship; a retry retains all previously cleared NPCs and consumes one life.

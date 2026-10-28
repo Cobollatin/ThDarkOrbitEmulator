@@ -619,7 +619,7 @@ public sealed class WorldAndSpacemapSpecificationTests
             Assert.That(map.Portals[0].DestinationMapId, Is.EqualTo(firstDestination));
             Assert.That(map.Portals[0].Id, Is.EqualTo(mapId * 100 + 1));
             Assert.That(map.HomeStation.PeaceRadius, Is.EqualTo(1000));
-            Assert.That(map.Portals.Count, Is.EqualTo(secondDestination < 0 ? 1 : 2));
+            Assert.That(map.Portals.Count, Is.EqualTo(secondDestination < 0 ? 1 : 7));
         });
         if (secondDestination > 0) Assert.That(map.Portals[1].DestinationMapId, Is.EqualTo(secondDestination));
     }
@@ -649,6 +649,9 @@ public sealed class WorldAndSpacemapSpecificationTests
         {
             WorldCommandId.MapInitializationCommand, WorldCommandId.SpaceStationCommand,
             WorldCommandId.JumpgateCreateCommand, WorldCommandId.JumpgateCreateCommand,
+            WorldCommandId.JumpgateCreateCommand, WorldCommandId.JumpgateCreateCommand,
+            WorldCommandId.JumpgateCreateCommand, WorldCommandId.JumpgateCreateCommand,
+            WorldCommandId.JumpgateCreateCommand,
             WorldCommandId.SafeZoneCommand, WorldCommandId.HeroInitCommand
         }));
         Assert.That(WorldPayload.Decode(packets[0].Payload, r =>
@@ -657,8 +660,8 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(WorldPayload.Decode(packets[1].Payload, r =>
             (WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r),
                 WorldPayload.ReadInt32(r))), Is.EqualTo((100, 2000, 1300, 1000)));
-        Assert.That(packets[4].Payload.ToArray(), Is.EqualTo(new byte[] { 1 }));
-        using var heroStream = new MemoryStream(packets[5].Payload.ToArray());
+        Assert.That(packets[9].Payload.ToArray(), Is.EqualTo(new byte[] { 1 }));
+        using var heroStream = new MemoryStream(packets[10].Payload.ToArray());
         using var heroReader = new BinaryReader(heroStream);
         Assert.That((WorldPayload.ReadInt64(heroReader), WorldPayload.ReadString(heroReader),
             WorldPayload.ReadString(heroReader)), Is.EqualTo((7L, "pilot", "ship_pusat-plus")));

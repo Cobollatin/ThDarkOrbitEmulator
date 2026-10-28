@@ -15,11 +15,24 @@ public sealed record WorldPortal(int Id, int X, int Y, int DestinationMapId, int
 public sealed record WorldMapInstance(int MapId, int FactionId, int Width, int Height,
     WorldStation HomeStation, IReadOnlyList<WorldPortal> Portals)
 {
+    public static bool IsGate(int mapId) => mapId is >= 101 and <= 120;
+    public static string? GateId(int mapId) => IsGate(mapId)
+        ? new[] { "alpha", "beta", "gamma", "delta", "epsilon" }[(mapId - 101) % 5] : null;
+    public static int GateMap(int factionId, int gateIndex) => 101 + (factionId - 1) * 5 + gateIndex;
+
     public static WorldMapInstance Starter(int mapId) => mapId switch
     {
         >= 1 and <= 16 => Create(mapId, (mapId - 1) / 4 + 1, (mapId - 1) % 4 != 0),
+        >= 101 and <= 120 => CreateGate(mapId),
         _ => throw new ArgumentOutOfRangeException(nameof(mapId))
     };
+
+    private static WorldMapInstance CreateGate(int mapId)
+    {
+        var faction = (mapId - 101) / 5 + 1;
+        return new(mapId, faction, 21000, 13100, new WorldStation(mapId * 100, 19000, 1300, 0),
+            [new WorldPortal(mapId * 100 + 1, 2000, 1300, (faction - 1) * 4 + 1, 18000, 6500)]);
+    }
 
     private static WorldMapInstance Create(int map, int faction, bool adjacent) =>
         new(map, faction, 21000, 13100,
@@ -27,7 +40,9 @@ public sealed record WorldMapInstance(int MapId, int FactionId, int Width, int H
             adjacent
                 ? [new WorldPortal(map * 100 + 1, 1500, 1300, map - 1, 18500, 1300)]
                 : [new WorldPortal(map * 100 + 1, 19500, 1300, map + 1, 2500, 1300),
-                   new WorldPortal(map * 100 + 2, 19500, 11800, map + 2, 2500, 11800)]);
+                   new WorldPortal(map * 100 + 2, 19500, 11800, map + 2, 2500, 11800),
+                   .. Enumerable.Range(0, 5).Select(index => new WorldPortal(map * 100 + 3 + index,
+                       17500 + index * 500, 6500, GateMap(faction, index), 2000, 1300))]);
 }
 
 public sealed record WorldShipStats(int Speed, long MaxHitPoints, long MaxShield, int CargoCapacity,
@@ -100,7 +115,7 @@ public sealed class WorldConfigurationCooldownException(int remainingMs) : Excep
 public sealed record WorldPresence(WorldPilot Pilot, DateTimeOffset SeenAtUtc);
 
 public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex? meshMutex = null,
-    IRuntimeVariableRegistry? variables = null, TimeProvider? clock = null)
+    IRuntimeVariableRegistry? variables = null, TimeProvider? clock = null, EconomyStore? economy = null)
 {
     private readonly ConcurrentDictionary<int, ConcurrentDictionary<long, WorldPilot>> connected = new();
     private readonly ConcurrentDictionary<long, WorldConnection> connections = new();
@@ -208,13 +223,15 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
 
     // Browser state polls share the per-map remote snapshot instead of reading every pilot's saved
     // position per request. Admin/mesh views keep using the uncached ConnectedAsync.
-    public async Task<IReadOnlyList<WorldPilot>> VisiblePilotsAsync(int mapId, CancellationToken ct)
+    public async Task<IReadOnlyList<WorldPilot>> VisiblePilotsAsync(int mapId, CancellationToken ct,
+        Guid? accountId = null)
     {
         var now = DateTimeOffset.UtcNow;
         var result = new List<WorldPilot>();
         foreach (var (entry, saved) in (await RemoteSnapshotAsync(mapId, ct)).Entries)
         {
             if (now - entry.SeenAtUtc >= TimeSpan.FromMinutes(2)) continue;
+            if (WorldMapInstance.IsGate(mapId) && entry.Pilot.AccountId != accountId) continue;
             var pilot = entry.Pilot with { MapId = mapId };
             if (saved is null)
             {
@@ -392,7 +409,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         try
         {
             var position = JsonSerializer.Deserialize<WorldPosition>(saved);
-            return position is not null && position.MapId is >= 1 and <= 16
+            return position is not null && (position.MapId is >= 1 and <= 16 || WorldMapInstance.IsGate(position.MapId))
                 ? position.MapId : null;
         }
         catch (JsonException) { return null; }
@@ -565,6 +582,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         {
             var remote = entry.Pilot;
             if (remote.UserId == observer.UserId || connections.ContainsKey(remote.UserId)
+                || WorldMapInstance.IsGate(observer.MapId) && remote.AccountId != observer.AccountId
                 || now - entry.SeenAtUtc >= TimeSpan.FromMinutes(2)) continue;
             if (saved is not null)
             {
@@ -625,6 +643,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         {
             var remote = entry.Pilot with { MapId = observer.MapId };
             if (remote.UserId == observer.UserId || connections.ContainsKey(remote.UserId)
+                || WorldMapInstance.IsGate(observer.MapId) && remote.AccountId != observer.AccountId
                 || now - entry.SeenAtUtc >= TimeSpan.FromMinutes(2)) continue;
             var current = ParseTravel(saved, remote.MapId);
             if (current is null)
@@ -961,6 +980,12 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             await CheckLeaseAsync(pilot.MapId, fence, ct);
             var portal = WorldMapInstance.Starter(pilot.MapId).Portals.FirstOrDefault(p => p.Id == portalId);
             if (portal is null) return null;
+            if (WorldMapInstance.GateId(portal.DestinationMapId) is { } gateId)
+            {
+                if (economy is null || pilot.AccountId == Guid.Empty) return null;
+                var combat = await economy.GateCombatAsync(pilot.AccountId, gateId, ct);
+                if (combat is null || combat.CompletedAt is not null || combat.Lives <= 0) return null;
+            }
             var position = CurrentPosition(pilot);
             var dx = (long)position.X - portal.X;
             var dy = (long)position.Y - portal.Y;
@@ -1064,7 +1089,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
 
     private async Task BroadcastAsync(WorldPilot pilot, WorldCommandId command, byte[] payload, CancellationToken ct)
     {
-        foreach (var observer in connections.Values.Where(c => c.Pilot.MapId == pilot.MapId).ToArray())
+        foreach (var observer in connections.Values.Where(c => c.Pilot.MapId == pilot.MapId &&
+            (!WorldMapInstance.IsGate(pilot.MapId) || c.Pilot.AccountId == pilot.AccountId)).ToArray())
         {
             try { await observer.SendAsync(command, payload, ct); }
             catch (IOException) { }
@@ -1097,7 +1123,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             announcedPosition[pilot.UserId] = (current.TargetX, current.TargetY);
         }
         var payload = MovePayload(move);
-        var audience = connections.Values.Where(c => c.Pilot.MapId == pilot.MapId).ToArray();
+        var audience = connections.Values.Where(c => c.Pilot.MapId == pilot.MapId &&
+            (!WorldMapInstance.IsGate(pilot.MapId) || c.Pilot.AccountId == pilot.AccountId)).ToArray();
         foreach (var observer in audience)
         {
             try { await observer.SendAsync(WorldCommandId.MoveCommand, payload, ct); }
@@ -1124,7 +1151,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         WorldNpcReward? reward, CancellationToken ct, bool rocket = false)
     {
         // The hit packet carries the new vitals; record them so idle sync does not repeat them.
-        foreach (var observer in connections.Values.Where(c => c.Pilot.MapId == pilot.MapId))
+        foreach (var observer in connections.Values.Where(c => c.Pilot.MapId == pilot.MapId &&
+            (!WorldMapInstance.IsGate(pilot.MapId) || c.Pilot.AccountId == pilot.AccountId)))
             observer.NpcVitals[npc.Id] = (npc.Hp, npc.Shield);
         await BroadcastAsync(pilot, rocket ? WorldCommandId.RocketHitCommand : WorldCommandId.LaserHitCommand, WorldPayload.Encode(w =>
         {
@@ -1137,7 +1165,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         if (destroyed)
         {
             // Tombstone first so an observer's idle roster sync never re-creates or re-destroys it.
-            foreach (var observer in connections.Values.Where(c => c.Pilot.MapId == pilot.MapId))
+            foreach (var observer in connections.Values.Where(c => c.Pilot.MapId == pilot.MapId &&
+                (!WorldMapInstance.IsGate(pilot.MapId) || c.Pilot.AccountId == pilot.AccountId)))
                 observer.KnownNpcs[npc.Id] = false;
             await BroadcastAsync(pilot, WorldCommandId.ShipDestroyCommand,
                 WorldPayload.Encode(w => WorldPayload.WriteInt32(w, npc.Id)), ct);

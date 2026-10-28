@@ -11,6 +11,7 @@ using Testcontainers.PostgreSql;
 using ThDarkOrbitEmulator.ApiService.Features.Economy;
 using ThDarkOrbitEmulator.ApiService.Features.GameAuth;
 using ThDarkOrbitEmulator.ApiService.Features.IndexInternal.InternalStart;
+using ThDarkOrbitEmulator.ApiService.Features.World;
 using ThDarkOrbitEmulator.Identity.Application;
 using ThDarkOrbitEmulator.Identity.Infrastructure;
 
@@ -134,6 +135,46 @@ public sealed class LocalGalaxyGatePostgresTests
         Assert.That((await ProgressionPostAsync(h, "internalGalaxyGateAttack", form)).Response.StatusCode, Is.EqualTo(409));
         Assert.That((await ProgressionPostAsync(h, "internalGalaxyGateWave", form)).Response.StatusCode, Is.EqualTo(400));
         Assert.That((await h.Economy.GateCombatAsync(h.Session.AccountId, "alpha", TestContext.CurrentContext.CancellationToken))!.Kills, Is.EqualTo(1));
+    }
+
+    [Test]
+    public async Task WorldPortal_EntersActiveGateAndWorldShotsAdvanceWavesAndGrantRewards()
+    {
+        var h = await HarnessAsync();
+        var ct = TestContext.CurrentContext.CancellationToken;
+        var cache = NewCache();
+        var world = new WorldSessionStore(cache, economy: h.Economy);
+        var combat = new WorldGateCombat(h.Economy, cache);
+        var pilot = new WorldPilot(h.Session.GameUserId, "mmo", 1, 1, "ship_phoenix", 0, 0)
+        {
+            AccountId = h.Session.AccountId, FactionId = 1, X = 17500, Y = 6500
+        };
+        pilot = await world.EnterAsync(pilot, ct);
+        var portal = WorldMapInstance.Starter(1).Portals.Single(p => p.DestinationMapId == 101);
+        Assert.That(await world.JumpAsync(pilot, portal.Id, null, ct), Is.Null);
+        await SpinUntilAsync(h, "alpha", 34);
+        await ActivateAsync(h, h.Gates, "alpha");
+        var jump = await world.JumpAsync(pilot, portal.Id, null, ct);
+        Assert.That(jump, Is.Not.Null);
+        pilot = jump!.Pilot;
+        Assert.That(pilot.MapId, Is.EqualTo(101));
+        Assert.That((await world.RestoreAsync(pilot, ct)).MapId, Is.EqualTo(101));
+        for (var wave = 0; wave < 10; wave++)
+        {
+            var required = EconomyStore.GateWaveAt("alpha", wave)!.Count;
+            await SetCombatAsync(h.Session.AccountId, "alpha", required - 1);
+            var npc = (await combat.VisibleAsync(pilot, ct)).Single();
+            Assert.That(npc.Kind, Is.EqualTo(EconomyStore.GateWaveAt("alpha", wave)!.Npc));
+            Assert.That(await combat.SelectAsync(pilot, npc.Id, ct), Is.Not.Null);
+            Assert.That((await combat.AttackAsync(pilot, npc.Id, world, ct)).Destroyed, Is.True);
+            Assert.That((await h.Economy.GateRunAsync(h.Session.AccountId, "alpha", ct))!.Wave,
+                Is.EqualTo(wave + 1));
+        }
+        Assert.That(await combat.VisibleAsync(pilot, ct), Is.Empty);
+        Assert.That(await RewardDeltaAsync(h.Session.AccountId, "alpha", "uridium"), Is.EqualTo(20000));
+        Assert.That(await AchievementCountAsync(h.Session.AccountId, "alpha"), Is.EqualTo(1));
+        var exit = await world.JumpAsync(pilot, WorldMapInstance.Starter(101).Portals.Single().Id, null, ct);
+        Assert.That(exit!.Pilot.MapId, Is.EqualTo(1));
     }
 
     private static async Task<DefaultHttpContext> ProgressionPostAsync(Harness h, string action, string form)

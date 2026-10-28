@@ -161,6 +161,17 @@ public sealed class GameAuthSessionStore(IDistributedCache cache) : IGameAuthSes
         return true;
     }
 
+    public async Task<bool> SelectInstanceAsync(string dosid, int instanceId, CancellationToken cancellationToken)
+    {
+        if (instanceId <= 0) return false;
+        var session = await TryGetByDosidAsync(dosid, cancellationToken);
+        if (session is null) return false;
+        session.InstanceId = instanceId;
+        await cache.SetStringAsync(DosidKey(dosid), JsonSerializer.Serialize(session, JsonOptions),
+            new DistributedCacheEntryOptions { AbsoluteExpiration = session.ExpiresAt }, cancellationToken);
+        return true;
+    }
+
     public Task InvalidateAsync(string dosid, CancellationToken cancellationToken)
         => string.IsNullOrWhiteSpace(dosid)
             ? Task.CompletedTask

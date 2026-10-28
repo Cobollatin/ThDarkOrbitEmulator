@@ -14,5 +14,8 @@ public interface IGameAuthSessionStore
 
     Task<bool> SelectCompanyAsync(string dosid, string company, CancellationToken cancellationToken);
 
+    Task<bool> SelectInstanceAsync(string dosid, int instanceId, CancellationToken cancellationToken) =>
+        Task.FromResult(false);
+
     Task InvalidateAsync(string dosid, CancellationToken cancellationToken);
 }

@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using Microsoft.Extensions.Options;
 using ThDarkOrbitEmulator.ApiService.Features.World.Mesh;
 using ThDarkOrbitEmulator.Cluster.Infrastructure;
+using ThDarkOrbitEmulator.ApiService.Features.GameAuth;
 
 namespace ThDarkOrbitEmulator.ApiService.Features.World;
 
@@ -68,7 +69,9 @@ public sealed class WorldServerHostedService(IOptions<WorldServerOptions> config
                     services.GetService<WorldNpcs>(),
                     services.GetService<Admin.IRuntimeVariableRegistry>(),
                     services.GetService<Admin.WorldAdminEvents>(),
-                    services.GetService<Admin.IAdminCommandDispatcher>()).RunAsync(client.GetStream(), ct);
+                    services.GetService<Admin.IAdminCommandDispatcher>(),
+                    services.GetRequiredService<IGameAuthSessionStore>(),
+                    services.GetService<WorldGateCombat>()).RunAsync(client.GetStream(), ct);
             }
             catch (Exception error) when (error is IOException or SocketException)
             {

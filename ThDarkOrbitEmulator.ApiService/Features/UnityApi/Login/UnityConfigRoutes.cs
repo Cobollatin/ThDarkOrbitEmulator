@@ -42,7 +42,8 @@ public static class UnityConfigRoutes
         app.MapPost("/unityApi/changeInstance.php", async (HttpContext context, IGameAuthSessionStore sessions,
             CockpitCatalogStore catalog, CancellationToken ct) =>
         {
-            if (await SessionAsync(context, sessions, ct) is null) return Results.Unauthorized();
+            var session = await SessionAsync(context, sessions, ct);
+            if (session is null) return Results.Unauthorized();
             if (!context.Request.HasFormContentType) return Results.BadRequest();
             var form = await context.Request.ReadFormAsync(ct);
             if (form.Count != 1 || !form.TryGetValue("instanceId", out var ids) || ids.Count != 1
@@ -50,6 +51,7 @@ public static class UnityConfigRoutes
             var servers = (await catalog.ServersAsync(ct)).Where(item => item.Enabled).ToArray();
             if (id < 1 || id > servers.Length) return Results.NotFound();
             if (servers[id - 1].Status != "online") return Results.Conflict();
+            if (!await sessions.SelectInstanceAsync(session.Dosid, id, ct)) return Results.Unauthorized();
             return Results.Json(new { result = "ok", status = 0, error = (string?)null,
                 link = $"{ClientFacingGameHost.Resolve(context.Request)}/indexInternal.es?action=internalWebGL&from=internalStart" });
         }).AllowAnonymous();

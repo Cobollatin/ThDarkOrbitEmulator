@@ -133,7 +133,8 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
     WorldSessionStore? sessions = null, IServerMeshRegistry? registry = null, string? localNodeId = null,
     WorldCollectibles? collectibles = null, WorldNpcs? npcs = null,
     IRuntimeVariableRegistry? variables = null, WorldAdminEvents? adminEvents = null,
-    IAdminCommandDispatcher? adminCommands = null)
+    IAdminCommandDispatcher? adminCommands = null, IGameAuthSessionStore? auth = null,
+    WorldGateCombat? gates = null)
 {
     // Wire format is provisional; command IDs and field order need a redacted Unity fixture.
     public async Task RunAsync(Stream stream, CancellationToken ct = default)
@@ -228,7 +229,7 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                         await sessions.ObserveRemotePilotsAsync(connected, connection, ct);
                         foreach (var remoteMove in await sessions.ObserveRemoteMovesAsync(connected, ct))
                             await sessions.SendMoveAsync(connection, remoteMove, ct);
-                        if (npcs is not null)
+                        if (npcs is not null || gates is not null && WorldMapInstance.IsGate(connected.MapId))
                             foreach (var gone in await SyncNpcsAsync(connection, ct))
                                 if (selectedNpcId == gone) selectedNpcId = null;
                         var live = await sessions.LiveStatsAsync(connected, ct);
@@ -264,7 +265,7 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
             catch (EndOfStreamException) { return; }
             catch (NativeWorldProtocolException native)
             {
-                await new NativeWorldHandshake(resolver, options, sessions).RunAsync(stream, native.FirstBytes, ct);
+                await new NativeWorldHandshake(resolver, options, sessions, auth).RunAsync(stream, native.FirstBytes, ct);
                 return;
             }
             catch (InvalidDataException)
@@ -393,7 +394,7 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                         continue;
                     }
                     if (packet.Value.Command == WorldCommandId.CollectBoxRequest && sessions is not null
-                        && collectibles is not null)
+                        && collectibles is not null && !WorldMapInstance.IsGate(connected.MapId))
                     {
                         var boxId = WorldPayload.Decode(packet.Value.Payload, WorldPayload.ReadInt32);
                         var result = await collectibles.CollectAsync(connected, boxId, sessions, ct, fence);
@@ -403,10 +404,12 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                                     WorldPayload.WriteString(w, result.Status); WorldPayload.WriteInt32(w, 0); }), ct);
                         continue;
                     }
-                    if (packet.Value.Command == WorldCommandId.SelectShipRequest && npcs is not null)
+                    if (packet.Value.Command == WorldCommandId.SelectShipRequest && (npcs is not null || gates is not null))
                     {
                         var id = WorldPayload.Decode(packet.Value.Payload, WorldPayload.ReadInt32);
-                        var target = await npcs.SelectAsync(connected, id, ct, fence, sessions);
+                        var target = WorldMapInstance.IsGate(connected.MapId)
+                            ? gates is null ? null : await gates.SelectAsync(connected, id, ct)
+                            : npcs is null ? null : await npcs.SelectAsync(connected, id, ct, fence, sessions);
                         selectedNpcId = target?.Id;
                         await connection!.SendAsync(WorldCommandId.TargetLockCommand, WorldPayload.Encode(w =>
                         {
@@ -419,16 +422,19 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                         continue;
                     }
                     if (packet.Value.Command is WorldCommandId.LaserFireRequest or WorldCommandId.RocketFireRequest &&
-                        npcs is not null && sessions is not null)
+                        (npcs is not null || gates is not null) && sessions is not null)
                     {
                         var id = WorldPayload.Decode(packet.Value.Payload, WorldPayload.ReadInt32);
-                        if (selectedNpcId != id && !await npcs.CanRetryRewardAsync(connected, id, ct))
+                        if (selectedNpcId != id && (WorldMapInstance.IsGate(connected.MapId) ||
+                            npcs is null || !await npcs.CanRetryRewardAsync(connected, id, ct)))
                         {
                             await SendLaserFireResultAsync(connection!, id, "unselected", ct);
                             continue;
                         }
-                        var hit = await npcs.AttackAsync(connected, id, sessions, ct, fence,
-                            rocket: packet.Value.Command == WorldCommandId.RocketFireRequest);
+                        var hit = WorldMapInstance.IsGate(connected.MapId)
+                            ? gates is null ? new WorldNpcAttack("missing") : await gates.AttackAsync(connected, id, sessions, ct)
+                            : await npcs!.AttackAsync(connected, id, sessions, ct, fence,
+                                rocket: packet.Value.Command == WorldCommandId.RocketFireRequest);
                         if (hit.Status != "hit")
                         {
                             await SendLaserFireResultAsync(connection!, id, hit.Status, ct);
@@ -491,6 +497,17 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                         {
                             await ErrorAsync(writer, error, ct);
                             return;
+                        }
+                        if (auth is not null)
+                        {
+                            var session = await auth.TryGetByDosidAsync(login.Dosid, ct);
+                            if (session is null || session.GameUserId != login.UserId || session.InstanceId <= 0 ||
+                                !int.TryParse(login.InstanceId, out var requestedInstance) ||
+                                requestedInstance != session.InstanceId)
+                            {
+                                await ErrorAsync(writer, WorldLoginError.UserMismatch, ct);
+                                return;
+                            }
                         }
                         var restored = sessions is null ? pilot : await sessions.RestoreAsync(pilot, ct);
                         var loginRoute = await CurrentRouteAsync(restored.MapId, ct);
@@ -617,7 +634,7 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
 
     private async Task SendBoxesAsync(WorldPacketWriter writer, WorldPilot pilot, CancellationToken ct)
     {
-        if (collectibles is null) return;
+        if (collectibles is null || WorldMapInstance.IsGate(pilot.MapId)) return;
         foreach (var box in await collectibles.VisibleAsync(pilot.MapId, ct))
             await writer.WriteAsync(WorldCommandId.CollectBoxCreateCommand, WorldPayload.Encode(w =>
             {
@@ -632,10 +649,13 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
         System.Collections.Concurrent.ConcurrentDictionary<int, bool> known,
         System.Collections.Concurrent.ConcurrentDictionary<int, (int Hp, int Shield)> vitals, CancellationToken ct)
     {
-        if (npcs is null) return;
+        if (npcs is null && gates is null) return;
         known.Clear();
         vitals.Clear();
-        foreach (var npc in await npcs.VisibleForObserversAsync(pilot.MapId, ct))
+        var visible = WorldMapInstance.IsGate(pilot.MapId)
+            ? gates is null ? [] : await gates.VisibleAsync(pilot, ct)
+            : npcs is null ? [] : await npcs.VisibleForObserversAsync(pilot.MapId, ct);
+        foreach (var npc in visible)
         {
             await writer.WriteAsync(WorldCommandId.ShipCreateCommand, WorldNpcPackets.Create(npc), ct);
             known[npc.Id] = true;
@@ -648,7 +668,9 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
     // Returns the ids announced as destroyed so the caller can drop a stale target lock.
     private async Task<IReadOnlyList<int>> SyncNpcsAsync(WorldConnection connection, CancellationToken ct)
     {
-        var visible = await npcs!.VisibleForObserversAsync(connection.Pilot.MapId, ct);
+        var visible = WorldMapInstance.IsGate(connection.Pilot.MapId)
+            ? gates is null ? [] : await gates.VisibleAsync(connection.Pilot, ct)
+            : await npcs!.VisibleForObserversAsync(connection.Pilot.MapId, ct);
         var visibleIds = visible.Select(n => n.Id).ToHashSet();
         foreach (var npc in visible)
         {

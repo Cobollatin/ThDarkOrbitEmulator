@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -190,10 +191,22 @@ public sealed class UnityHangarActivatePostgresTests
                 Assert.That(firstServer.GetProperty("url").GetString(), Does.Contain("/indexInternal.es"));
                 Assert.That(firstServer.GetProperty("active").GetInt64(), Is.EqualTo(1));
             });
+            var loginContext = new DefaultHttpContext { RequestServices = app.Services };
+            loginContext.Request.Host = new HostString("127.0.0.1");
+            var loginPayload = await UnityLoginAction.HandleAsync(loginContext, session.Dosid,
+                app.Services.GetRequiredService<IGameAuthSessionStore>(),
+                app.Services.GetRequiredService<LocalHangarStore>(),
+                app.Services.GetRequiredService<LocalAccountPreferencesStore>(), ct,
+                catalog: app.Services.GetRequiredService<CockpitCatalogStore>());
+            Assert.That(loginPayload, Is.Not.Null);
+            Assert.That((await app.Services.GetRequiredService<GameAuthSessionStore>()
+                .TryGetByDosidAsync(session.Dosid, ct))!.InstanceId, Is.EqualTo(1));
             using var choose = await SendAsync(HttpMethod.Post, "/unityApi/changeInstance.php", true, ("instanceId", "1"));
             using var chooseJson = System.Text.Json.JsonDocument.Parse(await choose.Content.ReadAsStringAsync(ct));
             Assert.That(chooseJson.RootElement.GetProperty("status").GetInt64(), Is.Zero);
             Assert.That(chooseJson.RootElement.GetProperty("link").GetString(), Does.Contain("/indexInternal.es?action=internalWebGL"));
+            Assert.That((await app.Services.GetRequiredService<GameAuthSessionStore>()
+                .TryGetByDosidAsync(session.Dosid, ct))!.InstanceId, Is.EqualTo(1));
             using var badChoose = await SendAsync(HttpMethod.Post, "/unityApi/changeInstance.php", true, ("instanceId", "999"));
             Assert.That(badChoose.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
             using var agent = await SendAsync(HttpMethod.Post, "/unityApi/agent.php", true, ("functionId", "Unity_OpenProfile"));
