@@ -1231,6 +1231,53 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That((await store.MoveAsync(restored, 3000, 1300, null, default)).X, Is.EqualTo(3000));
     }
 
+    [Test]
+    public async Task PilotDestruction_FreezesTravel_AndCanRespawnAtDeathLocationOnce()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var store = new WorldSessionStore(cache);
+        var pilot = await store.EnterAsync(Pilot() with
+        {
+            UserId = 908, MapId = 2, FactionId = 1, X = 5000, Y = 5000,
+            Stats = new WorldShipStats(300, 1000, 100, 0, 100, [])
+        }, default);
+        await store.MoveAsync(pilot, 6000, 5000, null, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0);
+        var dead = await new WorldSessionStore(cache).RestoreAsync(pilot, default);
+        var deathPosition = (dead.X, dead.Y);
+        Assert.That(store.MoveId(dead), Is.EqualTo(Guid.Empty));
+        Assert.That(deathPosition.Item1, Is.InRange(5000, 6000));
+        Assert.That((await store.RestoreAsync(pilot, default)).X, Is.EqualTo(deathPosition.Item1));
+
+        var replica = new WorldSessionStore(cache);
+        var respawned = await replica.RespawnAsync(dead, WorldRespawnLocation.DeathLocation, default);
+        Assert.That(respawned, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(respawned!.MapId, Is.EqualTo(2));
+            Assert.That((respawned.X, respawned.Y), Is.EqualTo(deathPosition));
+            Assert.That(replica.CurrentHitPoints(respawned), Is.EqualTo(100));
+            Assert.That(replica.CurrentShield(respawned), Is.Zero);
+        });
+        Assert.That(await store.RespawnAtBaseAsync(respawned!, default), Is.Null);
+    }
+
+    [Test]
+    public async Task PilotDestruction_GateMapRejectsDeathLocationRepair()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var pilot = await store.EnterAsync(Pilot() with
+        {
+            UserId = 909, MapId = 101, FactionId = 1, X = 5000, Y = 5000,
+            Stats = new WorldShipStats(300, 1000, 100, 0, 100, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0);
+        Assert.That(await store.RespawnAsync(pilot, WorldRespawnLocation.DeathLocation, default), Is.Null);
+        Assert.That((await store.RespawnAtBaseAsync(pilot, default))?.MapId, Is.EqualTo(1));
+    }
+
     [TestCase("0", 0)]
     [TestCase("1000000", 1000000)]
     [TestCase("-1", 150)]

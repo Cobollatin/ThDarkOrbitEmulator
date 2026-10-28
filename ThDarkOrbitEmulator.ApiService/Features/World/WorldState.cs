@@ -12,6 +12,7 @@ namespace ThDarkOrbitEmulator.ApiService.Features.World;
 public sealed record WorldStation(int Id, int X, int Y, int PeaceRadius);
 public sealed record WorldPortal(int Id, int X, int Y, int DestinationMapId, int ArrivalX, int ArrivalY,
     int JumpRadius = 500);
+public enum WorldRespawnLocation { Base, DeathLocation }
 public sealed record WorldMapInstance(int MapId, int FactionId, int Width, int Height,
     WorldStation HomeStation, IReadOnlyList<WorldPortal> Portals)
 {
@@ -1103,8 +1104,11 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         finally { gate.Release(); }
     }
 
-    public async Task<WorldPilot?> RespawnAtBaseAsync(WorldPilot pilot, CancellationToken ct,
-        WorldLeaseFence? fence = null)
+    public Task<WorldPilot?> RespawnAtBaseAsync(WorldPilot pilot, CancellationToken ct,
+        WorldLeaseFence? fence = null) => RespawnAsync(pilot, WorldRespawnLocation.Base, ct, fence);
+
+    public async Task<WorldPilot?> RespawnAsync(WorldPilot pilot, WorldRespawnLocation location,
+        CancellationToken ct, WorldLeaseFence? fence = null)
     {
         var gate = movementGates.GetOrAdd(pilot.UserId, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(ct);
@@ -1116,9 +1120,12 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             pilot = await RefreshAsync(pilot, ct);
             if (pilot.MapId != admittedMap) throw new WorldLeaseLostException();
             if (CurrentHitPoints(pilot) > 0) return null;
+            if (location == WorldRespawnLocation.DeathLocation && WorldMapInstance.IsGate(pilot.MapId))
+                return null;
             var baseMapId = (Math.Clamp(pilot.FactionId, 1, 4) - 1) * 4 + 1;
             var station = WorldMapInstance.Starter(baseMapId).HomeStation;
-            var respawned = pilot with { MapId = baseMapId, X = station.X, Y = station.Y };
+            var respawned = location == WorldRespawnLocation.DeathLocation
+                ? pilot : pilot with { MapId = baseMapId, X = station.X, Y = station.Y };
             hitPoints[pilot.UserId] = Math.Max(1, ActiveStats(pilot).MaxHitPoints / 10);
             shields[pilot.UserId] = 0;
             travel.TryRemove(pilot.UserId, out _);
@@ -1131,7 +1138,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             await WritePresenceAsync(pilot, false, ct);
             await WritePresenceAsync(respawned, true, ct);
             if (connected.TryGetValue(pilot.MapId, out var old)) old.TryRemove(pilot.UserId, out _);
-            connected.GetOrAdd(baseMapId, _ => new ConcurrentDictionary<long, WorldPilot>())[pilot.UserId] = respawned;
+            connected.GetOrAdd(respawned.MapId, _ => new ConcurrentDictionary<long, WorldPilot>())[pilot.UserId] = respawned;
             if (connections.TryGetValue(pilot.UserId, out var connection)) connection.Pilot = respawned;
             return respawned;
         }
@@ -1320,6 +1327,15 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             (long)Math.Round(Math.Max(0, damage) * Math.Clamp(shieldAbsorption, 0, 1)));
         shields[pilot.UserId] = CurrentShield(pilot) - absorbed;
         hitPoints[pilot.UserId] = Math.Max(0, CurrentHitPoints(pilot) - (damage - absorbed));
+        if (hitPoints[pilot.UserId] == 0)
+        {
+            var (x, y) = CurrentPosition(pilot);
+            pilot = pilot with { X = x, Y = y };
+            travel.TryRemove(pilot.UserId, out _);
+            await PersistAsync(pilot, ct);
+            if (connected.TryGetValue(pilot.MapId, out var occupants))
+                occupants[pilot.UserId] = pilot;
+        }
         await PersistRuntimeAsync(pilot, ct);
         await BroadcastAsync(pilot, WorldCommandId.NpcFireCommand, WorldPayload.Encode(w =>
         {

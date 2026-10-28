@@ -399,12 +399,27 @@ public static class WorldHttpBridge
         IWorldPilotResolver resolver, WorldSessionStore sessions, CancellationToken ct)
     {
         if (!JsonRequest(context)) { context.Response.StatusCode = 415; return; }
+        WorldRespawnLocation location;
+        try
+        {
+            using var body = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: ct);
+            var choice = body.RootElement.TryGetProperty("location", out var value)
+                ? value.GetString() : "base";
+            location = choice switch
+            {
+                "base" => WorldRespawnLocation.Base,
+                "death" => WorldRespawnLocation.DeathLocation,
+                _ => throw new JsonException("Unknown respawn location.")
+            };
+        }
+        catch (Exception e) when (e is JsonException or InvalidOperationException)
+        { context.Response.StatusCode = 400; return; }
         var pilot = await PilotAsync(context, auth, resolver, sessions, ct);
         if (pilot is null) return;
         pilot = await sessions.GetOrEnterAsync(pilot, ct);
         await SetMeshHeadersAsync(context, pilot.MapId, ct);
         WorldPilot? respawned;
-        try { respawned = await sessions.RespawnAtBaseAsync(pilot, ct,
+        try { respawned = await sessions.RespawnAsync(pilot, location, ct,
             await LeaseFenceAsync(context, pilot.MapId, ct)); }
         catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
         if (respawned is null) { context.Response.StatusCode = 409; return; }
