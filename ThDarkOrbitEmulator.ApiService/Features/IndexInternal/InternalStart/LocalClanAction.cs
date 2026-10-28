@@ -42,6 +42,9 @@ public static class LocalClanAction
         return now - issued > FormLifetime ? KeyCheck.Expired : KeyCheck.Valid;
     }
 
+    internal static bool IsValidOperationKey(string dosid, string action, string subject, string key, DateTimeOffset now) =>
+        key.Length <= MaxKeyLength && CheckKey(dosid, action, subject, key, now) == KeyCheck.Valid;
+
     // Directory ids are lowercase ASCII words joined by single hyphens, e.g. mmo-guard.
     public static bool IsWellFormedClanId(string clanId) =>
         clanId.Length is >= 1 and <= 64 && clanId[0] != '-' && clanId[^1] != '-' && !clanId.Contains("--")

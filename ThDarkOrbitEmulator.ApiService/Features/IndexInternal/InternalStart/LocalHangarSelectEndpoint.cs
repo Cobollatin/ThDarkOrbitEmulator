@@ -28,7 +28,7 @@ public sealed class LocalHangarSelectEndpoint(
 
     public override async Task HandleAsync(CancellationToken ct)
     {
-        if (string.Equals(HttpContext.Request.Query["action"], "internalDockEquipmentSet", StringComparison.OrdinalIgnoreCase))
+        if (HttpContext.Request.Query["action"].ToString() is "internalDockEquipmentSet" or "internalDockEquipmentTransfer")
             await LocalHangarEquipmentSelection.HandleAsync(HttpContext, sessions, equipment, ct);
         else if (string.Equals(HttpContext.Request.Query["action"], "internalShopBuy", StringComparison.OrdinalIgnoreCase))
             await LocalShopPurchase.HandleAsync(HttpContext, sessions, equipment, HttpContext.RequestServices.GetRequiredService<ThDarkOrbitEmulator.ApiService.Features.Economy.EconomyStore>(), clock, ct);
@@ -43,6 +43,8 @@ public sealed class LocalHangarSelectEndpoint(
             await LocalTechFactoryAction.HandleAsync(HttpContext, sessions, techFactory, ct, clock);
         else if (HttpContext.Request.Query["action"].ToString() is "internalClanJoin" or "internalClanLeave")
             await LocalClanAction.HandleAsync(HttpContext, sessions, clans, clock, ct);
+        else if (HttpContext.Request.Query["action"].ToString() == "internalClanOperate")
+            await LocalClanOperations.HandleAsync(HttpContext, sessions, clans, clock, ct);
         else if (HttpContext.Request.Query["action"].ToString() is "internalPilotSkillAllocate" or "internalPilotSkillReset")
             await LocalPilotSkillAction.HandleAsync(HttpContext, sessions, pilotSkills, clock, ct);
         else if (LocalMessagingAction.Actions.Contains(HttpContext.Request.Query["action"].ToString()))

@@ -40,7 +40,10 @@
     "progressionActions": "ThDarkOrbitEmulator.ApiService/Features/IndexInternal/InternalStart/LocalProgressionAction.cs",
     "progressionPanel": "ThDarkOrbitEmulator.ApiService/Features/IndexInternal/InternalStart/LocalProgressionPanel.cs",
     "progressionMigration": "ThDarkOrbitEmulator.Identity.Infrastructure/Migrations/Sql/031_skylab_jobs_and_gate_waves.up.pgsql",
-    "remainingGaps": "Atomic Dock transfer, combat-verified Galaxy Gate instances, clan diplomacy and station modules remain unimplemented. Task 6 refinery rates, upgrade durations, and gate wave count are provisional."
+    "clanOperations": "ThDarkOrbitEmulator.ApiService/Features/Economy/EconomyClanOperations.cs",
+    "clanOperationsMenu": "ThDarkOrbitEmulator.ApiService/Features/IndexInternal/InternalStart/LocalClanOperations.cs",
+    "clanOperationsMigration": "ThDarkOrbitEmulator.Identity.Infrastructure/Migrations/Sql/032_clan_diplomacy_stations.up.pgsql",
+    "remainingGaps": "Combat-verified Galaxy Gate instances, clan invitations/applications, world station ownership, and clan chat remain unspecified. Task 6 refinery rates, upgrade durations, and gate wave count and Task 7 clan rules are provisional."
   },
   "missingRequestedSpecs": [
     "docs/specs/04-world-simulation-and-movement.md",

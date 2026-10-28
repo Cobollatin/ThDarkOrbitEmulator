@@ -57,6 +57,18 @@ public class EconomyPostgresTests
         Assert.That(await first.ChangeHangarEquipmentAsync(account, 2, 2, "laser_lf3", 2, ct),
             Is.EqualTo(LocalHangarChange.Conflict));
         Assert.That(await first.HangarEquipmentAsync(account, ct), Has.Count.EqualTo(3));
+
+        Assert.That(await first.ChangeHangarEquipmentAsync(account, 2, 1, "laser_lf3", 0, ct),
+            Is.EqualTo(LocalHangarChange.Applied));
+
+        Assert.That(await second.TransferHangarEquipmentAsync(account, 1, 2, 1, "laser_lf3", 1, ct),
+            Is.EqualTo(LocalHangarChange.Applied));
+        var moved = await first.HangarEquipmentAsync(account, ct);
+        Assert.That(moved.Single(a => a.HangarSlot == 1 && a.ItemId == "laser_lf3").Quantity, Is.EqualTo(2));
+        Assert.That(moved.Single(a => a.HangarSlot == 2 && a.ItemId == "laser_lf3").Quantity, Is.EqualTo(1));
+        Assert.That(await first.TransferHangarEquipmentAsync(account, 1, 2, 1, "laser_lf3", 3, ct),
+            Is.EqualTo(LocalHangarChange.Conflict));
+        Assert.That(await second.HangarEquipmentAsync(account, ct), Is.EquivalentTo(moved));
     }
 
     [Test]

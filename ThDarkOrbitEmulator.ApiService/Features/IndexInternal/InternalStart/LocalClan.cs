@@ -32,6 +32,25 @@ public sealed class LocalClanStore(IDistributedCache cache, EconomyStore? econom
 
     public static LocalClanEntry? Find(string? clanId) => Directory.SingleOrDefault(entry => entry.Id == clanId);
 
+    public Task<bool> IsLeaderAsync(Guid accountId, string clanId, CancellationToken ct) =>
+        economy?.IsClanLeaderAsync(accountId, clanId, ct) ?? Task.FromResult(false);
+
+    public Task<IReadOnlyList<ClanRelation>> RelationsAsync(string clanId, CancellationToken ct) =>
+        economy?.ClanRelationsAsync(clanId, ct) ?? Task.FromResult<IReadOnlyList<ClanRelation>>([]);
+
+    public Task<IReadOnlyList<ClanStationModule>> StationAsync(string clanId, CancellationToken ct) =>
+        economy?.ClanStationAsync(clanId, ct) ?? Task.FromResult<IReadOnlyList<ClanStationModule>>([]);
+
+    public Task<ClanOperationChange> RelationAsync(Guid accountId, string clanId, string otherClanId,
+        string action, string key, CancellationToken ct) =>
+        economy?.ChangeClanRelationAsync(accountId, clanId, otherClanId, action, key, ct)
+        ?? Task.FromResult(ClanOperationChange.Invalid);
+
+    public Task<ClanOperationChange> UpgradeAsync(Guid accountId, string clanId, string moduleId,
+        string key, DateTimeOffset now, CancellationToken ct) =>
+        economy?.UpgradeClanModuleAsync(accountId, clanId, moduleId, key, now, ct)
+        ?? Task.FromResult(ClanOperationChange.Invalid);
+
     private static readonly SemaphoreSlim MutationLock = new(1, 1);
     private static string Key(Guid accountId) => $"localclan:{accountId:N}";
 
@@ -187,7 +206,7 @@ public static class LocalClan
 
     public static string Page(GameAuthSession session, string? membership, DateTimeOffset? now = null,
         string? detail = null, string? filter = null, string? joined = null, string? left = null,
-        string? search = null)
+        string? search = null, string? operations = null)
     {
         search = string.IsNullOrEmpty(search) ? null : search;
         var company = session.Company ?? "";
@@ -223,7 +242,7 @@ public static class LocalClan
         var leave = membership is null ? "" : LeaveForm(session, membership, issuedAt);
         var details = detail is null ? "" : Details(session, membership, companyClans, found, detail, activeFilter, search, issuedAt);
         return $$"""
-            <!doctype html><html lang="es"><head><meta charset="utf-8"><title>Clan - DarkOrbit</title><style>body{background:#050b12;color:#e3f2fc;font:18px Arial,sans-serif}main{max-width:900px;margin:7vh auto}a{color:#8cdcff}td,th{padding:12px;border:1px solid #4c7896}button{background:#1789b5;color:white;padding:8px;border:0}#clan-detail{border:1px solid #4c7896;padding:12px;margin:12px 0}</style></head><body><main id="clan"><h1>Clan</h1><p>Pilot {{HtmlEncoder.Default.Encode(session.Username)}} · {{current}}</p>{{Notice(company, membership, joined, left)}}<p id="clan-summary">{{summary}}</p>{{leave}}{{searchForm}}<nav id="clan-filters">{{tabs}}</nav>{{details}}<table><thead><tr><th>Clan</th><th>Focus</th><th>Members</th><th>Membership</th></tr></thead><tbody>{{rows}}</tbody></table><p><a href="/indexInternal.es?action=internalWebGL&amp;from=internalStart">Back to game</a></p></main></body></html>
+            <!doctype html><html lang="es"><head><meta charset="utf-8"><title>Clan - DarkOrbit</title><style>body{background:#050b12;color:#e3f2fc;font:18px Arial,sans-serif}main{max-width:900px;margin:7vh auto}a{color:#8cdcff}td,th{padding:12px;border:1px solid #4c7896}button{background:#1789b5;color:white;padding:8px;border:0}#clan-detail{border:1px solid #4c7896;padding:12px;margin:12px 0}</style></head><body><main id="clan"><h1>Clan</h1><p>Pilot {{HtmlEncoder.Default.Encode(session.Username)}} · {{current}}</p>{{Notice(company, membership, joined, left)}}<p id="clan-summary">{{summary}}</p>{{leave}}{{searchForm}}<nav id="clan-filters">{{tabs}}</nav>{{details}}{{operations}}<table><thead><tr><th>Clan</th><th>Focus</th><th>Members</th><th>Membership</th></tr></thead><tbody>{{rows}}</tbody></table><p><a href="/indexInternal.es?action=internalWebGL&amp;from=internalStart">Back to game</a></p></main></body></html>
             """;
     }
 

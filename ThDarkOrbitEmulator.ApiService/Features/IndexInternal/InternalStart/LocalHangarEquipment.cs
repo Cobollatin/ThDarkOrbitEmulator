@@ -145,6 +145,48 @@ public sealed class LocalHangarEquipmentStore(IDistributedCache cache, EconomySt
         await SetAssignmentAsync(accountId, hangarSlot, configuration, itemId, quantity, ct)
             == LocalHangarChange.Applied;
 
+    public async Task<LocalHangarChange> TransferAsync(Guid accountId, int sourceSlot, int destinationSlot,
+        int configuration, string itemId, int quantity, CancellationToken ct)
+    {
+        if (accountId == Guid.Empty) return LocalHangarChange.Invalid;
+        await _mutationLock.WaitAsync(ct);
+        try
+        {
+            var state = await GetAsync(accountId, ct);
+            if (economy is not null)
+                return await economy.TransferHangarEquipmentAsync(accountId, sourceSlot, destinationSlot,
+                    configuration, itemId, quantity, ct);
+            var (result, assignments) = ApplyTransfer(state.Inventory, state.Assignments,
+                sourceSlot, destinationSlot, configuration, itemId, quantity);
+            if (result == LocalHangarChange.Applied)
+                await SaveAsync(accountId, state with { Assignments = assignments }, ct);
+            return result;
+        }
+        finally { _mutationLock.Release(); }
+    }
+
+    public static (LocalHangarChange Result, List<LocalEquipmentAssignment> Assignments) ApplyTransfer(
+        IReadOnlyList<LocalEquipmentItem> inventory, IReadOnlyList<LocalEquipmentAssignment> assignments,
+        int sourceSlot, int destinationSlot, int configuration, string itemId, int quantity)
+    {
+        var current = assignments.ToList();
+        if (!LocalHangars.IsValidSlot(sourceSlot) || !LocalHangars.IsValidSlot(destinationSlot)
+            || sourceSlot == destinationSlot || configuration is not (1 or 2)
+            || quantity is < 1 or > LocalHangarEquipmentSelection.MaxQuantity)
+            return (LocalHangarChange.Invalid, current);
+        var source = current.SingleOrDefault(a => a.HangarSlot == sourceSlot
+            && a.Configuration == configuration && a.ItemId == itemId);
+        if (source is null || source.Quantity < quantity)
+            return (LocalHangarChange.Conflict, current);
+        var lowered = ApplyAssignment(inventory, current, sourceSlot, configuration, itemId,
+            source.Quantity - quantity);
+        if (lowered.Result != LocalHangarChange.Applied) return lowered;
+        var destination = lowered.Assignments.SingleOrDefault(a => a.HangarSlot == destinationSlot
+            && a.Configuration == configuration && a.ItemId == itemId);
+        return ApplyAssignment(inventory, lowered.Assignments, destinationSlot, configuration, itemId,
+            (destination?.Quantity ?? 0) + quantity);
+    }
+
     public async Task<LocalHangarChange> SetAssignmentAsync(Guid accountId, int hangarSlot, int configuration,
         string itemId, int quantity, CancellationToken ct)
     {
@@ -720,7 +762,11 @@ public static class LocalHangarEquipment
                 ? "<form method=\"post\" action=\"/indexInternal.es?action=internalDockEquipmentSet\">" +
                 $"<input type=\"hidden\" name=\"slot\" value=\"{hangarSlot}\"><input type=\"hidden\" name=\"configuration\" value=\"{configuration}\">" +
                 $"<input type=\"hidden\" name=\"item\" value=\"{HtmlEncoder.Default.Encode(item.Id)}\"><input type=\"number\" name=\"quantity\" min=\"0\" max=\"{max}\" value=\"{Math.Min(assigned, LocalHangarEquipmentSelection.MaxQuantity)}\">" +
-                "<button type=\"submit\">Save</button></form>"
+                "<button type=\"submit\">Save</button></form>" +
+                (assigned > 0 ? "<form method=\"post\" action=\"/indexInternal.es?action=internalDockEquipmentTransfer\">" +
+                $"<input type=\"hidden\" name=\"slot\" value=\"{hangarSlot}\"><input type=\"hidden\" name=\"destination\" value=\"{(hangarSlot == 1 ? 2 : 1)}\">" +
+                $"<input type=\"hidden\" name=\"configuration\" value=\"{configuration}\"><input type=\"hidden\" name=\"item\" value=\"{HtmlEncoder.Default.Encode(item.Id)}\">" +
+                $"<input type=\"number\" name=\"quantity\" min=\"1\" max=\"{assigned}\" value=\"{assigned}\"><button type=\"submit\">Transfer to ship {(hangarSlot == 1 ? 2 : 1)}</button></form>" : "")
                 : "<span data-equipment-unavailable>Item ID cannot be equipped.</span>";
             return $"<tr><td>{HtmlEncoder.Default.Encode(item.Category)}</td><td>{HtmlEncoder.Default.Encode(item.Name)}</td>" +
                 $"<td>{item.Quantity}</td><td>{available}</td><td>{form}</td></tr>";

@@ -29,7 +29,7 @@ public static partial class LocalHangarEquipmentSelection
             return;
         }
         if (!LocalHangarError.ValidActionQuery(request.Query)
-            || request.Query["action"].ToString() != "internalDockEquipmentSet")
+            || request.Query["action"].ToString() is not ("internalDockEquipmentSet" or "internalDockEquipmentTransfer"))
         {
             await LocalHangarError.WriteAsync(response, 400, "Invalid equipment action.", ct);
             return;
@@ -57,17 +57,26 @@ public static partial class LocalHangarEquipmentSelection
             await LocalHangarError.WriteAsync(response, 400, "The equipment form could not be read.", ct);
             return;
         }
-        if (!LocalHangarError.HasExactly(form, "slot", "configuration", "item", "quantity")
+        var transfer = request.Query["action"].ToString() == "internalDockEquipmentTransfer";
+        var destination = 0;
+        if (!(transfer
+                ? LocalHangarError.HasExactly(form, "slot", "destination", "configuration", "item", "quantity")
+                : LocalHangarError.HasExactly(form, "slot", "configuration", "item", "quantity"))
             || !TryParseChoice(form["slot"].ToString(), out var slot)
             || !TryParseChoice(form["configuration"].ToString(), out var configuration)
             || !TryParseQuantity(form["quantity"].ToString(), out var quantity)
+            || transfer && (!TryParseChoice(form["destination"].ToString(), out destination)
+                || destination == slot || quantity == 0)
             || !IsWellFormedItemId(form["item"].ToString()))
         {
             await LocalHangarError.WriteAsync(response, 400, "Invalid equipment fields.", ct);
             return;
         }
-        var result = await equipment.SetAssignmentAsync(session.AccountId, slot, configuration,
-            form["item"].ToString(), quantity, ct);
+        var result = transfer
+            ? await equipment.TransferAsync(session.AccountId, slot, destination, configuration,
+                form["item"].ToString(), quantity, ct)
+            : await equipment.SetAssignmentAsync(session.AccountId, slot, configuration,
+                form["item"].ToString(), quantity, ct);
         if (result != LocalHangarChange.Applied)
         {
             await LocalHangarError.WriteAsync(response, result == LocalHangarChange.Conflict ? 409 : 400,
@@ -75,7 +84,7 @@ public static partial class LocalHangarEquipmentSelection
             return;
         }
         response.StatusCode = StatusCodes.Status303SeeOther;
-        response.Headers.Location = SavedLocation(slot, configuration, form["item"].ToString());
+        response.Headers.Location = SavedLocation(transfer ? destination : slot, configuration, form["item"].ToString());
     }
 
     /// <summary>Validates the GET page query: exactly one canonical action, slot and configuration, plus optional

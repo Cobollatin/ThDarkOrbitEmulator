@@ -43,6 +43,9 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
         await using var cmd = new NpgsqlCommand("INSERT INTO economy.clan_memberships(account_id,clan_id) VALUES (@a,@c) ON CONFLICT DO NOTHING", db, tx);
         cmd.Parameters.AddWithValue("a", accountId); cmd.Parameters.AddWithValue("c", clanId);
         await cmd.ExecuteNonQueryAsync(ct);
+        await using var leader = new NpgsqlCommand("INSERT INTO economy.clan_leaders(clan_id,account_id) SELECT clan_id,account_id FROM economy.clan_memberships WHERE account_id=@a AND clan_id=@c ON CONFLICT DO NOTHING", db, tx);
+        leader.Parameters.AddWithValue("c", clanId); leader.Parameters.AddWithValue("a", accountId);
+        await leader.ExecuteNonQueryAsync(ct);
         await tx.CommitAsync(ct);
     }
 
@@ -78,6 +81,18 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
             await using var insert = new NpgsqlCommand("INSERT INTO economy.clan_memberships(account_id,clan_id) VALUES (@a,@c)", db, tx);
             insert.Parameters.AddWithValue("a", accountId); insert.Parameters.AddWithValue("c", clanId);
             await insert.ExecuteNonQueryAsync(ct);
+            await using var leader = new NpgsqlCommand("INSERT INTO economy.clan_leaders(clan_id,account_id) VALUES (@c,@a) ON CONFLICT DO NOTHING", db, tx);
+            leader.Parameters.AddWithValue("c", clanId); leader.Parameters.AddWithValue("a", accountId);
+            await leader.ExecuteNonQueryAsync(ct);
+        }
+        if (clanId is null && expectedClanId is not null)
+        {
+            await using var successor = new NpgsqlCommand("UPDATE economy.clan_leaders SET account_id=COALESCE((SELECT account_id FROM economy.clan_memberships WHERE clan_id=@c ORDER BY account_id LIMIT 1),@a) WHERE clan_id=@c AND account_id=@a", db, tx);
+            successor.Parameters.AddWithValue("c", expectedClanId); successor.Parameters.AddWithValue("a", accountId);
+            await successor.ExecuteNonQueryAsync(ct);
+            await using var removeVacant = new NpgsqlCommand("DELETE FROM economy.clan_leaders WHERE clan_id=@c AND account_id=@a", db, tx);
+            removeVacant.Parameters.AddWithValue("c", expectedClanId); removeVacant.Parameters.AddWithValue("a", accountId);
+            await removeVacant.ExecuteNonQueryAsync(ct);
         }
         await using (var action = new NpgsqlCommand("INSERT INTO economy.clan_actions(account_id,action_key) VALUES (@a,@k)", db, tx))
         {
@@ -469,6 +484,25 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
         await WriteHangarEquipmentAsync(db, tx, accountId, assignments, ct);
         await tx.CommitAsync(ct);
         return LocalHangarChange.Applied;
+    }
+
+    public async Task<LocalHangarChange> TransferHangarEquipmentAsync(Guid accountId, int sourceSlot,
+        int destinationSlot, int configuration, string itemId, int quantity, CancellationToken ct)
+    {
+        if (accountId == Guid.Empty) return LocalHangarChange.Invalid;
+        await using var db = Connection(); await db.OpenAsync(ct);
+        await using var tx = await db.BeginTransactionAsync(ct);
+        await LockAccountAsync(db, tx, accountId, ct);
+        await MarkHangarEquipmentImportedAsync(db, tx, accountId, ct);
+        var owned = await ReadOwnedEquipmentAsync(db, tx, accountId, ct);
+        var current = LocalHangarEquipmentStore.ReconcileAssignments(owned,
+            await ReadHangarEquipmentAsync(db, tx, accountId, ct));
+        var (result, assignments) = LocalHangarEquipmentStore.ApplyTransfer(owned, current,
+            sourceSlot, destinationSlot, configuration, itemId, quantity);
+        if (result != LocalHangarChange.Applied) return result;
+        await WriteHangarEquipmentAsync(db, tx, accountId, assignments, ct);
+        await tx.CommitAsync(ct);
+        return result;
     }
 
     public async Task ImportTechJobAsync(Guid accountId, LocalTechJob legacy, CancellationToken ct)

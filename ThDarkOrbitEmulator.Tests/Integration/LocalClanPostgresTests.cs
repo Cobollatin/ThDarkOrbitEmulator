@@ -235,6 +235,49 @@ public sealed class LocalClanPostgresTests
         });
     }
 
+    [Test]
+    public async Task LeaderDiplomacyAndStation_AreDurableAuthorizedAndReplaySafe()
+    {
+        var leader = await HarnessAsync();
+        var other = await HarnessAsync();
+        Assert.That(await leader.Sessions.SelectCompanyAsync(leader.Session.Dosid, "eic", Ct), Is.True);
+        Assert.That(await other.Sessions.SelectCompanyAsync(other.Session.Dosid, "eic", Ct), Is.True);
+        leader = leader with { Session = (await leader.Sessions.TryGetByDosidAsync(leader.Session.Dosid, Ct))! };
+        other = other with { Session = (await other.Sessions.TryGetByDosidAsync(other.Session.Dosid, Ct))! };
+        Assert.That((await JoinAsync(leader, leader.Clans, "eic-vanguard")).Response.StatusCode, Is.EqualTo(303));
+        Assert.That((await JoinAsync(other, other.Clans, "eic-traders")).Response.StatusCode, Is.EqualTo(303));
+
+        var key = "diplomacy-1";
+        Assert.That(await leader.Clans.RelationAsync(leader.Session.AccountId, "eic-vanguard", "eic-traders",
+            "propose", key, Ct), Is.EqualTo(ClanOperationChange.Applied));
+        Assert.That(await leader.Clans.RelationAsync(leader.Session.AccountId, "eic-vanguard", "eic-traders",
+            "propose", key, Ct), Is.EqualTo(ClanOperationChange.Conflict));
+        Assert.That((await NewStore(other).RelationsAsync("eic-traders", Ct)).Single().Status, Is.EqualTo("pending"));
+        Assert.That(await other.Clans.RelationAsync(other.Session.AccountId, "eic-traders", "eic-vanguard",
+            "accept", "diplomacy-2", Ct), Is.EqualTo(ClanOperationChange.Applied));
+        Assert.That((await leader.Clans.RelationsAsync("eic-vanguard", Ct)).Single().Status, Is.EqualTo("allied"));
+
+        Assert.That(await leader.Clans.UpgradeAsync(leader.Session.AccountId, "eic-vanguard", "hull",
+            "station-1", Start, Ct), Is.EqualTo(ClanOperationChange.Applied));
+        Assert.That(await leader.Clans.UpgradeAsync(leader.Session.AccountId, "eic-vanguard", "hull",
+            "station-2", Start.AddMinutes(1), Ct), Is.EqualTo(ClanOperationChange.Conflict));
+        Assert.That(await leader.Clans.UpgradeAsync(leader.Session.AccountId, "eic-vanguard", "hull",
+            "station-2", Start.AddMinutes(5), Ct), Is.EqualTo(ClanOperationChange.Applied));
+        Assert.That((await NewStore(leader).StationAsync("eic-vanguard", Ct)).Single().Level, Is.EqualTo(2));
+
+        Assert.That((await JoinAsync(other, other.Clans, "eic-traders")).Response.StatusCode, Is.EqualTo(409));
+        Assert.That(await other.Clans.UpgradeAsync(other.Session.AccountId, "eic-vanguard", "hull",
+            "forbidden", Start.AddMinutes(10), Ct), Is.EqualTo(ClanOperationChange.Forbidden));
+
+        var signed = LocalClanAction.CreateFormKey(leader.Session.Dosid, "upgrade", "eic-vanguard:defense", Start);
+        var operationForm = $"clan=eic-vanguard&verb=upgrade&target=defense&key={Uri.EscapeDataString(signed)}";
+        var posted = await OperationPostAsync(leader, operationForm);
+        Assert.That(posted.Response.StatusCode, Is.EqualTo(303), Body(posted));
+        Assert.That((await OperationPostAsync(leader, operationForm)).Response.StatusCode, Is.EqualTo(409));
+        Assert.That((await NewStore(leader).StationAsync("eic-vanguard", Ct)).Single(s => s.ModuleId == "defense").Level,
+            Is.EqualTo(1));
+    }
+
     private static CancellationToken Ct => TestContext.CurrentContext.CancellationToken;
 
     private sealed class FixedClock(DateTimeOffset now) : TimeProvider
@@ -296,6 +339,21 @@ public sealed class LocalClanPostgresTests
         context.Request.ContentLength = bytes.Length;
         context.Response.Body = new MemoryStream();
         await LocalClanAction.HandleAsync(context, harness.Sessions, store, new FixedClock(Start), Ct);
+        return context;
+    }
+
+    private static async Task<DefaultHttpContext> OperationPostAsync(Harness harness, string form)
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Method = "POST";
+        context.Request.QueryString = new QueryString("?action=internalClanOperate");
+        context.Request.ContentType = "application/x-www-form-urlencoded";
+        context.Request.Headers.Cookie = $"dosid={harness.Session.Dosid}";
+        var bytes = Encoding.UTF8.GetBytes(form);
+        context.Request.Body = new MemoryStream(bytes);
+        context.Request.ContentLength = bytes.Length;
+        context.Response.Body = new MemoryStream();
+        await LocalClanOperations.HandleAsync(context, harness.Sessions, harness.Clans, new FixedClock(Start), Ct);
         return context;
     }
 

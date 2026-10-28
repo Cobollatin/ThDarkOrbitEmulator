@@ -749,11 +749,13 @@ public sealed class IndexInternalStartEndpoint(ILogger<IndexInternalStartEndpoin
                 return;
             }
             HttpContext.Response.ContentType = "text/html; charset=UTF-8";
+            var clanMembership = await clanStore.GetMembershipAsync(session.AccountId, ct);
+            var clanOperations = await LocalClanOperations.PanelAsync(session, clanMembership, clanStore, clock.GetUtcNow(), ct);
             await WriteEconomyPageAsync(session, LocalClan.Page(session,
-                await clanStore.GetMembershipAsync(session.AccountId, ct), clock.GetUtcNow(),
+                clanMembership, clock.GetUtcNow(),
                 clanDetail.Length > 0 ? clanDetail : null, HttpContext.Request.Query["filter"].ToString(),
                 HttpContext.Request.Query["joined"].ToString(), HttpContext.Request.Query["left"].ToString(),
-                clanSearch), ct);
+                clanSearch, clanOperations), ct);
             return;
         }
 
