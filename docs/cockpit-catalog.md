@@ -96,3 +96,37 @@ editing but the Unity asset bundle does not read them yet. Server descriptors
 do not reconfigure the running mesh or redirect its TCP listener. A server
 choice in the native dropdown must be captured before binding these records to
 that client interaction.
+
+## Bounded IL2CPP trace (installed 2026-10-28 client)
+
+`GameAssembly.dll` SHA-256 is
+`868729de4486860841b40b59d04fd469e510a2854be354b59d945a7eaa472107`.
+The installed v31 metadata SHA-256 is
+`84065edf86c33aa966478481fbcb8dcf9143bfe05db9809dd543e3e98f08a685`.
+Method RVAs below are relative to this exact x86 PE. The bounded disassembly
+script is `_reversing/Analysis/trace_il2cpp.py`; its IL2CPP method table comes
+from the local dump under `_reversing/Analysis/il2cpp-dump/`.
+
+| Native method / RVA | Finding |
+| --- | --- |
+| `LaunchShow.GetHangerPost` `0xEE0BD0`; iterator `MoveNext` `0xEEAE40` | The wrapper stores the supplied URL. At `0xEEAF75`–`0xEEAF8D` the iterator adds one `WWWForm` field named `hangarId` from `LaunchShow.hangarId` (`+0x94`) and calls `UnityWebRequest.Post(url, form)`. At `0xEEAFD2` it calls `Init.SetRequestHeader`, then sends. At `0xEEB141` it parses response text with `MessageData.FromJson` (Newtonsoft); `MessageData` has `Success` (64-bit integer) and `Message` (string). The branch at `0xEEB153` accepts `Success == 1` and a null `Message`; the other branch displays `Message`. A JSON body such as `{"success":1,"message":null}` is therefore the success candidate. |
+| `Init.SetRequestHeader` `0xEFC5B0` | It sets only `User-Agent`: `DarkOrbit Unity Client 1.1.100` in the normal branch, or `Steam-DROThinClient/1.0 (Unity)` in the Steam branch. The form POST itself supplies its content type. |
+| `<>c__DisplayClass77_0.<UpdatePageInfoShip>b__0` `0xEEEBF0` | At `0xEEECE4`–`0xEEED4C` an inactive selected hangar copies `HangarWebData.HangarId` to `LaunchShow.hangarId`, takes `Settings.HangerChangeHost` (`+0x218`) as URL, and starts the hangar POST iterator. Selecting an already active hangar calls `GameLoadingManager.StartGame` at `0xEEED7E`. |
+| `Init.UpdateHost` `0xEFD580`; `<LoadConfig>d__32.MoveNext` `0xF02FF0` | `UpdateHost` concatenates the host prefix with `Settings.HangerChangeHostSuffix` (`+0x23C`) and stores `HangerChangeHost` at `0xEFD73C`. The suffix is assigned by the `StreamingAssets/config.txt` parser at `0xF03539`. The exact route cannot be recovered from these method bodies alone. |
+| `LaunchShow.Start` `0xEE1E70`; `<Start>b__55_0` `0xEE23A0`; `GameLoadingManager.StartGame` `0xF0E420` | `Start` reads `btnStart` at offset `+0x44`, installs an `onClick` listener at `0xEE1F84`, and that callback disables the button then tail-jumps to `StartGame` at `0xEE2404`. `StartGame` calls `InitDynamicXml` at `0xF0E808`, handles display setup and later calls `LaunchShow.UpdateButton`; this method does not itself call the provisional `/spacemap/world/*` HTTP bridge or prove a connection to `127.0.0.1:60954`. |
+| `GameLoadingManager.InitDynamicXml` `0xF0CC80` | The START path next obtains `Settings.get_MapXmlUrl` at `0xF0CD21` and queues it with the Command Center XMLs for `DownloadHelper.StartDownload` at `0xF0CE54`. This confirms a native XML loading stage before any established socket handshake. The emulator already serves `/xml/maps.xml`; the callback and subsequent transport still need a native trace or capture. |
+| `<LoadLocalizationData>d__8.MoveNext` `0xF03B60` | At `0xF03DB7` it calls `Addressables.LoadAssetsAsync`. At `0xF03F97` it gets each loaded asset's name; at `0xF03FA2`–`0xF03FCA` it logs `File Category Not Found:` when that name is absent from the in-memory category mapping. This is an in-process mapping failure after asset loading, not an HTTP response. |
+| `LocalizationManager.GetCategoryMapping` `0xEFE410` | The function's literal keys include `resource_news`, `resource_items`, and `resource_items_old`, but omit all seven reported asset names. In particular, the asset `resource_item_old` differs from mapped `resource_items_old`. The seven missing names are a native mapping/catalog version mismatch, independently of the server. |
+
+The installed Addressables `StreamingAssets/aa/catalog.json` points to a local
+`BuildTarget/localizations_assets_all.bundle`; each of the seven reported names
+also has an `en` and `es` asset address. The native localization path needs a
+category mapping or client asset fix. Adding an emulator XML route cannot make
+the native mapping contain those keys. The current server-side locale override
+records are therefore not a repair for this log message.
+
+The hangar request's URL suffix remains dependent on the client configuration
+file, and the native world socket login framing remains unobserved. Neither an
+HTTP hangar handler nor a native TCP handshake can be safely selected from the
+available static evidence alone. The emulator's existing world protocol remains
+its documented local diagnostic contract.
