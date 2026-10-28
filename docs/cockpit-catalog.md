@@ -185,6 +185,12 @@ with a special extra byte for `VersionRequest`. The precise first outbound
 frame bytes and server responses still require a native capture. The local
 world listener's four-byte length, two-byte big-endian command ID and
 `local-1` version are incompatible with these native module definitions.
-The listener now rejects a recognized native version preamble before treating
-it as a large local frame and bounds prelogin local frames to 4,096 bytes;
-it does not claim native gameplay compatibility.
+The listener now recognizes the native three-byte length and optional version
+preamble, answers module `0x029B` for the installed version hash, and decodes
+module `0x0007` with the documented bit rotations. It resolves `userID` and
+`sessionID` against the current game session, checks faction, then sends native
+framed login status and emulator map/hero initialization payloads (`0xF100` and
+`0xF101`). Those two module IDs and their payloads are local extensions because
+the installed client has not supplied a captured server entry burst. Native
+gameplay and end-to-end Unity START remain unverified. The four-byte local
+protocol and its 4,096-byte prelogin cap remain available on the same port.

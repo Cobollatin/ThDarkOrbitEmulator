@@ -22,12 +22,28 @@ evidence; no native socket capture establishes the full initial frame or
 later world packets.
 
 The emulator's four-byte length, local command IDs 1..40, and `local-1`
-handshake remain a separate diagnostic protocol. A native version preamble
-is rejected without allocating or waiting for the misread local body. The
-prelogin local body is capped at 4,096 bytes; after login, the configured
-`MaximumPacketBytes` applies. Native world login and gameplay need a separate
-transport implementation and a recorded fixture before they can be claimed
-compatible.
+handshake remain a separate diagnostic protocol. A native three-byte frame
+whose first body byte is `0x9A` or the special zero version preamble is routed
+to the native handshake. Version module `0x029A` must contain the installed
+hash `05bcf83b06964a516a8282e10dbf3369`; response module `0x029B` returns
+the hash and an equal flag. Login module `0x0007` decodes the rotated 32-bit
+user ID, rotated 16-bit faction, session ID, version, rotated 32-bit instance
+ID and mini-client flag. Session resolution uses the same authoritative
+`IWorldPilotResolver` as the local protocol; the faction must match the pilot.
+When a world session store is present, saved map and position are restored
+before entry payloads are written.
+The native-framed `0xA50C` login status is followed on success by map and hero
+initialization payloads in local extension modules `0xF100` and `0xF101`.
+Their module IDs and payloads are provisional and are not claimed to be
+understood by the installed Unity client. Native gameplay requires a captured
+server entry burst. Prelogin frames are capped at 4,096 bytes in either mode;
+the configured `MaximumPacketBytes` applies to local frames after login.
+The session store has no persisted instance ID; native login decodes and bounds
+that field but cannot compare it with an account-specific value.
+
+The transport fixture's hosted-listener smoke test uses a dynamically bound
+loopback port and checks the published port. Its former reserve/release of an
+ephemeral port left a race for another process to bind the port before startup.
 
 ## Listener options and binding
 

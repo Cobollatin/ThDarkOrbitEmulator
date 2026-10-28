@@ -262,7 +262,11 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                 packet = await pendingRead;
             }
             catch (EndOfStreamException) { return; }
-            catch (NativeWorldProtocolException) { return; }
+            catch (NativeWorldProtocolException native)
+            {
+                await new NativeWorldHandshake(resolver, options, sessions).RunAsync(stream, native.FirstBytes, ct);
+                return;
+            }
             catch (InvalidDataException)
             {
                 await ErrorAsync(writer, WorldLoginError.Malformed, ct);

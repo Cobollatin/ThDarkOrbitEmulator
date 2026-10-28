@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
+using System.Numerics;
 using ThDarkOrbitEmulator.ApiService.Features.World;
 using ThDarkOrbitEmulator.ApiService.Features.World.Mesh;
 using ThDarkOrbitEmulator.ApiService.Features.Resources.Maps;
@@ -1826,13 +1827,10 @@ public class WorldTransportTests
     }
 
     [Test]
-    public async Task HostedListener_BindsConfiguredLoopbackPort()
+    public async Task HostedListener_BindsPublishedDynamicLoopbackPort()
     {
-        var reservation = new TcpListener(IPAddress.Loopback, 0);
-        reservation.Start();
-        var port = ((IPEndPoint)reservation.LocalEndpoint).Port;
-        reservation.Stop();
-        var options = new WorldServerOptions { Enabled = true, Port = port };
+        // A released reservation leaves a race for another process to claim its port.
+        var options = new WorldServerOptions { Enabled = true, DynamicTcpPort = true, Port = 0 };
         using var services = new ServiceCollection()
             .AddSingleton<IWorldPilotResolver>(new FakeResolver((null, WorldLoginError.UnknownSession)))
             .AddDistributedMemoryCache()
@@ -1843,12 +1841,12 @@ public class WorldTransportTests
         await hosted.StartAsync(CancellationToken.None);
         try
         {
+            for (var attempt = 0; attempt < 250 && hosted.ActualPort == 0; attempt++)
+                await Task.Delay(20);
+            Assert.That(hosted.ActualPort, Is.GreaterThan(0));
+            Assert.That(options.Port, Is.EqualTo(hosted.ActualPort));
             using var client = new TcpClient();
-            for (var attempt = 0; attempt < 25 && !client.Connected; attempt++)
-            {
-                try { await client.ConnectAsync(IPAddress.Loopback, port); }
-                catch (SocketException) { await Task.Delay(20); }
-            }
+            await client.ConnectAsync(IPAddress.Loopback, hosted.ActualPort);
             Assert.That(client.Connected, Is.True);
             await new WorldPacketWriter(client.GetStream()).WriteAsync(WorldCommandId.VersionRequest,
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
@@ -1899,8 +1897,9 @@ public class WorldTransportTests
         }
     }
 
-    [Test]
-    public async Task Loopback_NativeVersionPreamble_ClosesWithoutWaitingForLocalFrameOrResolvingSession()
+    [TestCase(true)]
+    [TestCase(false)]
+    public async Task Loopback_NativeVersionPreamble_AcceptsVersionWithoutResolvingSession(bool preamble)
     {
         var resolver = new FakeResolver((null, WorldLoginError.UnknownSession));
         var (client, server, worker) = await ConnectAsync(resolver);
@@ -1908,11 +1907,108 @@ public class WorldTransportTests
         using (server)
         {
             // Native PacketParser uses a three-byte length; 0x029a is VersionRequest.
-            await client.GetStream().WriteAsync(new byte[] { 0, 0, 40, 0x9a, 0x02 });
+            await WriteNativeAsync(client.GetStream(), NativeWorldHandshake.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, NativeWorldHandshake.ClientVersion)), preamble);
+            var version = await ReadNativeAsync(client.GetStream());
+            Assert.That(version.Module, Is.EqualTo(NativeWorldHandshake.VersionCommand));
+            Assert.That(WorldPayload.Decode(version.Payload, r =>
+                (WorldPayload.ReadString(r), r.ReadBoolean())),
+                Is.EqualTo((NativeWorldHandshake.ClientVersion, true)));
+            client.Client.Shutdown(SocketShutdown.Send);
             await worker.WaitAsync(TimeSpan.FromSeconds(2));
             Assert.That(worker.IsCompletedSuccessfully, Is.True);
             Assert.That(resolver.Calls, Is.Zero);
         }
+    }
+
+    [Test]
+    public async Task Loopback_NativeLogin_AuthenticatesSessionAndSendsMapAndShip()
+    {
+        var session = new GameAuthSession { AccountId = Guid.NewGuid(), GameUserId = 42,
+            Company = "eic", Dosid = "opaque", ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5) };
+        var account = new FakeAccountState();
+        var resolver = new WorldPilotResolver(new FakeSessions(session), account);
+        var (client, server, worker) = await ConnectAsync(resolver);
+        using (client)
+        using (server)
+        {
+            var stream = client.GetStream();
+            await WriteNativeAsync(stream, NativeWorldHandshake.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, NativeWorldHandshake.ClientVersion)), true);
+            Assert.That((await ReadNativeAsync(stream)).Module, Is.EqualTo(NativeWorldHandshake.VersionCommand));
+            await WriteNativeAsync(stream, NativeWorldHandshake.LoginRequest, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt32(w, (int)BitOperations.RotateLeft(42u, 3));
+                w.Write(BinaryPrimitives.ReverseEndianness((ushort)BitOperations.RotateLeft(2u, 7)));
+                WorldPayload.WriteString(w, "opaque");
+                WorldPayload.WriteString(w, NativeWorldHandshake.ClientVersion);
+                WorldPayload.WriteInt32(w, (int)BitOperations.RotateLeft(1u, 12));
+                w.Write(false);
+            }));
+            Assert.That((await ReadNativeAsync(stream)).Module, Is.EqualTo(NativeWorldHandshake.LoginResponse));
+            var map = await ReadNativeAsync(stream);
+            Assert.That(map.Module, Is.EqualTo(NativeWorldHandshake.MapInitialization));
+            Assert.That(BinaryPrimitives.ReadInt32BigEndian(map.Payload.Span), Is.EqualTo(5));
+            var hero = await ReadNativeAsync(stream);
+            Assert.That(hero.Module, Is.EqualTo(NativeWorldHandshake.HeroInitialization));
+            Assert.That(BinaryPrimitives.ReadInt64BigEndian(hero.Payload.Span), Is.EqualTo(42));
+            await worker.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.That(account.Calls, Is.EqualTo(1));
+        }
+    }
+
+    [Test]
+    public async Task Loopback_NativeLogin_RejectsWrongSessionBeforeMapEntry()
+    {
+        var session = new GameAuthSession { AccountId = Guid.NewGuid(), GameUserId = 42,
+            Company = "eic", Dosid = "expected", ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5) };
+        var account = new FakeAccountState();
+        var (client, server, worker) = await ConnectAsync(
+            new WorldPilotResolver(new FakeSessions(session), account));
+        using (client)
+        using (server)
+        {
+            var stream = client.GetStream();
+            await WriteNativeAsync(stream, NativeWorldHandshake.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, NativeWorldHandshake.ClientVersion)));
+            await ReadNativeAsync(stream);
+            await WriteNativeAsync(stream, NativeWorldHandshake.LoginRequest, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt32(w, (int)BitOperations.RotateLeft(42u, 3));
+                w.Write(BinaryPrimitives.ReverseEndianness((ushort)BitOperations.RotateLeft(2u, 7)));
+                WorldPayload.WriteString(w, "wrong");
+                WorldPayload.WriteString(w, NativeWorldHandshake.ClientVersion);
+                WorldPayload.WriteInt32(w, (int)BitOperations.RotateLeft(1u, 12));
+                w.Write(false);
+            }));
+            var response = await ReadNativeAsync(stream);
+            Assert.That(response.Module, Is.EqualTo(NativeWorldHandshake.LoginResponse));
+            Assert.That(response.Payload.ToArray(), Is.Not.EqualTo(new byte[] { 0, 0 }));
+            await worker.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.That(account.Calls, Is.Zero);
+        }
+    }
+
+    private static async Task WriteNativeAsync(Stream stream, ushort module, byte[] payload, bool preamble = false)
+    {
+        var length = payload.Length + 2 + (preamble ? 1 : 0);
+        var frame = new byte[3 + length];
+        frame[1] = (byte)(length >> 8);
+        frame[2] = (byte)length;
+        var offset = preamble ? 4 : 3;
+        BinaryPrimitives.WriteUInt16LittleEndian(frame.AsSpan(offset), module);
+        payload.CopyTo(frame, offset + 2);
+        await stream.WriteAsync(frame);
+    }
+
+    private static async Task<(ushort Module, ReadOnlyMemory<byte> Payload)> ReadNativeAsync(Stream stream)
+    {
+        var header = new byte[3];
+        await stream.ReadExactlyAsync(header);
+        var length = header[0] << 16 | header[1] << 8 | header[2];
+        var body = new byte[length];
+        await stream.ReadExactlyAsync(body);
+        return (BinaryPrimitives.ReadUInt16LittleEndian(body), body.AsMemory(2));
     }
 
     [Test]
@@ -2325,7 +2421,7 @@ public class WorldTransportTests
         WorldPayload.WriteString(w, "test-instance");
     });
 
-    private static async Task<(TcpClient Client, TcpClient Server, Task Worker)> ConnectAsync(FakeResolver resolver,
+    private static async Task<(TcpClient Client, TcpClient Server, Task Worker)> ConnectAsync(IWorldPilotResolver resolver,
         WorldSessionStore? sessions = null, IServerMeshRegistry? registry = null, string? nodeId = null,
         WorldNpcs? npcs = null, WorldAdminEvents? adminEvents = null,
         IAdminCommandDispatcher? adminCommands = null, IRuntimeVariableRegistry? variables = null)
@@ -2367,7 +2463,8 @@ public class WorldTransportTests
     private sealed class FakeSessions(GameAuthSession? session) : IGameAuthSessionStore
     {
         public Task<GameAuthSession?> TryGetByDosidAsync(string dosid, CancellationToken ct) =>
-            Task.FromResult(session);
+            Task.FromResult(session is not null && session.Dosid.Length > 0 && session.Dosid != dosid
+                ? null : session);
         public Task<GameAuthSessionCreateResult> CreateSessionAsync(AccountSummary account, string? token,
             CancellationToken ct) => throw new NotSupportedException();
         public Task<GameAuthTokenRotationResult?> RotateRedirectTokenAsync(string token, CancellationToken ct) =>
