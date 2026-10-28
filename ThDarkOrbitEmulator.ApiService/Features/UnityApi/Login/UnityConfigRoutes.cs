@@ -30,7 +30,7 @@ public static class UnityConfigRoutes
             var entries = servers.Select((item, index) => new
             {
                 continent = "local", langCode = "en", name = item.InstanceName, active = item.Status == "online" ? 1 : 0,
-                location = item.Code, id = index + 1, lang = "en", title = item.InstanceName,
+                location = item.Code, id = index + 1, lang = "en", region = "eu_west", title = item.InstanceName,
                 url = $"{host}/indexInternal.es?action=internalWebGL&from=internalStart", recommended = item.IsDefault ? 1 : 0
             }).ToArray();
             var region = new { serverCount = entries.Length, serverList = entries };

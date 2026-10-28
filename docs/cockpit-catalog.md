@@ -28,7 +28,7 @@ local response contracts because no retained Live HAR contains those replies.
 
 | Config key | Installed template | Native use / ApiService behavior |
 | --- | --- | --- |
-| `instanceHost` | `GET /unityApi/instance.php` | `LaunchShow.<Start>b__55_7` passes `Settings.InstanceHost` to `GetRequest`; its iterator parses `ServerData.data` with region `serverList` collections. Local response lists enabled catalog servers; requires `dosid`. |
+| `instanceHost` | `GET /unityApi/instance.php` | `LaunchShow.<Start>b__55_7` passes `Settings.InstanceHost` to `GetRequest`; its iterator parses `ServerData.data` with region `serverList` collections. Each server item now includes the native `region` enum string (`eu_west`); the local response lists enabled catalog servers and requires `dosid`. |
 | `loginHost` | `GET /unityApi/login.php` | Existing nested login JSON and authenticated `dosid` handling. |
 | `newsHost` | `GET /unityApi/news.php` | Existing news countdown JSON and session handling. |
 | `logoutHost` | `GET /indexInternal.es?action=externalLogout` | Existing local session invalidation and WebView redirect. |
@@ -57,6 +57,29 @@ their exact native navigation after a button click still needs a redirect
 capture. The native server picker requests `instance.php`; its selected
 instance posts to `changeInstance.php`. The native language choice posts to
 `setLang.php` from the embedded WebView.
+
+### Native response boundaries for the twelve templates
+
+The following addresses refer to the installed DLL hash below. The metadata
+types give JSON field names and types; the `MoveNext` branches establish which
+fields the client actually uses. A mapped suffix alone does not establish a
+request or response parser. HTTP success branches below check
+`UnityWebRequest.result`, not a particular numeric HTTP status; 401/400/404
+behavior on the new local routes is an emulator policy.
+
+| Config key | Response evidence and local contract |
+| --- | --- |
+| `instanceHost` | `<GetRequest>d__62.MoveNext` `0xEEBE60`: checks a `json` content type and `DarkOrbitUnity` header at `0xEEC20C`–`0xEEC23A`, compares the URL to `Settings.InstanceHost` (`+0x258`) at `0xEEC26B`, and calls `ServerData.FromJson` (`0xF852B0`) at `0xEEC38F`. Metadata `ServerData.Data` contains `faction` string, `hangars` list, and `euWest`/`euEast`/`usWest`/`usEast`/`test` objects; each has integer `serverCount` and `serverList`. `ServerList` has string `continent`, `langCode`, `name`, `location`, `lang`, `title`; integer `active`, `id`, `recommended`; URI `url`; and `Region` enum `region`. `RegionConverter.ReadJson` (`0xF84D30`) recognizes `eu_west`, `eu_east`, `us_west`, `us_east`, `test` at `0xF84D50`–`0xF84D78`. Local items now provide `region: "eu_west"`. |
+| `loginHost` | `Init.UpdateHost` writes the concatenated URL to `Settings.LoginHost` (`+0x25C`) at `0xEFD655`. `LoginDataNew.FromJson` (`0x4A41C0`) describes an outer `loginData` string; `LoginNodeData` metadata describes its nested account, hangar, host, and asset fields. The captured Live login body supports the existing local response. This bounded trace does not identify the native call site that consumes `LoginDataNew`, so those metadata fields are not claimed as reads from this endpoint. |
+| `newsHost` | `<GetNewsRequest>d__61.MoveNext` `0xEEB540` performs GET at `0xEEB66F`, checks request success at `0xEEB729`–`0xEEB74B`, and deserializes the body with `JsonConvert.DeserializeObject` at `0xEEB849`. It selects news entries at `0xEEB90D` and updates the Command Center list at `0xEEBAD7`. The captured Live JSON `data[]` entries with `newsId` string and `seconds` integer are retained in `CapturedNewsCatalog`; no XML deserializer handles this endpoint. |
+| `logoutHost` | `Init.UpdateHost` stores the URL at `Settings.LogoutHost` (`+0x210`) at `0xEFD6CA`. The suffix is an embedded WebView navigation; no native JSON/XML response deserializer for it is established. The local endpoint invalidates the session and redirects. |
+| `quitHost` | `<GetRequest>d__62.MoveNext` compares its URL to `Settings.QuitHost` (`+0x214`) at `0xEEC2A6` and calls `Application.Quit` at `0xEEC2F0`. The same coroutine compares an `instanceHost` reply to the exact literal `{"data":[]}` at `0xEEC350` and skips server deserialization on that body. No native field reader for a `close.php` body is established. The local close response is that exact JSON and invalidates the session. |
+| `hangerChange` | `<GetHangerPost>d__54.MoveNext` `0xEEAE40` posts `hangarId` at `0xEEAF75`–`0xEEAF8D`; `MessageData.FromJson` at `0xEEB141` reads integer `success` and nullable string `message`. The branch at `0xEEB153` accepts `success == 1` with null `message`; the local 200 reply matches. |
+| `UnityRequest` | `<GetUnityPost>d__52.MoveNext` `0xEECB70` posts `functionId` at `0xEECC39`–`0xEECC66`. After `UnityWebRequest.get_result` at `0xEECD20`, it obtains response text at `0xEECD56` but does not call a JSON/XML deserializer or read a field. Local `{"result":true}` is an acknowledgment only. |
+| `changeInstance` | `<PostChangeInstance>d__64.MoveNext` `0xF1AAC0` posts integer `instanceId` at `0xF1AC69`–`0xF1ACB0`, checks `json` and `DarkOrbitUnity` at `0xF1AF12`–`0xF1AF40`, and calls `ChooseServerData.FromJson` (`0xE276E0`) at `0xF1AF75`. Metadata fields are string `result`, URI `link`, string `error`, and 64-bit integer `status`. The branch tests `status` at `0xF1AF87`: zero opens `link` (`0xF1B02B`–`0xF1B04D`); nonzero opens the empty WebView URL at `0xF1B000`. The local success reply has zero `status` and an absolute `link`; the other fields are present for the serializer but no native read was found in this branch. |
+| `voucher`, `package` | `Init.UpdateHost` writes `Settings.Voucher` (`+0x220`) at `0xEFD7EA` and `Settings.Package` (`+0x224`) at `0xEFD823`. No native request coroutine or response deserializer binding these URLs is established. Local authenticated navigation remains provisional; their 302 responses are not claimed as a Live contract. |
+| `link` | `<GetLinkRequest>d__47.MoveNext` `0xF01C40` GETs at `0xF01CF2`, checks for HTML at `0xF01EF9`, and calls `JsonConvert.DeserializeObject` at `0xF01FA8`. `LinkData` metadata exposes `forum`, `credits`, `accountCenter` strings and `help`, `imprint`, `support` URIs; the six local fields match the captured Live JSON. |
+| `language` | `<GetUnityPostLanguage>d__53.MoveNext` `0xEEC740` builds a WebView `fetch` at `0xEEC78F`–`0xEEC7C6` with `POST`, URL-encoded `lang`, and `credentials:'include'`. It never receives the fetch result in this coroutine, so no native JSON/XML response parser or field requirement is established. Local `{"result":true,"data":{"language":...}}` is provisional. |
 
 ## Evidence
 

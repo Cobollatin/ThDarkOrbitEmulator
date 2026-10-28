@@ -177,10 +177,22 @@ public sealed class UnityHangarActivatePostgresTests
 
             using var instance = await SendAsync(HttpMethod.Get, "/unityApi/instance.php", true);
             using var instanceJson = System.Text.Json.JsonDocument.Parse(await instance.Content.ReadAsStringAsync(ct));
-            Assert.That(instanceJson.RootElement.GetProperty("data").GetProperty("euWest")
-                .GetProperty("serverList").GetArrayLength(), Is.GreaterThan(0));
+            var instanceData = instanceJson.RootElement.GetProperty("data");
+            var euWest = instanceData.GetProperty("euWest");
+            var firstServer = euWest.GetProperty("serverList")[0];
+            Assert.Multiple(() =>
+            {
+                Assert.That(instance.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(instanceData.GetProperty("hangars").ValueKind, Is.EqualTo(System.Text.Json.JsonValueKind.Array));
+                Assert.That(euWest.GetProperty("serverCount").GetInt64(), Is.GreaterThan(0));
+                Assert.That(firstServer.GetProperty("region").GetString(), Is.EqualTo("eu_west"));
+                Assert.That(firstServer.GetProperty("id").GetInt64(), Is.GreaterThan(0));
+                Assert.That(firstServer.GetProperty("url").GetString(), Does.Contain("/indexInternal.es"));
+                Assert.That(firstServer.GetProperty("active").GetInt64(), Is.EqualTo(1));
+            });
             using var choose = await SendAsync(HttpMethod.Post, "/unityApi/changeInstance.php", true, ("instanceId", "1"));
             using var chooseJson = System.Text.Json.JsonDocument.Parse(await choose.Content.ReadAsStringAsync(ct));
+            Assert.That(chooseJson.RootElement.GetProperty("status").GetInt64(), Is.Zero);
             Assert.That(chooseJson.RootElement.GetProperty("link").GetString(), Does.Contain("/indexInternal.es?action=internalWebGL"));
             using var badChoose = await SendAsync(HttpMethod.Post, "/unityApi/changeInstance.php", true, ("instanceId", "999"));
             Assert.That(badChoose.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
