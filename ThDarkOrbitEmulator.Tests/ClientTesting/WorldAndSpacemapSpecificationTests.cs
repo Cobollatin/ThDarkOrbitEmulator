@@ -1151,7 +1151,7 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
-    public async Task PilotHullRecovery_RequiresQuietAndStoppedShip_AndSurvivesReplicaHandoff()
+    public async Task PilotHullRecovery_RequiresQuietEvenInFlight_AndSurvivesReplicaHandoff()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
         var cache = services.GetRequiredService<IDistributedCache>();
@@ -1163,24 +1163,22 @@ public sealed class WorldAndSpacemapSpecificationTests
             Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
         }, default);
         await store.ApplyNpcDamageAsync(pilot, 1, 60, default);
-        await store.MoveAsync(pilot, 10000, 5000, null, default, clock.GetUtcNow());
+        await store.MoveAsync(pilot, 20000, 5000, null, default, clock.GetUtcNow());
 
         clock.Advance(TimeSpan.FromSeconds(9));
         await store.RecoverHullAsync(pilot.MapId, default);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(940));
         clock.Advance(TimeSpan.FromSeconds(1));
         await store.RecoverHullAsync(pilot.MapId, default);
-        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(940));
-        clock.Advance(TimeSpan.FromSeconds(7));
-        await store.RecoverHullAsync(pilot.MapId, default);
-        await store.RecoverHullAsync(pilot.MapId, default);
+        Assert.That(store.CurrentPosition(pilot, clock.GetUtcNow()).X, Is.LessThan(20000));
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(965));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await store.RecoverHullAsync(pilot.MapId, default);
+        await store.RecoverHullAsync(pilot.MapId, default);
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(990));
 
         var replica = new WorldSessionStore(cache, clock: clock);
         await replica.EnterAsync(pilot, default);
-        await replica.RecoverHullAsync(pilot.MapId, default);
-        Assert.That(replica.CurrentHitPoints(pilot), Is.EqualTo(965));
-        clock.Advance(TimeSpan.FromSeconds(1));
         await replica.RecoverHullAsync(pilot.MapId, default);
         Assert.That(replica.CurrentHitPoints(pilot), Is.EqualTo(990));
         clock.Advance(TimeSpan.FromSeconds(1));

@@ -225,7 +225,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         }
     }
 
-    // Field repair runs only for a stopped, living pilot after combat has ended.
+    // Field repair runs for a living pilot after combat has ended, including in flight.
     // The shared tick marker prevents a lease handoff from granting an extra repair.
     public async Task RecoverHullAsync(int mapId, CancellationToken ct, WorldLeaseFence? fence = null)
     {
@@ -242,7 +242,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 var now = combatClock.GetUtcNow();
                 var hitPointMaximum = ActiveStats(pilot).MaxHitPoints;
                 var current = CurrentHitPoints(pilot);
-                if (current <= 0 || current >= hitPointMaximum || CurrentPosition(pilot, now) != Destination(pilot))
+                if (current <= 0 || current >= hitPointMaximum)
                     continue;
                 var combat = await cache.GetStringAsync(CombatKey(pilot.UserId), ct);
                 if (long.TryParse(combat, out var combatMs) &&
