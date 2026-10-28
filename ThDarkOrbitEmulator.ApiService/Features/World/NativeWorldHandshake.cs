@@ -24,6 +24,8 @@ public sealed class NativeWorldHandshake(IWorldPilotResolver resolver, WorldServ
     public const ushort AttackRocket = 0x0006;
     public const ushort AttackHit = 0x001c;
     public const ushort JumpInitiated = 0x0013;
+    public const ushort AttributeHitpointUpdate = 0x0008;
+    public const ushort AttributeShieldUpdate = 0x00f8;
 
     public async Task RunAsync(Stream stream, byte[] firstBytes, CancellationToken ct)
     {
@@ -83,6 +85,8 @@ public sealed class NativeWorldHandshake(IWorldPilotResolver resolver, WorldServ
                 pilot = await sessions.EnterAsync(pilot, ct);
                 try
                 {
+                    var sentHitPoints = sessions.CurrentHitPoints(pilot);
+                    var sentShield = sessions.CurrentShield(pilot);
                     while (true)
                     {
                         var command = await ReadFrameAsync(stream, null, ct);
@@ -100,6 +104,22 @@ public sealed class NativeWorldHandshake(IWorldPilotResolver resolver, WorldServ
                         await WriteFrameAsync(stream, MoveCommand,
                             NativeWorldPackets.Move(checked((int)pilot.UserId), move.X, move.Y,
                                 move.TimeToTargetMs), ct);
+                        var hitPoints = sessions.CurrentHitPoints(pilot);
+                        if (hitPoints != sentHitPoints)
+                        {
+                            await WriteFrameAsync(stream, AttributeHitpointUpdate,
+                                NativeWorldPackets.HitpointUpdate(hitPoints,
+                                    sessions.ActiveStats(pilot).MaxHitPoints), ct);
+                            sentHitPoints = hitPoints;
+                        }
+                        var shield = sessions.CurrentShield(pilot);
+                        if (shield != sentShield)
+                        {
+                            await WriteFrameAsync(stream, AttributeShieldUpdate,
+                                NativeWorldPackets.ShieldUpdate(shield,
+                                    sessions.ActiveStats(pilot).MaxShield), ct);
+                            sentShield = shield;
+                        }
                     }
                 }
                 catch (WorldLeaseLostException) { return; }
@@ -206,6 +226,20 @@ public static class NativeWorldPackets
     {
         Rotated(w, x, 9);
         Rotated(w, y, 25);
+    });
+
+    // AttributeHitpointUpdateCommand.read 0x14B7130: now r7, max r10.
+    public static byte[] HitpointUpdate(long now, long max) => WorldPayload.Encode(w =>
+    {
+        Rotated(w, now, 25);
+        Rotated(w, max, 22);
+    });
+
+    // AttributeShieldUpdateCommand.read 0x14B7790: now r16, max r20.
+    public static byte[] ShieldUpdate(long now, long max) => WorldPayload.Encode(w =>
+    {
+        Rotated(w, now, 16);
+        Rotated(w, max, 12);
     });
 
     public static byte[] JumpgateCreate(WorldPortal portal, int factionId) => WorldPayload.Encode(w =>

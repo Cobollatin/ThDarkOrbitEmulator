@@ -289,6 +289,9 @@ burst or its sequencing.
 | `AttackLaserRunCommand` `0x10A4110` / `0x14B5B00`, `0x0003` | `attackerId:i32(r30), targetId:i32(r1), laserColor:i32(r16), isDiminishedBySkillShield:bool, skilledLaser:bool, visualType:i32(r9)` |
 | `AttackRocketCommand` `0x10A9A00` / `0x14B6130`, `0x0006` | `attackerId:i32(r16), targetId:i32(r21), rocketType:i32(r29), smokeId:i32(r29), hit:bool, isHeatSeeking:bool` |
 | `AttackHitCommand` `0x11D3F30` / `0x14B5000`, `0x001C` | Nested `AttackTypeModule` ID `0x001B` (`get` `0x14B63F0`, `read` `0x14AC830`) with `attackTypeValue:i16`, then `attackerId:i32(r7), victimId:i32(r29), victimHitpoints:f64, victimShield:i32(r13), victimNanoHull:i32(r24), damage:i32(r24), skilled:bool, strike:bool, cannonType:i16`. The local native path has no hit event routing yet. |
+| `AttributeHitpointUpdateCommand` `0x10A4120` / `0x14B7130`, `0x0008` | `hitpointsNow:i32(r7), hitpointsMax:i32(r10)`. |
+| `AttributeShieldUpdateCommand` `0x14B7780` / `0x14B7790`, `0x00F8` | `shieldNow:i32(r16), shieldMax:i32(r20)`. |
+| `HitpointInfoCommand` `0x153A0C0` / `0x153A0D0`, `0x0514` | `hitpoints:f64, hitpointsMax:f64, nanoHull:i32(r13), nanoHullMax:i32(r26)`. The current world state has no nano hull source. |
 | `JumpgateCreateCommand` `0x153EDA0` / `0x153EDB0`, `0x0D3D` | `gateId:i32(r22), factionId:i32(r2), designId:i32(r15), x:i32(r21), y:i32(r23), isVisibleOnMinimap:bool, showBubble:bool` |
 | `JumpInitiatedCommand` `0x153EB50` / `0x153EB60`, `0x0013` | `mapId:i32(r7), gateId:i32(r6)` |
 | `JumpDeniedCommand` `0x14AF990` / `0x1529C40`, `0x0012` | `mandatoryLevel:i32`; exact rotation is not yet mapped. |
@@ -310,6 +313,16 @@ it removes local presence. The hosted listener supplies the
 session store; the no-store handshake fixture still exits after entry.
 `WorldTransportTests.Loopback_NativeMove_UsesSavedOriginAndKeepsSocketOpenForNextCommand`
 verifies framing, rotations, duration, repeat commands, persistence and cleanup.
+On native moves, the bridge also compares the saved hero vitals with the last
+values sent and emits `AttributeHitpointUpdateCommand` (`0x0008`) and
+`AttributeShieldUpdateCommand` (`0x00F8`) when those values change. The installed
+client's readers at `0x14B7130` and `0x14B7790` each consume two big-endian
+32-bit integers, current then maximum. The hitpoint reader rotates left by 7
+and 10; the shield reader rotates left by 16 and 20, so the server writes the
+inverse rotations. A loopback test covers shield change and boundary radiation
+damage after a move. The native client has not yet been observed receiving
+these packets from a Live or redirected server; nano hull and non-movement
+vitals changes remain for later passes.
 Laser, rocket, hit and jump serializers are not yet dispatched to native sockets.
 Portal
 design ID zero and the entry command order remain emulator choices pending a

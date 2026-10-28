@@ -2037,6 +2037,79 @@ public class WorldTransportTests
         }
     }
 
+    [Test]
+    public async Task Loopback_NativeMove_ReportsChangedHullAndShieldWithClientRotations()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var sessions = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var pilot = new WorldPilot(42, "mmo", 1, 1, "ship_phoenix", 0, 0)
+        {
+            FactionId = 1, X = 2000, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 100, 0, 30, [])
+        };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), sessions);
+        using (client)
+        using (server)
+        {
+            var stream = client.GetStream();
+            await WriteNativeAsync(stream, NativeWorldHandshake.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, NativeWorldHandshake.ClientVersion)));
+            Assert.That((await ReadNativeAsync(stream).WaitAsync(TimeSpan.FromSeconds(2))).Module, Is.EqualTo(NativeWorldHandshake.VersionCommand));
+            await WriteNativeAsync(stream, NativeWorldHandshake.LoginRequest, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt32(w, (int)BitOperations.RotateLeft(42u, 3));
+                w.Write(BinaryPrimitives.ReverseEndianness((ushort)BitOperations.RotateLeft(1u, 7)));
+                WorldPayload.WriteString(w, "opaque");
+                WorldPayload.WriteString(w, NativeWorldHandshake.ClientVersion);
+                WorldPayload.WriteInt32(w, (int)BitOperations.RotateLeft(1u, 12));
+                w.Write(false);
+            }));
+            Assert.That((await ReadNativeAsync(stream).WaitAsync(TimeSpan.FromSeconds(2))).Module, Is.EqualTo(NativeWorldHandshake.LoginResponse));
+            Assert.That((await ReadNativeAsync(stream).WaitAsync(TimeSpan.FromSeconds(2))).Module, Is.EqualTo(NativeWorldHandshake.MapChanged));
+            Assert.That((await ReadNativeAsync(stream).WaitAsync(TimeSpan.FromSeconds(2))).Module, Is.EqualTo(NativeWorldHandshake.ShipInitialization));
+            foreach (var _ in WorldMapInstance.Starter(1).Portals)
+                Assert.That((await ReadNativeAsync(stream).WaitAsync(TimeSpan.FromSeconds(2))).Module, Is.EqualTo(NativeWorldHandshake.JumpgateCreate));
+
+            await WriteNativeAsync(stream, NativeWorldHandshake.MoveRequest, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt32(w, 2000);
+                WorldPayload.WriteInt32(w, 1300);
+                WorldPayload.WriteInt32(w, 2000);
+                WorldPayload.WriteInt32(w, 1300);
+            }));
+            Assert.That((await ReadNativeAsync(stream).WaitAsync(TimeSpan.FromSeconds(2))).Module,
+                Is.EqualTo(NativeWorldHandshake.HeroMoveCommand));
+            Assert.That((await ReadNativeAsync(stream).WaitAsync(TimeSpan.FromSeconds(2))).Module,
+                Is.EqualTo(NativeWorldHandshake.MoveCommand));
+            sessions.SetCurrentShield(pilot, 40);
+            await WriteNativeAsync(stream, NativeWorldHandshake.MoveRequest, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt32(w, 2000);
+                WorldPayload.WriteInt32(w, 1300);
+                WorldPayload.WriteInt32(w, -1); // outside the map: one radiation tick
+                WorldPayload.WriteInt32(w, 1300);
+            }));
+            Assert.That((await ReadNativeAsync(stream).WaitAsync(TimeSpan.FromSeconds(2))).Module, Is.EqualTo(NativeWorldHandshake.HeroMoveCommand));
+            Assert.That((await ReadNativeAsync(stream).WaitAsync(TimeSpan.FromSeconds(2))).Module, Is.EqualTo(NativeWorldHandshake.MoveCommand));
+            var hull = await ReadNativeAsync(stream).WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.That(hull.Module, Is.EqualTo(NativeWorldHandshake.AttributeHitpointUpdate));
+            Assert.That(hull.Payload.Length, Is.EqualTo(8));
+            Assert.That(BitOperations.RotateLeft((uint)BinaryPrimitives.ReadInt32BigEndian(hull.Payload.Span), 7),
+                Is.EqualTo(990));
+            Assert.That(BitOperations.RotateLeft((uint)BinaryPrimitives.ReadInt32BigEndian(hull.Payload.Span[4..]), 10),
+                Is.EqualTo(1000));
+            var shield = await ReadNativeAsync(stream).WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.That(shield.Module, Is.EqualTo(NativeWorldHandshake.AttributeShieldUpdate));
+            Assert.That(shield.Payload.Length, Is.EqualTo(8));
+            Assert.That(BitOperations.RotateLeft((uint)BinaryPrimitives.ReadInt32BigEndian(shield.Payload.Span), 16),
+                Is.EqualTo(40));
+            Assert.That(BitOperations.RotateLeft((uint)BinaryPrimitives.ReadInt32BigEndian(shield.Payload.Span[4..]), 20),
+                Is.EqualTo(100));
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+    }
+
     [TestCase(1, false)]
     [TestCase(2, true)]
     public async Task Loopback_NativeLogin_RequiresSelectedSessionInstance(int requested, bool accepted)
