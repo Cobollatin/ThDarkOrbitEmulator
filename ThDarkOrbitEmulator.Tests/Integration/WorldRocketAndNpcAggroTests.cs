@@ -265,6 +265,36 @@ public sealed class WorldRocketAndNpcAggroTests
         Assert.That(sessions.CurrentHitPoints(second), Is.EqualTo(990));
     }
 
+    [Test]
+    public async Task PassiveNpc_PursuesWithoutFiring()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var npcs = CreateNpcs(cache, mutex, new Rewards(), clock, new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 100,
+                Aggressive: false)],
+            AggroRange = 1000, NpcStandoffRange = 0, NpcFireRange = 1000,
+            NpcDamage = 10, NpcFireCooldownSeconds = 1
+        });
+        var npc = (await npcs.VisibleAsync(1, default)).Single();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var pilot = await sessions.EnterAsync(Pilot(npc.X + 400, npc.Y), default);
+
+        await npcs.TickAggroAsync(1, sessions, default);
+        var pursued = (await npcs.VisibleAsync(1, default)).Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That(pursued.X, Is.GreaterThan(npc.X));
+            Assert.That(sessions.CurrentHitPoints(pilot), Is.EqualTo(1000));
+        });
+        clock.Advance(TimeSpan.FromSeconds(2));
+        await npcs.TickAggroAsync(1, sessions, default);
+        Assert.That(sessions.CurrentHitPoints(pilot), Is.EqualTo(1000));
+    }
+
     private static WorldNpcs CreateNpcs(IDistributedCache cache, Mutex mutex, Rewards rewards,
         Clock clock, WorldNpcOptions options) => new(cache, mutex, rewards, Options.Create(options), clock);
 

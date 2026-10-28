@@ -14,7 +14,7 @@ public sealed record WorldNpcReward(int Credits, int Uridium, int Experience, in
 public sealed record WorldNpcAttack(string Status, WorldNpc? Target = null, int Damage = 0,
     bool Destroyed = false, WorldNpcReward? Reward = null);
 public sealed record WorldNpcTemplate(string Kind, string ShipId, int Count, int Hp, int Shield,
-    int Credits, int Uridium, int Experience, int Honor, int Speed);
+    int Credits, int Uridium, int Experience, int Honor, int Speed, bool Aggressive = true);
 public sealed class WorldNpcOptions
 {
     public const string SectionName = "WorldNpcs";
@@ -400,8 +400,9 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             var dx = target.Position.X - npc.X;
             var dy = target.Position.Y - npc.Y;
             var distance = Math.Sqrt(target.Distance);
-            var speed = (settings.MapTemplates.GetValueOrDefault(mapId) ?? settings.Templates)
-                .FirstOrDefault(t => t.Kind == npc.Kind)?.Speed ?? 0;
+            var template = (settings.MapTemplates.GetValueOrDefault(mapId) ?? settings.Templates)
+                .FirstOrDefault(t => t.Kind == npc.Kind);
+            var speed = template?.Speed ?? 0;
             var elapsed = vital.LastStepUnixMs == 0 ? 1d : Math.Clamp(
                 (now.ToUnixTimeMilliseconds() - vital.LastStepUnixMs) / 1000d, 0, 5);
             var step = Math.Min(Math.Max(0, speed) * elapsed,
@@ -409,7 +410,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             var x = distance == 0 ? npc.X : npc.X + (int)Math.Round(dx * step / distance);
             var y = distance == 0 ? npc.Y : npc.Y + (int)Math.Round(dy * step / distance);
             npc = npc with { X = x, Y = y };
-            var fire = DistanceSquared(x, y, target.Position.X, target.Position.Y) <=
+            var fire = template?.Aggressive != false &&
+                DistanceSquared(x, y, target.Position.X, target.Position.Y) <=
                 (long)settings.NpcFireRange * settings.NpcFireRange &&
                 now.ToUnixTimeMilliseconds() - vital.LastFireUnixMs >=
                 Math.Max(1, settings.NpcFireCooldownSeconds) * 1000L;
