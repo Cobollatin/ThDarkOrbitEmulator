@@ -41,6 +41,9 @@ public sealed class WorldAndSpacemapSpecificationTests
         await WorldHttpBridge.JumpAsync(context, null!, null!, null!, default);
         Assert.That(context.Response.StatusCode, Is.EqualTo(415));
         context.Response.StatusCode = 200;
+        await WorldHttpBridge.RespawnAsync(context, null!, null!, null!, default);
+        Assert.That(context.Response.StatusCode, Is.EqualTo(415));
+        context.Response.StatusCode = 200;
         await WorldHttpBridge.CollectAsync(context, null!, null!, null!, null!, default);
         Assert.That(context.Response.StatusCode, Is.EqualTo(415));
         context.Response.StatusCode = 200;
@@ -65,6 +68,9 @@ public sealed class WorldAndSpacemapSpecificationTests
 
             context.Response.StatusCode = 200;
             await WorldHttpBridge.JumpAsync(context, null!, null!, null!, default);
+            Assert.That(context.Response.StatusCode, Is.EqualTo(415), contentType);
+            context.Response.StatusCode = 200;
+            await WorldHttpBridge.RespawnAsync(context, null!, null!, null!, default);
             Assert.That(context.Response.StatusCode, Is.EqualTo(415), contentType);
             context.Response.StatusCode = 200;
             await WorldHttpBridge.CollectAsync(context, null!, null!, null!, null!, default);
@@ -1184,6 +1190,45 @@ public sealed class WorldAndSpacemapSpecificationTests
         clock.Advance(TimeSpan.FromSeconds(1));
         await replica.RecoverHullAsync(pilot.MapId, default);
         Assert.That(replica.CurrentHitPoints(pilot), Is.EqualTo(1000));
+    }
+
+    [Test]
+    public async Task PilotDestruction_BlocksActions_AndRespawnsOnceAtFactionBaseAcrossReplicas()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var store = new WorldSessionStore(cache);
+        var pilot = await store.EnterAsync(Pilot() with
+        {
+            UserId = 907, MapId = 2, FactionId = 1, X = 5000, Y = 5000,
+            Stats = new WorldShipStats(300, 1000, 100, 0, 100, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0);
+        Assert.That(store.CurrentHitPoints(pilot), Is.Zero);
+        Assert.ThrowsAsync<WorldPilotDestroyedException>(async () =>
+            await store.MoveAsync(pilot, 6000, 5000, null, default));
+        Assert.ThrowsAsync<WorldPilotDestroyedException>(async () =>
+            await store.JumpAsync(pilot, 201, null, default));
+        Assert.ThrowsAsync<WorldPilotDestroyedException>(async () =>
+            await store.SwitchAsync(pilot, 2, default));
+        await store.RepairAtBaseAsync(pilot with { X = 19000, Y = 1300 }, DateTimeOffset.UtcNow, default);
+        Assert.That(store.CurrentHitPoints(pilot), Is.Zero);
+
+        var replica = new WorldSessionStore(cache);
+        var respawned = await replica.RespawnAtBaseAsync(pilot, default);
+        Assert.That(respawned, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(respawned!.MapId, Is.EqualTo(1));
+            Assert.That((respawned.X, respawned.Y), Is.EqualTo((2000, 1300)));
+            Assert.That(replica.CurrentHitPoints(respawned), Is.EqualTo(100));
+            Assert.That(replica.CurrentShield(respawned), Is.Zero);
+        });
+        Assert.That(await store.RespawnAtBaseAsync(respawned!, default), Is.Null);
+        var restored = await store.RestoreAsync(pilot, default);
+        Assert.That(restored.MapId, Is.EqualTo(1));
+        Assert.That(store.CurrentHitPoints(restored), Is.EqualTo(100));
+        Assert.That((await store.MoveAsync(restored, 3000, 1300, null, default)).X, Is.EqualTo(3000));
     }
 
     [TestCase("0", 0)]

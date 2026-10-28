@@ -172,6 +172,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             if (expectedMapId is not null && pilot.MapId != expectedMapId)
                 throw new WorldMapChangedException();
             if (fence is not null && pilot.MapId != mapId) throw new WorldLeaseLostException();
+            if (sessions.CurrentHitPoints(pilot) <= 0) return null;
         }
         var target = (await VisibleAsync(pilot.MapId, ct)).FirstOrDefault(n => n.Id == npcId);
         if (target is null) return null;
@@ -258,6 +259,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             if (expectedMapId is not null && pilot.MapId != expectedMapId)
                 throw new WorldMapChangedException();
             if (fence is not null && pilot.MapId != mapId) throw new WorldLeaseLostException();
+            if (sessions.CurrentHitPoints(pilot) <= 0) return new("destroyed_pilot");
             key = Key(pilot.MapId, npcId);
             var stored = await cache.GetStringAsync(key, ct);
             var saved = stored is null ? null : JsonSerializer.Deserialize<Vital>(stored);

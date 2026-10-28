@@ -21,6 +21,7 @@ public static class WorldHttpBridge
         app.MapPost("/spacemap/world/enter", EnterAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/move", MoveAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/jump", JumpAsync).AllowAnonymous().DisableRateLimiting();
+        app.MapPost("/spacemap/world/respawn", RespawnAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/collect", CollectAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/target", TargetAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/fire", FireAsync).AllowAnonymous().DisableRateLimiting();
@@ -269,6 +270,7 @@ public static class WorldHttpBridge
                 fence: await LeaseFenceAsync(context, pilot.MapId, ct), expectedMapId: expectedMapId); }
             catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
             catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
+            catch (WorldPilotDestroyedException) { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "destroyed_pilot" }, ct); return; }
             if (change.CooldownRemainingMs > 0)
             {
                 context.Response.StatusCode = 409;
@@ -333,6 +335,7 @@ public static class WorldHttpBridge
             catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
             catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
             catch (WorldMoveChangedException) { await MoveChangedAsync(context, ct); return; }
+            catch (WorldPilotDestroyedException) { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "destroyed_pilot" }, ct); return; }
             if (change.CooldownRemainingMs > 0)
             {
                 context.Response.StatusCode = 409;
@@ -353,6 +356,7 @@ public static class WorldHttpBridge
         catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
         catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
         catch (WorldMoveChangedException) { await MoveChangedAsync(context, ct); return; }
+        catch (WorldPilotDestroyedException) { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "destroyed_pilot" }, ct); return; }
         await sessions.BroadcastMoveAsync(pilot, move, ct);
         sessions.SetRadiationWarning(pilot.UserId, move.RadiationWarning);
         await WriteStateAsync(context, pilot, sessions, ct);
@@ -385,9 +389,27 @@ public static class WorldHttpBridge
             await LeaseFenceAsync(context, pilot.MapId, ct), sourceMapId); }
         catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
         catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
+        catch (WorldPilotDestroyedException) { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "destroyed_pilot" }, ct); return; }
         if (jump is null) { context.Response.StatusCode = 409; return; }
         await SetMeshHeadersAsync(context, jump.Pilot.MapId, ct);
         await WriteStateAsync(context, jump.Pilot, sessions, ct, jump);
+    }
+
+    public static async Task RespawnAsync(HttpContext context, IGameAuthSessionStore auth,
+        IWorldPilotResolver resolver, WorldSessionStore sessions, CancellationToken ct)
+    {
+        if (!JsonRequest(context)) { context.Response.StatusCode = 415; return; }
+        var pilot = await PilotAsync(context, auth, resolver, sessions, ct);
+        if (pilot is null) return;
+        pilot = await sessions.GetOrEnterAsync(pilot, ct);
+        await SetMeshHeadersAsync(context, pilot.MapId, ct);
+        WorldPilot? respawned;
+        try { respawned = await sessions.RespawnAtBaseAsync(pilot, ct,
+            await LeaseFenceAsync(context, pilot.MapId, ct)); }
+        catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
+        if (respawned is null) { context.Response.StatusCode = 409; return; }
+        await SetMeshHeadersAsync(context, respawned.MapId, ct);
+        await WriteStateAsync(context, respawned, sessions, ct);
     }
 
     public static async Task CollectAsync(HttpContext context, IGameAuthSessionStore auth,
@@ -412,6 +434,9 @@ public static class WorldHttpBridge
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         { context.Response.StatusCode = 400; return; }
         if (expectedMapId is <= 0) { context.Response.StatusCode = 400; return; }
+        await sessions.RestoreAsync(pilot, ct);
+        if (sessions.CurrentHitPoints(pilot) <= 0)
+        { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "destroyed_pilot" }, ct); return; }
         if (expectedMapId is not null && expectedMapId != pilot.MapId)
         { await MapChangedAsync(context, pilot, sessions, ct); return; }
         WorldCollectResult result;
@@ -445,6 +470,9 @@ public static class WorldHttpBridge
         if (expectedMapId is not null && expectedMapId != pilot.MapId)
         { await MapChangedAsync(context, pilot, sessions, ct); return; }
         WorldNpc? target;
+        await sessions.RestoreAsync(pilot, ct);
+        if (sessions.CurrentHitPoints(pilot) <= 0)
+        { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "destroyed_pilot" }, ct); return; }
         try { target = WorldMapInstance.IsGate(pilot.MapId)
             ? await context.RequestServices.GetRequiredService<WorldGateCombat>().SelectAsync(pilot, id, ct)
             : await npcs.SelectAsync(pilot, id, ct,
@@ -478,6 +506,9 @@ public static class WorldHttpBridge
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         { context.Response.StatusCode = 400; return; }
         if (expectedMapId is <= 0) { context.Response.StatusCode = 400; return; }
+        await sessions.RestoreAsync(pilot, ct);
+        if (sessions.CurrentHitPoints(pilot) <= 0)
+        { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "destroyed_pilot" }, ct); return; }
         if (expectedMapId is not null && expectedMapId != pilot.MapId)
         { await MapChangedAsync(context, pilot, sessions, ct); return; }
         if (!WorldMapInstance.IsGate(pilot.MapId) && !await npcs.IsSelectedAsync(pilot, id, ct) &&

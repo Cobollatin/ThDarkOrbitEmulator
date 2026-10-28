@@ -432,6 +432,12 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                         (npcs is not null || gates is not null) && sessions is not null)
                     {
                         var id = WorldPayload.Decode(packet.Value.Payload, WorldPayload.ReadInt32);
+                        await sessions.RestoreAsync(connected, ct);
+                        if (sessions.CurrentHitPoints(connected) <= 0)
+                        {
+                            await SendLaserFireResultAsync(connection!, id, "destroyed_pilot", ct);
+                            continue;
+                        }
                         if (selectedNpcId != id && (WorldMapInstance.IsGate(connected.MapId) ||
                             npcs is null || !await npcs.CanRetryRewardAsync(connected, id, ct)))
                         {
@@ -464,6 +470,11 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                         (await CurrentRouteAsync(destinationMap, ct)) ?? (string.Empty, 0, string.Empty), ct);
                     handedOff = true;
                     return;
+                }
+                catch (WorldPilotDestroyedException)
+                {
+                    await ErrorAsync(writer, WorldLoginError.Malformed, ct);
+                    continue;
                 }
                 catch (Exception e) when (e is InvalidDataException or EndOfStreamException or DecoderFallbackException)
                 {

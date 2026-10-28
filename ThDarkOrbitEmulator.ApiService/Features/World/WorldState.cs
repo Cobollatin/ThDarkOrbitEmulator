@@ -107,6 +107,7 @@ public sealed record WorldLeaseFence(IServerMeshRegistry Registry, string NodeId
 public sealed class WorldLeaseLostException() : Exception("The map lease changed before the world command was applied.");
 public sealed class WorldMapChangedException() : Exception("The pilot left the map before the movement command was applied.");
 public sealed class WorldMoveChangedException() : Exception("The pilot's destination changed before the movement command was applied.");
+public sealed class WorldPilotDestroyedException() : Exception("The pilot must respawn before acting.");
 public sealed class WorldConfigurationCooldownException(int remainingMs) : Exception("Configuration switch is cooling down.")
 {
     public int RemainingMs { get; } = remainingMs;
@@ -863,6 +864,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 && (travel.GetValueOrDefault(pilot.UserId)?.MoveId ?? Guid.Empty) != revision)
                 throw new WorldMoveChangedException();
             await CheckLeaseAsync(pilot.MapId, fence, ct);
+            if (CurrentHitPoints(pilot) <= 0) throw new WorldPilotDestroyedException();
             var now = at ?? DateTimeOffset.UtcNow;
             var selected = Configuration(pilot.UserId);
             var speed = await EffectiveSpeedAsync(pilot, ActiveStats(pilot), ct);
@@ -909,6 +911,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             if (expectedMoveId is { } revision
                 && (travel.GetValueOrDefault(pilot.UserId)?.MoveId ?? Guid.Empty) != revision)
                 throw new WorldMoveChangedException();
+            if (CurrentHitPoints(pilot) <= 0) throw new WorldPilotDestroyedException();
             await CheckLeaseAsync(pilot.MapId, fence, ct);
             var now = at ?? DateTimeOffset.UtcNow;
             if (Configuration(pilot.UserId) == configuration) return new(false, 0, null);
@@ -1008,6 +1011,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         if (position != target || dx * dx + dy * dy > (long)peaceRadius * peaceRadius) return;
         var stats = ActiveStats(pilot);
         var current = CurrentHitPoints(pilot);
+        if (current <= 0) return;
         var shield = CurrentShield(pilot);
         if (current >= stats.MaxHitPoints && shield >= stats.MaxShield) return;
         if (current < stats.MaxHitPoints)
@@ -1061,6 +1065,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 throw new WorldMapChangedException();
             if (pilot.MapId != admittedMap) throw new WorldLeaseLostException();
             await CheckLeaseAsync(pilot.MapId, fence, ct);
+            if (CurrentHitPoints(pilot) <= 0) throw new WorldPilotDestroyedException();
             var portal = WorldMapInstance.Starter(pilot.MapId).Portals.FirstOrDefault(p => p.Id == portalId);
             if (portal is null) return null;
             if (WorldMapInstance.GateId(portal.DestinationMapId) is { } gateId)
@@ -1094,6 +1099,41 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 && n.Status == ServerMeshNodeStatus.Active);
             return new(next, portalId, owner?.Simulated == true ? null : owner?.NodeId,
                 owner is null ? null : $"{owner.WorldTcpHost}:{owner.WorldTcpPort}");
+        }
+        finally { gate.Release(); }
+    }
+
+    public async Task<WorldPilot?> RespawnAtBaseAsync(WorldPilot pilot, CancellationToken ct,
+        WorldLeaseFence? fence = null)
+    {
+        var gate = movementGates.GetOrAdd(pilot.UserId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            await using var held = meshMutex is null ? null : await meshMutex.AcquireAsync(ct);
+            await CheckLeaseAsync(pilot.MapId, fence, ct);
+            var admittedMap = pilot.MapId;
+            pilot = await RefreshAsync(pilot, ct);
+            if (pilot.MapId != admittedMap) throw new WorldLeaseLostException();
+            if (CurrentHitPoints(pilot) > 0) return null;
+            var baseMapId = (Math.Clamp(pilot.FactionId, 1, 4) - 1) * 4 + 1;
+            var station = WorldMapInstance.Starter(baseMapId).HomeStation;
+            var respawned = pilot with { MapId = baseMapId, X = station.X, Y = station.Y };
+            hitPoints[pilot.UserId] = Math.Max(1, ActiveStats(pilot).MaxHitPoints / 10);
+            shields[pilot.UserId] = 0;
+            travel.TryRemove(pilot.UserId, out _);
+            radiationWarnings.TryRemove(pilot.UserId, out _);
+            await cache.RemoveAsync(CombatKey(pilot.UserId), ct);
+            await cache.RemoveAsync(HullRecoveryKey(pilot.UserId), ct);
+            await cache.RemoveAsync(ShieldRecoveryKey(pilot.UserId), ct);
+            await PersistAsync(respawned, ct);
+            await PersistRuntimeAsync(respawned, ct);
+            await WritePresenceAsync(pilot, false, ct);
+            await WritePresenceAsync(respawned, true, ct);
+            if (connected.TryGetValue(pilot.MapId, out var old)) old.TryRemove(pilot.UserId, out _);
+            connected.GetOrAdd(baseMapId, _ => new ConcurrentDictionary<long, WorldPilot>())[pilot.UserId] = respawned;
+            if (connections.TryGetValue(pilot.UserId, out var connection)) connection.Pilot = respawned;
+            return respawned;
         }
         finally { gate.Release(); }
     }

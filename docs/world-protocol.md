@@ -551,3 +551,6 @@ The local Spacemap page now counts completed configuration requests. A `/state` 
 ## World-96 jump conflict mesh owner header (2026-10-24)
 
 `POST /spacemap/world/jump` now re-stamps `X-Mesh-Node-Id` / `X-Mesh-Map-Owner-Node` after reloading the shared pilot state, like move, config, collect, target and fire already did. Before, a replica holding a stale local pilot (map 1) answered `409 map_changed` with map 1's lease owner even though another replica had already jumped the pilot to map 2, so a router following the header would be sent to the old map's owner. No body or TCP contract changed.
+# Local pilot destruction and repair
+
+NPC damage may reduce a pilot to zero hull. At zero hull, the local world rejects movement, configuration changes, jumps, NPC fire, and box collection; station repair does not revive the ship. The emulator Spacemap shows a **Repair at home base** button that calls authenticated `POST /spacemap/world/respawn` with an empty JSON object. A successful response is the ordinary world state at the faction's first map and home station, with ten percent hull and zero shield. The action is single use until another destruction. This HTTP flow and repair amount are provisional local rules; no native Unity death packet is claimed.
