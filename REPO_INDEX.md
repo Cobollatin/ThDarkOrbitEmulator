@@ -9,6 +9,7 @@
 - `_reversing/Analysis/trace_il2cpp.py`: bounded native disassembly using the ignored `il2cpp-dump/` method map; findings are recorded in `docs/cockpit-catalog.md`.
 - `ThDarkOrbitEmulator.AppHost/`: Aspire wiring, including HTTPS and world listener ports.
 - `ThDarkOrbitEmulator.Tests/Integration/WorldAssignedHangarPostgresTests.cs`: PostgreSQL cockpit assignment to world stat entry regression.
+- `ThDarkOrbitEmulator.Tests/Integration/WorldRocketAndNpcAggroTests.cs`: shared-cache rocket cooldown, lethal reward, NPC pursuit and pilot damage integration tests.
 - `.ralph/memory-index.json`: focused world entry, transport, simulation, and test paths; records the currently missing requested spec files.
 - `docs/specs/03-hangar-inventory-and-shop.md`, `07-economy-progression-and-quests.md`, `08-clans-diplomacy-and-chat.md`: topical Task 3 audits supplement the existing numbered master specs. Shop, Dock, Skylab, and Galaxy Gates live in `ApiService/Features/IndexInternal/InternalStart/` with durable mutations in `ApiService/Features/Economy/EconomyStore.cs`; Cockpit routes live in `ApiService/Features/UnityApi/Login/CockpitCatalogEndpoints.cs`.
 

@@ -418,6 +418,12 @@ The CMS world pilots table reads the distributed `/api/v1/backoffice/world/overv
 
 # World-9 ambient NPC and combat contract (2026-10-24)
 
+## Task 5 provisional rocket and autonomous NPC extension (2026-10-28)
+
+Native Unity packet IDs and payloads remain unverified. The emulator adds `RocketFireRequest=38` (`i32 npcId`), `RocketHitCommand=39` (same five fields as laser hit), and `NpcFireCommand=40` (`i32 npcId,i64 targetUserId,i32 damage,i64 hp,shield`). TCP rockets require the current target lock. HTTP `/spacemap/world/fire` accepts optional `weapon: "rocket"`; omission uses laser. Rocket range, fixed damage and cooldown are `WorldNpcs` options. Both weapons use the same durable NPC vitality and killer-only reward retry path.
+
+The map lease owner's NPC tick selects the nearest eligible pilot from shared map presence, pursues within aggro range, and applies shield-first damage on its cooldown. The NPC position and target live in the cycle-scoped shared vitality record; pilot hull and shield are saved in shared runtime. Station peace zones suppress targeting. These behavior and wire rules are **provisional emulator contracts**, not observed official client behavior.
+
 `WorldNpcs` supplies deterministic patrol positions on maps 1–16. `WorldNpcs:Templates` configures default Streuner, Lordakia and Saimon count, model ID, speed, HP, shield and reward values; `WorldNpcs:MapTemplates:{mapId}` can replace that list per map. The current 300-second spawn cycle and combat vitality are stored in distributed cache, and damage is serialized with the mesh mutex. The map lease owner sends NPC movement each second to local TCP observers within 5,000 units. The browser Spacemap polls `/spacemap/world/state` and draws the same NPC positions.
 
 The **local provisional** TCP commands are `ShipCreateCommand=24` (int32 ID; strings kind/model; int32 x,y,hp,maxHp,shield,maxShield), `SelectShipRequest=25` (int32 ID), `TargetLockCommand=26` (int32 ID,hp,shield,maxHp,maxShield), `LaserFireRequest=27` (int32 ID), `LaserHitCommand=28` (int64 attacker; int32 ID,damage,hp,shield), `ShipDestroyCommand=29` (int32 ID), and `NpcRewardCommand=30` (int32 ID,credits,uridium,experience,honor). NPC patrols use the existing `MoveCommand=12` layout with NPC ID as int64. Login and map change send currently visible NPC creation packets. The owner also emits creation when a spawn reappears. Selection is per TCP connection; fire requires that selection. Combat range is 1,000 units by default and uses the pilot's configured laser damage against shield before hull.

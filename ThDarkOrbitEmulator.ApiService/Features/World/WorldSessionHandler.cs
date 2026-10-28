@@ -413,7 +413,8 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                         }), ct);
                         continue;
                     }
-                    if (packet.Value.Command == WorldCommandId.LaserFireRequest && npcs is not null && sessions is not null)
+                    if (packet.Value.Command is WorldCommandId.LaserFireRequest or WorldCommandId.RocketFireRequest &&
+                        npcs is not null && sessions is not null)
                     {
                         var id = WorldPayload.Decode(packet.Value.Payload, WorldPayload.ReadInt32);
                         if (selectedNpcId != id && !await npcs.CanRetryRewardAsync(connected, id, ct))
@@ -421,7 +422,8 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                             await SendLaserFireResultAsync(connection!, id, "unselected", ct);
                             continue;
                         }
-                        var hit = await npcs.AttackAsync(connected, id, sessions, ct, fence);
+                        var hit = await npcs.AttackAsync(connected, id, sessions, ct, fence,
+                            rocket: packet.Value.Command == WorldCommandId.RocketFireRequest);
                         if (hit.Status != "hit")
                         {
                             await SendLaserFireResultAsync(connection!, id, hit.Status, ct);

@@ -463,10 +463,15 @@ public static class WorldHttpBridge
         await SetMeshHeadersAsync(context, pilot.MapId, ct);
         int id;
         int? expectedMapId;
+        bool rocket;
         try { using var body = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: ct);
             id = body.RootElement.GetProperty("npcId").GetInt32();
             expectedMapId = body.RootElement.TryGetProperty("mapId", out var map)
-                ? map.GetInt32() : null; }
+                ? map.GetInt32() : null;
+            var weaponName = body.RootElement.TryGetProperty("weapon", out var weapon)
+                ? weapon.GetString() : "laser";
+            if (weaponName is not ("laser" or "rocket")) throw new JsonException("Unknown weapon.");
+            rocket = weaponName == "rocket"; }
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         { context.Response.StatusCode = 400; return; }
         if (expectedMapId is <= 0) { context.Response.StatusCode = 400; return; }
@@ -477,7 +482,7 @@ public static class WorldHttpBridge
         { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "not_selected" }, ct); return; }
         WorldNpcAttack result;
         try { result = await npcs.AttackAsync(pilot, id, sessions, ct,
-            await LeaseFenceAsync(context, pilot.MapId, ct), expectedMapId); }
+            await LeaseFenceAsync(context, pilot.MapId, ct), expectedMapId, rocket); }
         catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
         catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
         if (result.Status != "hit") context.Response.StatusCode = 409;

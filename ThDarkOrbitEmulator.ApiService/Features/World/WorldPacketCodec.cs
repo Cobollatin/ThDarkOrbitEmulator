@@ -41,7 +41,10 @@ public enum WorldCommandId : ushort
     PilotCreateCommand = 34,
     PilotRemoveCommand = 35,
     LaserFireResultCommand = 36,
-    NpcHealthCommand = 37
+    NpcHealthCommand = 37,
+    RocketFireRequest = 38,
+    RocketHitCommand = 39,
+    NpcFireCommand = 40
 }
 
 public enum WorldLoginError : byte

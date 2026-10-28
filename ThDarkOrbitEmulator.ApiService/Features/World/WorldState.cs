@@ -1121,12 +1121,12 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     }
 
     public async Task BroadcastNpcDamageAsync(WorldPilot pilot, WorldNpc npc, int damage, bool destroyed,
-        WorldNpcReward? reward, CancellationToken ct)
+        WorldNpcReward? reward, CancellationToken ct, bool rocket = false)
     {
         // The hit packet carries the new vitals; record them so idle sync does not repeat them.
         foreach (var observer in connections.Values.Where(c => c.Pilot.MapId == pilot.MapId))
             observer.NpcVitals[npc.Id] = (npc.Hp, npc.Shield);
-        await BroadcastAsync(pilot, WorldCommandId.LaserHitCommand, WorldPayload.Encode(w =>
+        await BroadcastAsync(pilot, rocket ? WorldCommandId.RocketHitCommand : WorldCommandId.LaserHitCommand, WorldPayload.Encode(w =>
         {
             WorldPayload.WriteInt64(w, pilot.UserId);
             WorldPayload.WriteInt32(w, npc.Id);
@@ -1154,6 +1154,25 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 catch (IOException) { }
             }
         }
+    }
+
+    public async Task ApplyNpcDamageAsync(WorldPilot pilot, int npcId, int damage, CancellationToken ct)
+    {
+        var expectedMapId = pilot.MapId;
+        pilot = await RestoreAsync(pilot, ct);
+        if (pilot.MapId != expectedMapId || CurrentHitPoints(pilot) <= 0) return;
+        var absorbed = Math.Min(CurrentShield(pilot), damage);
+        shields[pilot.UserId] = CurrentShield(pilot) - absorbed;
+        hitPoints[pilot.UserId] = Math.Max(0, CurrentHitPoints(pilot) - (damage - absorbed));
+        await PersistRuntimeAsync(pilot, ct);
+        await BroadcastAsync(pilot, WorldCommandId.NpcFireCommand, WorldPayload.Encode(w =>
+        {
+            WorldPayload.WriteInt32(w, npcId);
+            WorldPayload.WriteInt64(w, pilot.UserId);
+            WorldPayload.WriteInt32(w, damage);
+            WorldPayload.WriteInt64(w, CurrentHitPoints(pilot));
+            WorldPayload.WriteInt64(w, CurrentShield(pilot));
+        }), ct);
     }
 
     public async Task BroadcastNpcMoveAsync(int mapId, WorldNpc npc, CancellationToken ct)

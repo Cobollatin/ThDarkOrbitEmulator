@@ -20,6 +20,13 @@ public sealed class WorldNpcOptions
     public const string SectionName = "WorldNpcs";
     public int RespawnSeconds { get; set; } = 300;
     public int LaserRange { get; set; } = 1000;
+    public int RocketRange { get; set; } = 1500;
+    public int RocketDamage { get; set; } = 250;
+    public int RocketCooldownSeconds { get; set; } = 3;
+    public int AggroRange { get; set; } = 1200;
+    public int NpcFireRange { get; set; } = 650;
+    public int NpcDamage { get; set; } = 40;
+    public int NpcFireCooldownSeconds { get; set; } = 2;
     public List<WorldNpcTemplate> Templates { get; set; } =
     [
         new("Streuner", "npc_streuner", 3, 800, 200, 400, 1, 400, 2, 90),
@@ -55,7 +62,9 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
     private sealed record ObserverSnapshot(DateTimeOffset ReadAtUtc, IReadOnlyList<WorldNpc> Npcs);
     private readonly ConcurrentDictionary<int, Lazy<Task<ObserverSnapshot>>> observerSnapshots = new();
     private sealed record Vital(int Hp, int Shield, bool Destroyed, Guid Killer,
-        WorldNpcReward? Reward = null, WorldNpc? Snapshot = null);
+        WorldNpcReward? Reward = null, WorldNpc? Snapshot = null,
+        int? X = null, int? Y = null, long TargetUserId = 0, long LastFireUnixMs = 0,
+        long LastStepUnixMs = 0);
     private long Cycle => clock.GetUtcNow().ToUnixTimeSeconds() / Math.Max(30, settings.RespawnSeconds);
     public long CurrentCycle => Cycle;
     private string Key(int map, int id, long cycle) => $"world:npc:{map}:{id}:{cycle}";
@@ -100,7 +109,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             var stored = await cache.GetStringAsync(Key(mapId, npc.Id, cycle), ct);
             var vital = stored is null ? null : JsonSerializer.Deserialize<Vital>(stored);
             if (vital?.Destroyed != true)
-                result.Add(npc with { Hp = vital?.Hp ?? npc.Hp, Shield = vital?.Shield ?? npc.Shield });
+                result.Add(npc with { Hp = vital?.Hp ?? npc.Hp, Shield = vital?.Shield ?? npc.Shield,
+                    X = vital?.X ?? npc.X, Y = vital?.Y ?? npc.Y });
         }
         return result;
     }
@@ -178,7 +188,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
 
     public async Task<WorldNpcAttack> AttackAsync(WorldPilot pilot, int npcId,
         WorldSessionStore sessions, CancellationToken ct, WorldLeaseFence? fence = null,
-        int? expectedMapId = null)
+        int? expectedMapId = null, bool rocket = false)
     {
         if (pilot.AccountId == Guid.Empty) return new("invalid");
         WorldNpc? npc;
@@ -199,7 +209,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             key = Key(pilot.MapId, npcId, Cycle);
             var stored = await cache.GetStringAsync(key, ct);
             var saved = stored is null ? null : JsonSerializer.Deserialize<Vital>(stored);
-            npc = (await SpawnLiveAsync(pilot.MapId, clock.GetUtcNow(), ct)).FirstOrDefault(n => n.Id == npcId)
+            npc = (await VisibleAsync(pilot.MapId, ct)).FirstOrDefault(n => n.Id == npcId)
                 ?? (saved?.Destroyed == true ? saved.Snapshot : null);
             if (npc is null) return new("missing");
             var vital = saved ?? new Vital(npc.Hp, npc.Shield, false, Guid.Empty);
@@ -212,12 +222,26 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             else
             {
                 var (x, y) = sessions.CurrentPosition(pilot, clock.GetUtcNow());
-                var fireRange = variables is null ? settings.LaserRange
+                var fireRange = rocket ? settings.RocketRange : variables is null ? settings.LaserRange
                     : await variables.NumberAsync("world.combat.fire_range", ct);
                 if ((long)(x - npc.X) * (x - npc.X) + (long)(y - npc.Y) * (y - npc.Y) >
-                    fireRange * fireRange) return new("distant", npc);
-                var multiplier = variables is null ? 1 : await variables.NumberAsync("world.combat.laser_damage_multiplier", ct);
-                damage = Math.Max(1, (int)Math.Round(sessions.ActiveStats(pilot).LaserDamage * multiplier));
+                    (long)fireRange * fireRange) return new("distant", npc);
+                if (rocket)
+                {
+                    var cooldownKey = $"world:rocket:{pilot.UserId}";
+                    var last = await cache.GetStringAsync(cooldownKey, ct);
+                    if (long.TryParse(last, out var lastMs) && clock.GetUtcNow().ToUnixTimeMilliseconds() - lastMs <
+                        Math.Max(1, settings.RocketCooldownSeconds) * 1000L) return new("cooldown", npc);
+                    await cache.SetStringAsync(cooldownKey, clock.GetUtcNow().ToUnixTimeMilliseconds().ToString(),
+                        new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow =
+                            TimeSpan.FromSeconds(Math.Max(1, settings.RocketCooldownSeconds)) }, ct);
+                    damage = Math.Max(1, settings.RocketDamage);
+                }
+                else
+                {
+                    var multiplier = variables is null ? 1 : await variables.NumberAsync("world.combat.laser_damage_multiplier", ct);
+                    damage = Math.Max(1, (int)Math.Round(sessions.ActiveStats(pilot).LaserDamage * multiplier));
+                }
                 var absorption = variables is null ? 1 : Math.Clamp(
                     await variables.NumberAsync("world.combat.shield_absorption_ratio", ct), 0, 1);
                 var absorbed = Math.Min(vital.Shield, (int)Math.Round(damage * absorption));
@@ -230,8 +254,9 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                     reward = new(adjusted.Credits, adjusted.Uridium,
                         adjusted.Experience, adjusted.Honor);
                 }
-                await cache.SetStringAsync(key, JsonSerializer.Serialize(new Vital(hp, shield, dead,
-                    dead ? pilot.AccountId : Guid.Empty, reward, dead ? npc : null)), Expiry, ct);
+                await cache.SetStringAsync(key, JsonSerializer.Serialize(vital with { Hp = hp, Shield = shield,
+                    Destroyed = dead, Killer = dead ? pilot.AccountId : Guid.Empty,
+                    Reward = reward, Snapshot = dead ? npc : null }), Expiry, ct);
                 observerSnapshots.TryRemove(pilot.MapId, out _);
                 target = npc with { Hp = hp, Shield = shield };
             }
@@ -247,8 +272,74 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         {
             await rewards.CreditAsync(pilot.AccountId, ApplyReward(npc!, reward!), key, ct);
         }
-        await sessions.BroadcastNpcDamageAsync(pilot, target!, damage, dead, reward, ct);
+        await sessions.BroadcastNpcDamageAsync(pilot, target!, damage, dead, reward, ct, rocket);
         return new("hit", target, damage, dead, reward);
+    }
+
+    // Called only by the map lease owner. The mesh mutex serializes target choice,
+    // pursuit and damage with player attacks across world nodes.
+    public async Task TickAggroAsync(int mapId, WorldSessionStore sessions, CancellationToken ct,
+        WorldLeaseFence? fence = null)
+    {
+        await using var held = await mutex.AcquireAsync(ct);
+        await WorldSessionStore.CheckLeaseAsync(mapId, fence, ct);
+        var now = clock.GetUtcNow();
+        var pilots = (await sessions.ConnectedAsync(mapId, ct))
+            .Where(p => p.AccountId != Guid.Empty).ToArray();
+        foreach (var spawn in await SpawnLiveAsync(mapId, now, ct))
+        {
+            var key = Key(mapId, spawn.Id, Cycle);
+            var saved = await cache.GetStringAsync(key, ct);
+            var vital = saved is null ? new Vital(spawn.Hp, spawn.Shield, false, Guid.Empty)
+                : JsonSerializer.Deserialize<Vital>(saved)!;
+            if (vital.Destroyed) continue;
+            var npc = spawn with { Hp = vital.Hp, Shield = vital.Shield,
+                X = vital.X ?? spawn.X, Y = vital.Y ?? spawn.Y };
+            var target = pilots.Where(p => sessions.CurrentHitPoints(p) > 0)
+                .Select(p => (Pilot: p, Position: sessions.CurrentPosition(p, now)))
+                .Where(p => !InsidePeaceZone(mapId, p.Position))
+                .Select(p => (p.Pilot, p.Position, Distance: DistanceSquared(npc.X, npc.Y, p.Position.X, p.Position.Y)))
+                .Where(p => p.Distance <= (long)settings.AggroRange * settings.AggroRange)
+                .OrderBy(p => p.Distance).ThenBy(p => p.Pilot.UserId).FirstOrDefault();
+            if (target.Pilot is null)
+            {
+                if (vital.TargetUserId != 0)
+                    await cache.SetStringAsync(key, JsonSerializer.Serialize(vital with { TargetUserId = 0 }), Expiry, ct);
+                continue;
+            }
+            var dx = target.Position.X - npc.X;
+            var dy = target.Position.Y - npc.Y;
+            var distance = Math.Sqrt(target.Distance);
+            var speed = (settings.MapTemplates.GetValueOrDefault(mapId) ?? settings.Templates)
+                .FirstOrDefault(t => t.Kind == npc.Kind)?.Speed ?? 0;
+            var elapsed = vital.LastStepUnixMs == 0 ? 1d : Math.Clamp(
+                (now.ToUnixTimeMilliseconds() - vital.LastStepUnixMs) / 1000d, 0, 5);
+            var step = Math.Min(Math.Max(0, speed) * elapsed, distance);
+            var x = distance == 0 ? npc.X : npc.X + (int)Math.Round(dx * step / distance);
+            var y = distance == 0 ? npc.Y : npc.Y + (int)Math.Round(dy * step / distance);
+            npc = npc with { X = x, Y = y };
+            var fire = DistanceSquared(x, y, target.Position.X, target.Position.Y) <=
+                (long)settings.NpcFireRange * settings.NpcFireRange &&
+                now.ToUnixTimeMilliseconds() - vital.LastFireUnixMs >=
+                Math.Max(1, settings.NpcFireCooldownSeconds) * 1000L;
+            vital = vital with { X = x, Y = y, TargetUserId = target.Pilot.UserId,
+                LastStepUnixMs = now.ToUnixTimeMilliseconds(),
+                LastFireUnixMs = fire ? now.ToUnixTimeMilliseconds() : vital.LastFireUnixMs };
+            await cache.SetStringAsync(key, JsonSerializer.Serialize(vital), Expiry, ct);
+            observerSnapshots.TryRemove(mapId, out _);
+            if (fire) await sessions.ApplyNpcDamageAsync(target.Pilot, npc.Id,
+                Math.Max(1, settings.NpcDamage), ct);
+        }
+    }
+
+    private static long DistanceSquared(int x, int y, int otherX, int otherY) =>
+        (long)(x - otherX) * (x - otherX) + (long)(y - otherY) * (y - otherY);
+
+    private static bool InsidePeaceZone(int mapId, (int X, int Y) position)
+    {
+        var station = WorldMapInstance.Starter(mapId).HomeStation;
+        return DistanceSquared(position.X, position.Y, station.X, station.Y) <=
+            (long)station.PeaceRadius * station.PeaceRadius;
     }
 
     private async Task<WorldNpc> RewardAdjustedAsync(WorldNpc npc, CancellationToken ct) => variables is null ? npc : npc with

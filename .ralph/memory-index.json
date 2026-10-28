@@ -11,7 +11,8 @@
       "ThDarkOrbitEmulator.Tests/ClientTesting/WorldPilotResolverSpecificationTests.cs",
       "ThDarkOrbitEmulator.Tests/ClientTesting/WorldAndSpacemapSpecificationTests.cs",
       "ThDarkOrbitEmulator.Tests/ClientTesting/WorldTransportTests.cs",
-      "ThDarkOrbitEmulator.Tests/ClientTesting/WorldHttpBridgeTests.cs"
+      "ThDarkOrbitEmulator.Tests/ClientTesting/WorldHttpBridgeTests.cs",
+      "ThDarkOrbitEmulator.Tests/Integration/WorldRocketAndNpcAggroTests.cs"
     ],
     "contractNotes": "docs/world-protocol.md",
     "availableSpec": "docs/specs/06-world-server-and-spacemap.md"

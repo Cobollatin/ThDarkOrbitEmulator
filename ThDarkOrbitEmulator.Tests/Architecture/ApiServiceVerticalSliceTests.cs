@@ -736,7 +736,7 @@ public class ApiServiceVerticalSliceTests
     public void WorldProtocol_CommandIdsRemainUniqueAndContiguousThroughPublishedRange()
     {
         var values = Enum.GetValues<WorldCommandId>().Select(value => (ushort)value).ToArray();
-        Assert.That(values, Is.EqualTo(Enumerable.Range(1, 37).Select(value => (ushort)value)),
+        Assert.That(values, Is.EqualTo(Enumerable.Range(1, 40).Select(value => (ushort)value)),
             "Changing a published command ID changes the provisional TCP wire contract.");
         Assert.That(typeof(WorldCommandId).Namespace,
             Is.EqualTo("ThDarkOrbitEmulator.ApiService.Features.World"));
@@ -1205,7 +1205,7 @@ public class ApiServiceVerticalSliceTests
         var source = File.ReadAllText(Path.Combine(RepositoryRoot, "ThDarkOrbitEmulator.ApiService",
             "Features", "World", "WorldNpcs.cs"));
         var attack = source[source.IndexOf("public async Task<WorldNpcAttack> AttackAsync(", StringComparison.Ordinal)..];
-        var save = attack.IndexOf("await cache.SetStringAsync(key, JsonSerializer.Serialize(new Vital(",
+        var save = attack.IndexOf("await cache.SetStringAsync(key, JsonSerializer.Serialize(vital with {",
             StringComparison.Ordinal);
         var credit = attack.IndexOf("await rewards.CreditAsync(pilot.AccountId, ApplyReward(npc!, reward!), key, ct)",
             StringComparison.Ordinal);
@@ -1214,7 +1214,8 @@ public class ApiServiceVerticalSliceTests
         {
             Assert.That(typeof(WorldNpcs).Namespace,
                 Is.EqualTo("ThDarkOrbitEmulator.ApiService.Features.World"));
-            Assert.That(attack, Does.Contain("dead ? pilot.AccountId : Guid.Empty, reward, dead ? npc : null"));
+            Assert.That(attack, Does.Contain("Killer = dead ? pilot.AccountId : Guid.Empty,")
+                .And.Contain("Reward = reward, Snapshot = dead ? npc : null"));
             Assert.That(attack, Does.Contain("if (vital.Killer != pilot.AccountId) return new(\"destroyed\")"));
             Assert.That(attack, Does.Contain("await rewards.CreditAsync(pilot.AccountId, ApplyReward(npc!, reward), key, ct)"));
             Assert.That(save, Is.GreaterThanOrEqualTo(0));
