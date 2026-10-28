@@ -193,6 +193,43 @@ public sealed class WorldRocketAndNpcAggroTests
     }
 
     [Test]
+    public async Task AutonomousNpc_ReturnsTowardPatrolAfterTargetLeaves()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var options = new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 100)],
+            AggroRange = 1000, NpcStandoffRange = 0, NpcFireRange = 0
+        };
+        var npcs = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var spawn = (await npcs.VisibleAsync(1, default)).Single();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var pilot = await sessions.EnterAsync(Pilot(spawn.X + 600, spawn.Y), default);
+
+        await npcs.TickAggroAsync(1, sessions, default);
+        var pursued = (await npcs.VisibleAsync(1, default)).Single();
+        Assert.That(pursued.X, Is.EqualTo(spawn.X + 100));
+
+        await sessions.TeleportAsync(pilot.UserId, 2, 5000, 5000, false, default);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var patrol = npcs.Spawn(1, clock.GetUtcNow()).Single();
+        await npcs.TickAggroAsync(1, sessions, default);
+        var returned = (await npcs.VisibleAsync(1, default)).Single();
+        var before = Math.Sqrt(Math.Pow(pursued.X - patrol.X, 2) + Math.Pow(pursued.Y - patrol.Y, 2));
+        var after = Math.Sqrt(Math.Pow(returned.X - patrol.X, 2) + Math.Pow(returned.Y - patrol.Y, 2));
+        Assert.Multiple(() =>
+        {
+            Assert.That(after, Is.LessThan(before));
+            Assert.That(before - after, Is.LessThanOrEqualTo(101));
+        });
+        var otherNode = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        Assert.That((await otherNode.VisibleAsync(1, default)).Single(), Is.EqualTo(returned));
+    }
+
+    [Test]
     public async Task AutonomousNpc_KeepsTargetUntilPeaceZoneThenRetargets()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

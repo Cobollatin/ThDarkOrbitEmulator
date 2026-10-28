@@ -374,8 +374,27 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 target = eligible.OrderBy(p => p.Distance).ThenBy(p => p.Pilot.UserId).FirstOrDefault();
             if (target.Pilot is null)
             {
-                if (vital.TargetUserId != 0)
-                    await cache.SetStringAsync(key, JsonSerializer.Serialize(vital with { TargetUserId = 0 }), Expiry, ct);
+                if (vital.TargetUserId != 0 || vital.X is not null || vital.Y is not null)
+                {
+                    var patrolSpeed = (settings.MapTemplates.GetValueOrDefault(mapId) ?? settings.Templates)
+                        .FirstOrDefault(t => t.Kind == npc.Kind)?.Speed ?? 0;
+                    var patrolElapsed = vital.LastStepUnixMs == 0 ? 1d : Math.Clamp(
+                        (nowMs - vital.LastStepUnixMs) / 1000d, 0, 5);
+                    var patrolDx = spawn.X - npc.X;
+                    var patrolDy = spawn.Y - npc.Y;
+                    var patrolDistance = Math.Sqrt((double)patrolDx * patrolDx + (double)patrolDy * patrolDy);
+                    var patrolStep = Math.Min(patrolDistance, Math.Max(0, patrolSpeed) * patrolElapsed);
+                    var reached = patrolStep >= patrolDistance;
+                    vital = vital with
+                    {
+                        X = reached ? null : npc.X + (int)Math.Round(patrolDx * patrolStep / patrolDistance),
+                        Y = reached ? null : npc.Y + (int)Math.Round(patrolDy * patrolStep / patrolDistance),
+                        TargetUserId = 0,
+                        LastStepUnixMs = nowMs
+                    };
+                    await cache.SetStringAsync(key, JsonSerializer.Serialize(vital), Expiry, ct);
+                    observerSnapshots.TryRemove(mapId, out _);
+                }
                 continue;
             }
             var dx = target.Position.X - npc.X;
