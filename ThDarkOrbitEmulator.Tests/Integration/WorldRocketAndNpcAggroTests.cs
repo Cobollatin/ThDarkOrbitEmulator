@@ -128,6 +128,48 @@ public sealed class WorldRocketAndNpcAggroTests
     }
 
     [Test]
+    public async Task NpcRespawn_UsesItsOwnKillTime_AndPreservesOtherNpcVitality()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var rewards = new Rewards();
+        var options = new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 2, 250, 0, 17, 0, 0, 0, 0)],
+            RespawnSeconds = 60, RocketDamage = 250, AggroRange = 0
+        };
+        var npcs = CreateNpcs(cache, mutex, rewards, clock, options);
+        var spawns = await npcs.VisibleAsync(1, default);
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var pilot = await sessions.EnterAsync(Pilot(spawns[0].X, spawns[0].Y), default);
+
+        Assert.That((await npcs.AttackAsync(pilot, spawns[0].Id, sessions, default, rocket: true)).Destroyed,
+            Is.True);
+        var firstRewardKey = rewards.LastKey;
+        await sessions.TeleportAsync(pilot.UserId, 1, spawns[1].X, spawns[1].Y, false, default);
+        Assert.That((await npcs.AttackAsync(pilot, spawns[1].Id, sessions, default)).Target!.Hp,
+            Is.EqualTo(249));
+
+        clock.Advance(TimeSpan.FromSeconds(25)); // Crosses the former global 60-second cycle.
+        await npcs.TickAggroAsync(1, sessions, default);
+        var beforeRespawn = await npcs.VisibleAsync(1, default);
+        Assert.That(beforeRespawn.Select(n => (n.Id, n.Hp)), Is.EqualTo(new[] { (spawns[1].Id, 249) }));
+
+        clock.Advance(TimeSpan.FromSeconds(35));
+        await npcs.TickAggroAsync(1, sessions, default);
+        var afterRespawn = await npcs.VisibleAsync(1, default);
+        Assert.That(afterRespawn.Single(n => n.Id == spawns[0].Id).Hp, Is.EqualTo(250));
+        Assert.That(afterRespawn.Single(n => n.Id == spawns[1].Id).Hp, Is.EqualTo(249));
+
+        await sessions.TeleportAsync(pilot.UserId, 1, spawns[0].X, spawns[0].Y, false, default);
+        Assert.That((await npcs.AttackAsync(pilot, spawns[0].Id, sessions, default, rocket: true)).Destroyed,
+            Is.True);
+        Assert.That(rewards.LastKey, Is.Not.EqualTo(firstRewardKey));
+    }
+
+    [Test]
     public async Task AutonomousNpc_PursuesNearestPilot_AndPersistsShieldThenHullDamage()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

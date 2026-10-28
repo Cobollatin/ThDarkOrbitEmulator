@@ -68,15 +68,15 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
     private sealed record Vital(int Hp, int Shield, bool Destroyed, Guid Killer,
         WorldNpcReward? Reward = null, WorldNpc? Snapshot = null,
         int? X = null, int? Y = null, long TargetUserId = 0, long LastFireUnixMs = 0,
-        long LastStepUnixMs = 0, long LastHitUnixMs = 0, long LastShieldRepairUnixMs = 0);
+        long LastStepUnixMs = 0, long LastHitUnixMs = 0, long LastShieldRepairUnixMs = 0,
+        long RespawnAtUnixMs = 0, long Generation = 0);
     private long Cycle => clock.GetUtcNow().ToUnixTimeSeconds() / Math.Max(30, settings.RespawnSeconds);
     public long CurrentCycle => Cycle;
-    private string Key(int map, int id, long cycle) => $"world:npc:{map}:{id}:{cycle}";
+    private static string Key(int map, int id) => $"world:npc:v2:{map}:{id}";
     private static string TargetKey(long userId) => $"world:npc:target:{userId}";
     private static string LaserKey(long userId) => $"world:npc:laser:{userId}";
     private sealed record ActiveLaser(int MapId, int NpcId, long Cycle, long NextShotUnixMs);
-    private DistributedCacheEntryOptions Expiry => new() { AbsoluteExpirationRelativeToNow =
-        TimeSpan.FromSeconds(Math.Max(30, settings.RespawnSeconds) + 30) };
+    private static DistributedCacheEntryOptions Expiry => new();
 
     public IReadOnlyList<WorldNpc> Spawn(int mapId, DateTimeOffset at,
         IReadOnlyDictionary<string, int>? countOverrides = null)
@@ -108,11 +108,10 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
 
     public async Task<IReadOnlyList<WorldNpc>> VisibleAsync(int mapId, CancellationToken ct)
     {
-        var cycle = Cycle;
         var result = new List<WorldNpc>();
         foreach (var npc in await SpawnLiveAsync(mapId, clock.GetUtcNow(), ct))
         {
-            var stored = await cache.GetStringAsync(Key(mapId, npc.Id, cycle), ct);
+            var stored = await cache.GetStringAsync(Key(mapId, npc.Id), ct);
             var vital = stored is null ? null : JsonSerializer.Deserialize<Vital>(stored);
             if (vital?.Destroyed != true)
                 result.Add(npc with { Hp = vital?.Hp ?? npc.Hp, Shield = vital?.Shield ?? npc.Shield,
@@ -231,7 +230,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
     public async Task<bool> CanRetryRewardAsync(WorldPilot pilot, int npcId, CancellationToken ct)
     {
         if (pilot.AccountId == Guid.Empty) return false;
-        var stored = await cache.GetStringAsync(Key(pilot.MapId, npcId, Cycle), ct);
+        var stored = await cache.GetStringAsync(Key(pilot.MapId, npcId), ct);
         if (stored is null) return false;
         var vital = JsonSerializer.Deserialize<Vital>(stored);
         return vital is { Destroyed: true } && vital.Killer == pilot.AccountId;
@@ -248,6 +247,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         var damage = 0;
         var dead = false;
         var retryReward = false;
+        var savedGeneration = 0L;
         WorldNpcReward? reward = null;
         await using (var held = await mutex.AcquireAsync(ct))
         {
@@ -257,13 +257,14 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             if (expectedMapId is not null && pilot.MapId != expectedMapId)
                 throw new WorldMapChangedException();
             if (fence is not null && pilot.MapId != mapId) throw new WorldLeaseLostException();
-            key = Key(pilot.MapId, npcId, Cycle);
+            key = Key(pilot.MapId, npcId);
             var stored = await cache.GetStringAsync(key, ct);
             var saved = stored is null ? null : JsonSerializer.Deserialize<Vital>(stored);
             npc = (await VisibleAsync(pilot.MapId, ct)).FirstOrDefault(n => n.Id == npcId)
                 ?? (saved?.Destroyed == true ? saved.Snapshot : null);
             if (npc is null) return new("missing");
             var vital = saved ?? new Vital(npc.Hp, npc.Shield, false, Guid.Empty);
+            savedGeneration = vital.Generation;
             if (vital.Destroyed)
             {
                 if (vital.Killer != pilot.AccountId) return new("destroyed");
@@ -309,6 +310,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 await cache.SetStringAsync(key, JsonSerializer.Serialize(vital with { Hp = hp, Shield = shield,
                     Destroyed = dead, Killer = dead ? pilot.AccountId : Guid.Empty,
                     Reward = reward, Snapshot = dead ? npc : null,
+                    RespawnAtUnixMs = dead ? clock.GetUtcNow().ToUnixTimeMilliseconds() +
+                        Math.Max(1, settings.RespawnSeconds) * 1000L : 0,
                     LastHitUnixMs = clock.GetUtcNow().ToUnixTimeMilliseconds() }), Expiry, ct);
                 observerSnapshots.TryRemove(pilot.MapId, out _);
                 target = npc with { Hp = hp, Shield = shield };
@@ -318,12 +321,12 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         if (retryReward)
         {
             reward ??= await RewardValuesAsync(npc!, ct);
-            await rewards.CreditAsync(pilot.AccountId, ApplyReward(npc!, reward), key, ct);
+            await rewards.CreditAsync(pilot.AccountId, ApplyReward(npc!, reward), $"{key}:{savedGeneration}", ct);
             return new("destroyed");
         }
         if (dead)
         {
-            await rewards.CreditAsync(pilot.AccountId, ApplyReward(npc!, reward!), key, ct);
+            await rewards.CreditAsync(pilot.AccountId, ApplyReward(npc!, reward!), $"{key}:{savedGeneration}", ct);
         }
         await sessions.BroadcastNpcDamageAsync(pilot, target!, damage, dead, reward, ct, rocket);
         return new("hit", target, damage, dead, reward);
@@ -341,11 +344,19 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             .Where(p => p.AccountId != Guid.Empty).ToArray();
         foreach (var spawn in await SpawnLiveAsync(mapId, now, ct))
         {
-            var key = Key(mapId, spawn.Id, Cycle);
+            var key = Key(mapId, spawn.Id);
             var saved = await cache.GetStringAsync(key, ct);
             var vital = saved is null ? new Vital(spawn.Hp, spawn.Shield, false, Guid.Empty)
                 : JsonSerializer.Deserialize<Vital>(saved)!;
-            if (vital.Destroyed) continue;
+            if (vital.Destroyed)
+            {
+                if (vital.RespawnAtUnixMs == 0 || now.ToUnixTimeMilliseconds() < vital.RespawnAtUnixMs)
+                    continue;
+                vital = new Vital(spawn.Hp, spawn.Shield, false, Guid.Empty,
+                    Generation: vital.Generation + 1);
+                await cache.SetStringAsync(key, JsonSerializer.Serialize(vital), Expiry, ct);
+                observerSnapshots.TryRemove(mapId, out _);
+            }
             var nowMs = now.ToUnixTimeMilliseconds();
             if (vital.Shield < spawn.MaxShield && vital.LastHitUnixMs > 0 &&
                 nowMs - vital.LastHitUnixMs >= Math.Max(0, settings.NpcShieldRepairDelaySeconds) * 1000L &&

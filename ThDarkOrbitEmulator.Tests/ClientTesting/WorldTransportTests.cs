@@ -305,7 +305,7 @@ public class WorldTransportTests
         var snapshots = await Task.WhenAll(Enumerable.Range(0, 8)
             .Select(_ => local.VisibleForObserversAsync(1, CancellationToken.None)));
         Assert.That(snapshots.All(s => s.Count == 2), Is.True);
-        Assert.That(counting.Reads.Count(k => k.StartsWith("world:npc:1:", StringComparison.Ordinal)), Is.EqualTo(2));
+        Assert.That(counting.Reads.Count(k => k.StartsWith("world:npc:v2:1:", StringComparison.Ordinal)), Is.EqualTo(2));
 
         var target = snapshots[0][0];
         var pilot = new WorldPilot(128, "mmo", 1, 1, "ship", 0, 0)
@@ -320,7 +320,7 @@ public class WorldTransportTests
         Assert.Multiple(() =>
         {
             Assert.That(refreshed.All(s => s.Single(n => n.Id == target.Id).Shield == hit.Target!.Shield), Is.True);
-            Assert.That(counting.Reads.Count(k => k.StartsWith("world:npc:1:", StringComparison.Ordinal)), Is.EqualTo(4));
+            Assert.That(counting.Reads.Count(k => k.StartsWith("world:npc:v2:1:", StringComparison.Ordinal)), Is.EqualTo(4));
         });
     }
 

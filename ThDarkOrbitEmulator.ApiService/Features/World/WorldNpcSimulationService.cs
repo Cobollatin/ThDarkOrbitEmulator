@@ -13,7 +13,6 @@ public sealed class WorldNpcSimulationService(WorldNpcs npcs, WorldSessionStore 
 {
     private readonly Dictionary<int, HashSet<int>> known = [];
     private readonly Dictionary<int, HashSet<int>> knownBoxes = [];
-    private readonly Dictionary<int, long> cycles = [];
     private DateTimeOffset lastAnnouncement;
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -36,7 +35,7 @@ public sealed class WorldNpcSimulationService(WorldNpcs npcs, WorldSessionStore 
             var owned = snapshot.Leases.Where(l => l.NodeId == nodeId && l.ExpiresAtUtc > DateTimeOffset.UtcNow)
                 .Select(l => l.MapId).ToHashSet();
             foreach (var mapId in known.Keys.Where(id => !owned.Contains(id)).ToArray())
-            { known.Remove(mapId); knownBoxes.Remove(mapId); cycles.Remove(mapId); }
+            { known.Remove(mapId); knownBoxes.Remove(mapId); }
             foreach (var lease in snapshot.Leases.Where(l => l.NodeId == nodeId && l.ExpiresAtUtc > DateTimeOffset.UtcNow))
             {
                 try
@@ -48,8 +47,6 @@ public sealed class WorldNpcSimulationService(WorldNpcs npcs, WorldSessionStore 
                 }
                 catch (WorldLeaseLostException) { continue; }
                 var visible = await npcs.VisibleAsync(lease.MapId, stoppingToken);
-                if (!cycles.TryGetValue(lease.MapId, out var cycle) || cycle != npcs.CurrentCycle)
-                { known.Remove(lease.MapId); cycles[lease.MapId] = npcs.CurrentCycle; }
                 if (!known.TryGetValue(lease.MapId, out var ids)) known[lease.MapId] = ids = [];
                 foreach (var npc in visible)
                 {

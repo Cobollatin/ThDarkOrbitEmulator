@@ -131,6 +131,7 @@ public sealed class WorldNpcTests
         Assert.That(rewards.Calls, Is.EqualTo(1));
         Assert.That(await second.VisibleAsync(1, default), Is.Empty);
         clock.Now = clock.Now.AddSeconds(300);
+        await first.TickAggroAsync(1, sessionsA, default);
         Assert.That(await first.VisibleAsync(1, default), Has.Count.EqualTo(1));
     }
 

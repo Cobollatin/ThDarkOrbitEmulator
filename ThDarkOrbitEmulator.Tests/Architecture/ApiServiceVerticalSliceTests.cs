@@ -1207,7 +1207,7 @@ public class ApiServiceVerticalSliceTests
         var attack = source[source.IndexOf("public async Task<WorldNpcAttack> AttackAsync(", StringComparison.Ordinal)..];
         var save = attack.IndexOf("await cache.SetStringAsync(key, JsonSerializer.Serialize(vital with {",
             StringComparison.Ordinal);
-        var credit = attack.IndexOf("await rewards.CreditAsync(pilot.AccountId, ApplyReward(npc!, reward!), key, ct)",
+        var credit = attack.IndexOf("await rewards.CreditAsync(pilot.AccountId, ApplyReward(npc!, reward!), $\"{key}:{savedGeneration}\", ct)",
             StringComparison.Ordinal);
 
         Assert.Multiple(() =>
@@ -1217,7 +1217,7 @@ public class ApiServiceVerticalSliceTests
             Assert.That(attack, Does.Contain("Killer = dead ? pilot.AccountId : Guid.Empty,")
                 .And.Contain("Reward = reward, Snapshot = dead ? npc : null"));
             Assert.That(attack, Does.Contain("if (vital.Killer != pilot.AccountId) return new(\"destroyed\")"));
-            Assert.That(attack, Does.Contain("await rewards.CreditAsync(pilot.AccountId, ApplyReward(npc!, reward), key, ct)"));
+            Assert.That(attack, Does.Contain("await rewards.CreditAsync(pilot.AccountId, ApplyReward(npc!, reward), $\"{key}:{savedGeneration}\", ct)"));
             Assert.That(save, Is.GreaterThanOrEqualTo(0));
             Assert.That(credit, Is.GreaterThan(save));
         });
@@ -2011,12 +2011,12 @@ public class ApiServiceVerticalSliceTests
             "registry.GetSnapshotAsync(stoppingToken)", "adminEvents.LatestAsync(stoppingToken)",
             "announcement.AtUtc > lastAnnouncement", "sessions.BroadcastAnnouncementAsync(",
             "foreach (var mapId in known.Keys.Where(id => !owned.Contains(id)).ToArray())",
-            "npcs.VisibleAsync(lease.MapId, stoppingToken)", "cycle != npcs.CurrentCycle",
+            "npcs.VisibleAsync(lease.MapId, stoppingToken)",
             "if (ids.Add(npc.Id)) await sessions.BroadcastNpcSpawnAsync(",
             "await sessions.BroadcastNpcMoveAsync(", "ids.IntersectWith(visible.Select(n => n.Id))",
-            "collectibles.VisibleAsync(lease.MapId, stoppingToken)", ".Where(b => b.Id < 0)",
-            "if (boxIds.Add(box.Id))", "sessions.BroadcastAdminBoxAsync(",
-            "boxIds.IntersectWith(boxes.Select(b => b.Id))"
+            "collectibles.VisibleAsync(lease.MapId, stoppingToken)",
+            "WorldCollectibleVisibility.Diff(boxIds, boxes)",
+            "sessions.BroadcastBoxRemovalAsync(", "sessions.BroadcastBoxSpawnAsync("
         };
         var positions = stages.Select(stage => source.IndexOf(stage, StringComparison.Ordinal)).ToArray();
         Assert.Multiple(() =>
@@ -2026,7 +2026,7 @@ public class ApiServiceVerticalSliceTests
             Assert.That(Regex.Matches(source,
                     @"snapshot\.Leases\.Where\(l => l\.NodeId == nodeId && l\.ExpiresAtUtc > DateTimeOffset\.UtcNow\)")
                 .Count, Is.EqualTo(2), "pruning and emission must share the live-owned lease filter");
-            Assert.That(source, Does.Contain("{ known.Remove(mapId); knownBoxes.Remove(mapId); cycles.Remove(mapId); }"));
+            Assert.That(source, Does.Contain("{ known.Remove(mapId); knownBoxes.Remove(mapId); }"));
             Assert.That(source, Does.Contain("variables is null ? 1000 :"));
             Assert.That(source, Does.Not.Contain("SetDrainingAsync").And.Not.Contain("HeartbeatAsync")
                 .And.Not.Contain("TryAcquire").And.Not.Contain("WorldNpcPackets.")
