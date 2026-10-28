@@ -169,8 +169,12 @@ export class BackofficeApiService {
   getSkylabState(accountId: string): Observable<SkylabState> { return this.http.get<SkylabState>(this.url(`progression/accounts/${encodeURIComponent(accountId)}/skylab`)); }
   setCollectorReadyAt(accountId: string, collectorId: string, readyAt: string): Observable<void> { return this.http.put<void>(this.url(`progression/accounts/${encodeURIComponent(accountId)}/skylab/collectors/${encodeURIComponent(collectorId)}`), { readyAt }); }
   setRefineryReadyAt(accountId: string, readyAt: string): Observable<void> { return this.http.put<void>(this.url(`progression/accounts/${encodeURIComponent(accountId)}/skylab/refinery`), { readyAt }); }
+  completeCollectorTimer(accountId: string, collectorId: string): Observable<void> { return this.http.post<void>(this.url(`progression/accounts/${encodeURIComponent(accountId)}/skylab/collectors/${encodeURIComponent(collectorId)}/complete-timer`), {}); }
+  completeRefineryTimer(accountId: string): Observable<void> { return this.http.post<void>(this.url(`progression/accounts/${encodeURIComponent(accountId)}/skylab/refinery/complete-timer`), {}); }
   getGateStates(accountId: string): Observable<GateState[]> { return this.http.get<GateState[]>(this.url(`progression/accounts/${encodeURIComponent(accountId)}/gates`)); }
   setGateState(accountId: string, gate: GateState): Observable<void> { return this.http.put<void>(this.url(`progression/accounts/${encodeURIComponent(accountId)}/gates/${encodeURIComponent(gate.gateId)}`), gate); }
+  resetGateWave(accountId: string, gateId: string): Observable<void> { return this.http.post<void>(this.url(`progression/accounts/${encodeURIComponent(accountId)}/gates/${encodeURIComponent(gateId)}/reset-wave`), {}); }
+  completeGateWave(accountId: string, gateId: string): Observable<void> { return this.http.post<void>(this.url(`progression/accounts/${encodeURIComponent(accountId)}/gates/${encodeURIComponent(gateId)}/complete-wave`), {}); }
   getStation(clanId: string): Observable<StationModule[]> { return this.http.get<StationModule[]>(this.url(`progression/clans/${encodeURIComponent(clanId)}/station`)); }
   setStation(clanId: string, module: StationModule): Observable<void> { return this.http.put<void>(this.url(`progression/clans/${encodeURIComponent(clanId)}/station/${encodeURIComponent(module.moduleId)}`), module); }
   getClanRelations(clanId: string): Observable<ClanRelation[]> { return this.http.get<ClanRelation[]>(this.url(`progression/clans/${encodeURIComponent(clanId)}/relations`)); }

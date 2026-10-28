@@ -115,6 +115,10 @@ const SLASH_COMMANDS = [
   { cmd: '/announce', usage: '/announce <message>', desc: 'Broadcast a server announcement to all pilots' },
   { cmd: '/status', usage: '/status [map]', desc: 'Show active pilots, maps, and world state' },
   { cmd: '/mesh', usage: '/mesh [status|scale|rebalance|drain|activate]', desc: 'Inspect or control the server mesh' },
+  { cmd: '/hangar', usage: '/hangar <account-uuid> [slot]', desc: 'Inspect or switch the active hangar' },
+  { cmd: '/skylab', usage: '/skylab <account-uuid> [collector <id>|refinery] [ready|ISO-date]', desc: 'Inspect jobs or set/complete timers' },
+  { cmd: '/gate', usage: '/gate <account-uuid> [gate-id] [reset|complete]', desc: 'Inspect runs or reset/complete the current wave' },
+  { cmd: '/clan', usage: '/clan <clan-id> [station|relations] [module/other-clan] [level/status] [ready-at/proposer]', desc: 'Inspect or update station and diplomacy' },
   { cmd: '/ai', usage: '/ai <natural language request>', desc: 'Translate natural English into server admin commands' },
   { cmd: '/help', usage: '/help', desc: 'Show available slash commands, aliases, and AI examples' },
   { cmd: '/exit', usage: '/exit', desc: 'Exit the interactive admin CLI' },
@@ -123,6 +127,53 @@ const SLASH_COMMANDS = [
 const CURRENCIES = ['uridium', 'credits', 'xp', 'honor', 'experience', 'galaxy_energy', 'prometium', 'endurium', 'terbium'];
 const SPAWN_KINDS = ['streuner', 'lordakia', 'saimon', 'box', 'ore', 'mordon', 'devolarium', 'sibelon', 'kristallin', 'kristallon', 'cubikon'];
 const MAP_TOKENS = ['1-1', '1-2', '1-3', '1-4', '2-1', '2-2', '2-3', '2-4', '3-1', '3-2', '3-3', '3-4', '4-1', '4-2', '4-3', '4-4'];
+const GATE_IDS = ['alpha', 'beta', 'gamma', 'delta', 'epsilon'];
+const COLLECTOR_IDS = ['prometium', 'endurium', 'terbium'];
+
+export function buildProgressionRequest(line) {
+  const [command, id, ...args] = line.trim().split(/\s+/);
+  if (!['/hangar', '/skylab', '/gate', '/clan'].includes(command?.toLowerCase())) return null;
+  const fail = message => ({ error: message });
+  const account = command.toLowerCase() !== '/clan';
+  if (!id || account && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+    return fail(account ? 'Expected an account UUID.' : 'Expected a clan ID.');
+  const path = account ? `accounts/${encodeURIComponent(id)}` : `clans/${encodeURIComponent(id)}`;
+  const request = (suffix, method = 'GET', body) => ({ path: `${path}/${suffix}`, method, body });
+  switch (command.toLowerCase()) {
+    case '/hangar':
+      if (!args.length) return request('hangar');
+      return /^[12]$/.test(args[0]) && args.length === 1 ? request('hangar', 'PUT', { slot: Number(args[0]) }) : fail('Usage: /hangar <account-uuid> [1|2]');
+    case '/skylab': {
+      if (!args.length) return request('skylab');
+      const [kind, collector, value] = args;
+      const isCollector = kind === 'collector' && COLLECTOR_IDS.includes(collector);
+      const timer = isCollector ? `skylab/collectors/${collector}` : kind === 'refinery' ? 'skylab/refinery' : null;
+      const input = isCollector ? value : collector;
+      if (!timer || !input || args.length !== (isCollector ? 3 : 2)) return fail('Usage: /skylab <account-uuid> collector <id> ready|ISO-date, or refinery ready|ISO-date');
+      if (input === 'ready') return request(`${timer}/complete-timer`, 'POST');
+      const date = new Date(input);
+      return Number.isNaN(date.getTime()) ? fail('Expected an ISO date or ready.') : request(timer, 'PUT', { readyAt: date.toISOString() });
+    }
+    case '/gate': {
+      if (!args.length) return request('gates');
+      const [gate, action] = args;
+      if (!GATE_IDS.includes(gate) || !['reset', 'complete'].includes(action) || args.length !== 2) return fail('Usage: /gate <account-uuid> <alpha|beta|gamma|delta|epsilon> <reset|complete>');
+      return request(`gates/${gate}/${action === 'reset' ? 'reset-wave' : 'complete-wave'}`, 'POST');
+    }
+    case '/clan': {
+      const [kind, target, value, extra] = args;
+      if (kind === 'station' && args.length === 1) return request('station');
+      if (kind === 'relations' && args.length === 1) return request('relations');
+      if (kind === 'station' && ['hull', 'defense', 'relay'].includes(target) && /^[0-3]$/.test(value) && args.length <= 4) {
+        const readyAt = extra ? new Date(extra) : null;
+        return extra && Number.isNaN(readyAt.getTime()) ? fail('Expected an ISO date.') : request(`station/${target}`, 'PUT', { level: Number(value), readyAt: readyAt?.toISOString() ?? null });
+      }
+      if (kind === 'relations' && target && ['pending', 'allied', 'war'].includes(value) && extra && args.length === 4)
+        return request(`relations/${encodeURIComponent(target)}`, 'PUT', { status: value, proposer: extra });
+      return fail('Usage: /clan <id> station [hull|defense|relay <level> [ISO-date]], or relations [other-clan pending|allied|war proposer]');
+    }
+  }
+}
 
 // â”€â”€â”€ CLI Argument Parsing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function parseArgs(argv) {
@@ -691,6 +742,24 @@ class AdminApiClient {
   }
 
   async executeCommand(rawOrWireCommand) {
+    const progression = buildProgressionRequest(rawOrWireCommand);
+    if (progression) {
+      if (progression.error) return { ok: false, wireCommand: rawOrWireCommand, error: progression.error };
+      await this.ensureToken();
+      if (!this.token) return { ok: false, wireCommand: rawOrWireCommand, error: `Server at ${this.baseUri} is unreachable or not running.` };
+      try {
+        const res = await fetch(`${this.baseUri}/api/v1/backoffice/progression/${progression.path}`, {
+          method: progression.method,
+          headers: { Authorization: `Bearer ${this.token}`, ...(progression.body ? { 'Content-Type': 'application/json' } : {}) },
+          ...(progression.body ? { body: JSON.stringify(progression.body) } : {}),
+          signal: AbortSignal.timeout(8000),
+        });
+        const body = await res.text();
+        let data = body || 'State updated.';
+        try { data = JSON.parse(body); } catch {}
+        return { ok: res.ok, status: res.status, wireCommand: rawOrWireCommand, data, error: res.ok ? null : body || `HTTP ${res.status}` };
+      } catch (err) { return { ok: false, wireCommand: rawOrWireCommand, error: err?.message || String(err) }; }
+    }
     const wire = normalizeAdminCommand(rawOrWireCommand);
     await this.ensureToken();
     if (!this.token) {
@@ -786,6 +855,16 @@ export function getCompletions(line, variables = BUILTIN_VARIABLES) {
   }
 
   // Currency completion for /grant <currency>
+  if (cmd === '/gate' && argIndex === 2) return { hits: GATE_IDS.filter(x => x.startsWith(currentToken)).map(x => prefixBeforeToken + x + ' '), token: line };
+  if (cmd === '/gate' && argIndex === 3) return { hits: ['reset', 'complete'].filter(x => x.startsWith(currentToken)).map(x => prefixBeforeToken + x), token: line };
+  if (cmd === '/skylab' && argIndex === 2) return { hits: ['collector', 'refinery'].filter(x => x.startsWith(currentToken)).map(x => prefixBeforeToken + x + ' '), token: line };
+  if (cmd === '/skylab' && argIndex === 3 && parts[2] === 'collector') return { hits: COLLECTOR_IDS.filter(x => x.startsWith(currentToken)).map(x => prefixBeforeToken + x + ' '), token: line };
+  if (cmd === '/skylab' && (argIndex === 3 && parts[2] === 'refinery' || argIndex === 4 && parts[2] === 'collector')) return { hits: ['ready'].filter(x => x.startsWith(currentToken)).map(x => prefixBeforeToken + x), token: line };
+  if (cmd === '/clan' && argIndex === 2) return { hits: ['station', 'relations'].filter(x => x.startsWith(currentToken)).map(x => prefixBeforeToken + x + ' '), token: line };
+  if (cmd === '/clan' && argIndex === 3 && parts[2] === 'station') return { hits: ['hull', 'defense', 'relay'].filter(x => x.startsWith(currentToken)).map(x => prefixBeforeToken + x + ' '), token: line };
+  if (cmd === '/clan' && argIndex === 4 && parts[2] === 'station') return { hits: ['0', '1', '2', '3'].filter(x => x.startsWith(currentToken)).map(x => prefixBeforeToken + x), token: line };
+  if (cmd === '/clan' && argIndex === 4 && parts[2] === 'relations') return { hits: ['pending', 'allied', 'war'].filter(x => x.startsWith(currentToken)).map(x => prefixBeforeToken + x + ' '), token: line };
+  if (cmd === '/hangar' && argIndex === 2) return { hits: ['1', '2'].filter(x => x.startsWith(currentToken)).map(x => prefixBeforeToken + x), token: line };
   if (cmd === '/grant' && argIndex === 1) {
     const matching = CURRENCIES.filter(c => c.startsWith(currentToken));
     return { hits: matching.map(c => prefixBeforeToken + c + ' '), token: line };

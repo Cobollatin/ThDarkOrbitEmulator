@@ -27,12 +27,14 @@ import { BackofficeApiService, ActiveHangarState, SkylabState, GateState, Statio
           @for (job of state.collectors; track job.collectorId) {
             <div class="flex flex-wrap items-center gap-2">{{ job.collectorId }} · level {{ job.expectedLevel }}
               <input [attr.aria-label]="job.collectorId + ' ready at'" type="datetime-local" class="bg-slate-800 p-2" [ngModel]="toLocal(job.readyAt)" (ngModelChange)="job.readyAt = fromLocal($event)">
-              <button class="text-sky-300 underline" (click)="saveCollector(job.collectorId, job.readyAt)">Set deadline</button></div>
+              <button class="text-sky-300 underline" (click)="saveCollector(job.collectorId, job.readyAt)">Set deadline</button>
+              <button class="text-sky-300 underline" (click)="completeCollectorTimer(job.collectorId)">Complete timer</button></div>
           }
           @if (state.refinery; as refinery) {
             <div class="flex flex-wrap items-center gap-2">Refinery
               <input aria-label="Refinery ready at" type="datetime-local" class="bg-slate-800 p-2" [ngModel]="toLocal(refinery.readyAt)" (ngModelChange)="refinery.readyAt = fromLocal($event)">
-              <button class="text-sky-300 underline" (click)="saveRefinery(refinery.readyAt)">Set deadline</button></div>
+              <button class="text-sky-300 underline" (click)="saveRefinery(refinery.readyAt)">Set deadline</button>
+              <button class="text-sky-300 underline" (click)="completeRefineryTimer()">Complete timer</button></div>
           }
         }
         <h4>Galaxy Gate runs</h4>
@@ -46,6 +48,8 @@ import { BackofficeApiService, ActiveHangarState, SkylabState, GateState, Statio
               <label>Ship HP <input aria-label="Gate ship HP" type="number" min="0" max="1000" class="w-20 bg-slate-800" [(ngModel)]="gate.shipHp"></label>
               <label>Lives <input aria-label="Gate lives" type="number" min="0" max="5" class="w-16 bg-slate-800" [(ngModel)]="gate.lives"></label>
               <button class="text-sky-300 underline" (click)="saveGate(gate)">Save run</button>
+              <button class="text-sky-300 underline" (click)="resetGateWave(gate.gateId)">Reset wave</button>
+              <button class="text-sky-300 underline" (click)="completeGateWave(gate.gateId)">Complete wave</button>
             }
           </div>
         }
@@ -96,7 +100,11 @@ export class ProgressionComponent {
   async activate(slot: number): Promise<void> { await this.change(() => firstValueFrom(this.api.setActiveHangar(this.accountId, slot)), () => this.loadPlayer()); }
   async saveCollector(id: string, readyAt: string): Promise<void> { await this.change(() => firstValueFrom(this.api.setCollectorReadyAt(this.accountId, id, readyAt)), () => this.loadPlayer()); }
   async saveRefinery(readyAt: string): Promise<void> { await this.change(() => firstValueFrom(this.api.setRefineryReadyAt(this.accountId, readyAt)), () => this.loadPlayer()); }
+  async completeCollectorTimer(id: string): Promise<void> { await this.change(() => firstValueFrom(this.api.completeCollectorTimer(this.accountId, id)), () => this.loadPlayer()); }
+  async completeRefineryTimer(): Promise<void> { await this.change(() => firstValueFrom(this.api.completeRefineryTimer(this.accountId)), () => this.loadPlayer()); }
   async saveGate(gate: GateState): Promise<void> { await this.change(() => firstValueFrom(this.api.setGateState(this.accountId, gate)), () => this.loadPlayer()); }
+  async resetGateWave(id: string): Promise<void> { await this.change(() => firstValueFrom(this.api.resetGateWave(this.accountId, id)), () => this.loadPlayer()); }
+  async completeGateWave(id: string): Promise<void> { await this.change(() => firstValueFrom(this.api.completeGateWave(this.accountId, id)), () => this.loadPlayer()); }
   async saveStation(module: StationModule): Promise<void> { await this.change(() => firstValueFrom(this.api.setStation(this.clanId, module)), () => this.loadClan()); }
   async saveRelation(relation: ClanRelation): Promise<void> { await this.change(() => firstValueFrom(this.api.setClanRelation(this.clanId, relation)), () => this.loadClan()); }
   private async change(save: () => Promise<void>, reload: () => Promise<void>): Promise<void> {

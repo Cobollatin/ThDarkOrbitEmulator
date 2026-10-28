@@ -31,6 +31,10 @@ public static class ProgressionBackofficeEndpoints
             LocalSkylab.IsCollector(collectorId) && await store.SetCollectorReadyAtAsync(accountId, collectorId, input.ReadyAt, ct) ? Results.NoContent() : Results.NotFound());
         admin.MapPut("/accounts/{accountId:guid}/skylab/refinery", async (Guid accountId, TimerOverride input, ProgressionBackofficeStore store, CancellationToken ct) =>
             await store.SetRefineryReadyAtAsync(accountId, input.ReadyAt, ct) ? Results.NoContent() : Results.NotFound());
+        admin.MapPost("/accounts/{accountId:guid}/skylab/collectors/{collectorId}/complete-timer", async (Guid accountId, string collectorId, ProgressionBackofficeStore store, CancellationToken ct) =>
+            LocalSkylab.IsCollector(collectorId) && await store.SetCollectorReadyAtAsync(accountId, collectorId, DateTimeOffset.UtcNow, ct) ? Results.NoContent() : Results.NotFound());
+        admin.MapPost("/accounts/{accountId:guid}/skylab/refinery/complete-timer", async (Guid accountId, ProgressionBackofficeStore store, CancellationToken ct) =>
+            await store.SetRefineryReadyAtAsync(accountId, DateTimeOffset.UtcNow, ct) ? Results.NoContent() : Results.NotFound());
         admin.MapGet("/accounts/{accountId:guid}/gates", (Guid accountId, ProgressionBackofficeStore store, CancellationToken ct) => store.GatesAsync(accountId, ct));
         admin.MapPut("/accounts/{accountId:guid}/gates/{gateId}", async (Guid accountId, string gateId, GateOverride input, ProgressionBackofficeStore store, CancellationToken ct) =>
         {
@@ -38,6 +42,12 @@ public static class ProgressionBackofficeEndpoints
             if (wave is null || input.Kills < 0 || input.Kills >= wave.Count || input.NpcHp is < 1 or > 1000 || input.ShipHp is < 0 or > 1000 || input.Lives is < 0 or > 5) return Results.BadRequest();
             return await store.SetGateAsync(accountId, gateId, input, ct) ? Results.NoContent() : Results.NotFound();
         });
+        admin.MapPost("/accounts/{accountId:guid}/gates/{gateId}/reset-wave", async (Guid accountId, string gateId, ProgressionBackofficeStore store, CancellationToken ct) =>
+            EconomyStore.GateWaveAt(gateId, 0) is null ? Results.BadRequest() :
+                await store.ChangeGateWaveAsync(accountId, gateId, false, ct) ? Results.NoContent() : Results.NotFound());
+        admin.MapPost("/accounts/{accountId:guid}/gates/{gateId}/complete-wave", async (Guid accountId, string gateId, ProgressionBackofficeStore store, CancellationToken ct) =>
+            EconomyStore.GateWaveAt(gateId, 0) is null ? Results.BadRequest() :
+                await store.ChangeGateWaveAsync(accountId, gateId, true, ct) ? Results.NoContent() : Results.NotFound());
         admin.MapGet("/clans/{clanId}/station", (string clanId, ProgressionBackofficeStore store, CancellationToken ct) => store.StationAsync(clanId, ct));
         admin.MapPut("/clans/{clanId}/station/{moduleId}", async (string clanId, string moduleId, StationOverride input, ProgressionBackofficeStore store, CancellationToken ct) =>
             moduleId is not ("hull" or "defense" or "relay") || input.Level is < 0 or > 3 ? Results.BadRequest() :
@@ -84,6 +94,12 @@ public sealed class ProgressionBackofficeStore(IConfiguration configuration)
     public Task<bool> SetGateAsync(Guid accountId, string gateId, GateOverride value, CancellationToken ct) =>
         UpdateAsync("UPDATE economy.gate_runs SET wave=@wave,kills=@kills,npc_hp=@npc,ship_hp=@ship,lives=@lives WHERE account_id=@a AND gate_id=@g AND completed_at IS NULL", ct,
             ("a", accountId), ("g", gateId), ("wave", value.Wave), ("kills", value.Kills), ("npc", value.NpcHp), ("ship", value.ShipHp), ("lives", value.Lives));
+    // Admin state correction: completion does not pay gameplay rewards or create achievements.
+    public Task<bool> ChangeGateWaveAsync(Guid accountId, string gateId, bool complete, CancellationToken ct) =>
+        UpdateAsync(complete
+            ? "UPDATE economy.gate_runs SET wave=wave+1,kills=0,npc_hp=1000,completed_at=CASE WHEN wave=total_waves-1 THEN now() ELSE NULL END WHERE account_id=@a AND gate_id=@g AND completed_at IS NULL AND wave>=0 AND wave<total_waves"
+            : "UPDATE economy.gate_runs SET kills=0,npc_hp=1000 WHERE account_id=@a AND gate_id=@g AND completed_at IS NULL AND wave>=0 AND wave<total_waves", ct,
+            ("a", accountId), ("g", gateId));
     public Task<bool> SetStationAsync(string clanId, string moduleId, StationOverride value, CancellationToken ct) =>
         UpdateAsync("UPDATE economy.clan_station_modules SET level=@level,ready_at=@ready WHERE clan_id=@c AND module_id=@m", ct,
             ("c", clanId), ("m", moduleId), ("level", value.Level), ("ready", value.ReadyAt));

@@ -20,5 +20,6 @@
 - `ApiService/Features/Economy/EconomyClanOperations.cs` and `IndexInternal/InternalStart/LocalClanOperations.cs`: Task 7 leader-scoped diplomacy and station modules; migration `032_clan_diplomacy_stations.*.pgsql`; PostgreSQL coverage in `LocalClanPostgresTests.cs`.
 - `IndexInternal/InternalStart/LocalHangarEquipmentSelection.cs` and `EconomyStore.cs`: Task 7 atomic Dock transfer between ships, covered by `EconomyPostgresTests.cs`.
 - `ApiService/Features/Backoffice/Progression/ProgressionBackofficeEndpoints.cs`: admin-only inspection and bounded overrides for active hangars, Skylab job deadlines, unfinished Galaxy Gate combat state, clan station modules, and diplomacy records. The Angular `Cms/src/app/features/backoffice/progression/` view consumes these routes; `ProgressionBackofficePostgresTests.cs` covers persisted HTTP behavior.
+- `scripts/admin/Start-AdminCli.ps1` launches `scripts/admin/admin-cli.mjs`; `/hangar`, `/skylab`, `/gate`, and `/clan` call the progression backoffice routes directly with Tab suggestions. Progression now exposes explicit Skylab timer readiness and Galaxy Gate wave reset/completion actions; `ThDarkOrbitEmulator.Tests/Backoffice/AdminCliProgressionTests.cs` covers CLI parsing and completion.
 
 Read the relevant feature directory and documentation before broader searches. Update this index when adding or moving modules.

@@ -907,7 +907,7 @@ public class BackofficeAndPlaceholderCmsSpecificationTests
             .Select(m => Normalize("backoffice/cockpit/" + m.Groups[1].Value));
         backofficeRoutes.UnionWith(cockpitRoutes);
         var progressionRoutes = Regex.Matches(File.ReadAllText(Path.Combine(FeaturesRoot, "Backoffice", "Progression", "ProgressionBackofficeEndpoints.cs")),
-                @"admin\.Map(?:Get|Put)\(""/([^""]+)""")
+                @"admin\.Map(?:Get|Post|Put)\(""/([^""]+)""")
             .Select(m => Normalize("backoffice/progression/" + m.Groups[1].Value));
         backofficeRoutes.UnionWith(progressionRoutes);
         var economyRoutes = Regex.Matches(File.ReadAllText(Path.Combine(FeaturesRoot, "Economy", "EconomyAdminEndpoints.cs")),

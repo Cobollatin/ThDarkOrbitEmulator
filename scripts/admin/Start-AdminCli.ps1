@@ -9,6 +9,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $env:NODE_TLS_REJECT_UNAUTHORIZED = '0'
 
+# The Node entry point owns the interactive command catalog and Tab completion,
+# including /hangar, /skylab, /gate, and /clan progression routes.
 $cliMjs = Join-Path $PSScriptRoot 'admin-cli.mjs'
 if (-not (Test-Path $cliMjs)) {
     throw "Could not find $cliMjs"
