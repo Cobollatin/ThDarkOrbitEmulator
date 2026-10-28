@@ -50,15 +50,20 @@ public static class LocalProgressionPanel
     public static async Task<string> GatesAsync(GameAuthSession session, LocalGalaxyGateState state,
         EconomyStore economy, DateTimeOffset now, CancellationToken ct)
     {
-        var html = new StringBuilder("<section id=\"gateWaves\"><h2>Gate waves</h2><p>Local provisional progression: three waves per activated gate.</p>");
+        var html = new StringBuilder("<section id=\"gateWaves\"><h2>Gate waves</h2><p>Defeat every NPC in each wave. A destroyed ship loses one life.</p>");
         foreach (var gate in state.Gates.Where(g => g.Activated))
         {
-            var run = await economy.GateRunAsync(session.AccountId, gate.Id, ct);
+            var run = await economy.GateCombatAsync(session.AccountId, gate.Id, ct);
             if (run is null) continue;
-            html.Append($"<p>{HtmlEncoder.Default.Encode(gate.Name)}: {run.Wave}/{run.TotalWaves} waves complete.</p>");
-            if (run.CompletedAt is null) html.Append(Form(session, "internalGalaxyGateWave", gate.Id, run.Wave.ToString(),
-                $"<input type=\"hidden\" name=\"gate\" value=\"{gate.Id}\"><input type=\"hidden\" name=\"wave\" value=\"{run.Wave}\">",
-                "Complete next wave", now));
+            html.Append(run.CompletedAt is not null
+                ? $"<p>{HtmlEncoder.Default.Encode(gate.Name)}: {run.Wave}/{run.TotalWaves} waves complete; ring earned.</p>"
+                : $"<p>{HtmlEncoder.Default.Encode(gate.Name)}: {run.Wave}/{run.TotalWaves} waves complete; {run.Npc} {run.Kills}/{run.Required}; ship HP {run.ShipHp}; lives {run.Lives}.</p>");
+            if (run.CompletedAt is null && run.Lives > 0 && run.Required > 0)
+            {
+                html.Append(Form(session, "internalGalaxyGateAttack", gate.Id, run.Wave.ToString(),
+                    $"<input type=\"hidden\" name=\"gate\" value=\"{gate.Id}\"><input type=\"hidden\" name=\"wave\" value=\"{run.Wave}\">",
+                    "Fire at next NPC", now));
+            }
         }
         return html.Append("</section>").ToString();
     }

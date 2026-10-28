@@ -48,6 +48,25 @@ public sealed class LocalGalaxyGatePostgresTests
     public async Task StopAsync() => await _postgres.DisposeAsync();
 
     [Test]
+    public void GateCatalog_HasTenOrderedNpcWavesForEachRequestedGate()
+    {
+        var kinds = new[] { "Streuner", "Lordakia", "Mordon", "Saimon", "Devolarium",
+            "Kristallin", "Sibelon", "Sibelonit", "Kristallon", "Small Kubikon" };
+        foreach (var gate in new[] { "alpha", "beta", "gamma" })
+        {
+            Assert.That(Enumerable.Range(0, 10).Select(w => EconomyStore.GateWaveAt(gate, w)!.Npc), Is.EqualTo(kinds));
+            Assert.That(EconomyStore.GateWaveAt(gate, 10), Is.Null);
+        }
+        Assert.That(EconomyStore.GateWaveAt("alpha", 7)!.Count, Is.EqualTo(80));
+        Assert.That(EconomyStore.GateWaveAt("beta", 2)!.Count, Is.EqualTo(40));
+        Assert.That(EconomyStore.GateWaveAt("gamma", 3)!.Count, Is.EqualTo(40));
+        Assert.That(Enumerable.Range(0, 10).Select(w => EconomyStore.GateWaveAt("delta", w)!.Count),
+            Is.EqualTo(new[] { 30, 12, 30, 13, 24, 16, 20, 11, 18, 3 }));
+        Assert.That(EconomyStore.GateWaveAt("delta", 0)!.NpcAt(5), Is.EqualTo("Mordon"));
+        Assert.That(EconomyStore.GateWaveAt("delta", 9)!.NpcAt(0), Is.EqualTo("demaNeR"));
+    }
+
+    [Test]
     public async Task FirstRead_ImportsStarterEnergyOnceWithoutGateRows()
     {
         var harness = await HarnessAsync();
@@ -65,7 +84,7 @@ public sealed class LocalGalaxyGatePostgresTests
     }
 
     [Test]
-    public async Task ActivatedGate_ProgressesThreeDurableWavesOnceEach()
+    public async Task ActivatedGate_RequiresNpcKillsAndDeductsLifeOnShipDestruction()
     {
         var h = await HarnessAsync();
         var ct = TestContext.CurrentContext.CancellationToken;
@@ -74,14 +93,124 @@ public sealed class LocalGalaxyGatePostgresTests
         Assert.That(activation.Response.StatusCode, Is.EqualTo(StatusCodes.Status303SeeOther), Body(activation));
         var id = h.Session.AccountId;
         var other = new EconomyStore(_config);
-        Assert.That(await other.GateRunAsync(id, "alpha", ct), Is.EqualTo(new GateRun(0, 3, null)));
-        Assert.That(await h.Economy.AdvanceGateWaveAsync(id, "alpha", 0, Start, "wave-1", ct), Is.EqualTo(ProgressionChange.Applied));
-        Assert.That(await other.AdvanceGateWaveAsync(id, "alpha", 0, Start, "wave-1", ct), Is.EqualTo(ProgressionChange.Conflict));
-        Assert.That(await other.AdvanceGateWaveAsync(id, "alpha", 1, Start.AddMinutes(1), "wave-2", ct), Is.EqualTo(ProgressionChange.Applied));
-        Assert.That(await other.AdvanceGateWaveAsync(id, "alpha", 2, Start.AddMinutes(2), "wave-3", ct), Is.EqualTo(ProgressionChange.Applied));
-        Assert.That(await h.Economy.GateRunAsync(id, "alpha", ct), Is.EqualTo(new GateRun(3, 3, Start.AddMinutes(2))));
-        Assert.That(await other.AdvanceGateWaveAsync(id, "alpha", 2, Start.AddMinutes(3), "wave-4", ct), Is.EqualTo(ProgressionChange.Conflict));
+        Assert.That(await other.GateRunAsync(id, "alpha", ct), Is.EqualTo(new GateRun(0, 10, null)));
+        Assert.That(await h.Economy.AdvanceGateWaveAsync(id, "alpha", 0, Start, "forged", ct), Is.EqualTo(ProgressionChange.Conflict));
+        Assert.That(await h.Economy.AttackGateNpcAsync(id, "alpha", 0, Start, "shot-1", ct), Is.EqualTo(ProgressionChange.Applied));
+        Assert.That(await other.AttackGateNpcAsync(id, "alpha", 0, Start, "shot-1", ct), Is.EqualTo(ProgressionChange.Conflict));
+        Assert.That((await other.GateCombatAsync(id, "alpha", ct))!.Kills, Is.EqualTo(1));
+        Assert.That(await h.Economy.AdvanceGateWaveAsync(id, "alpha", 0, Start, "forged-2", ct), Is.EqualTo(ProgressionChange.Conflict));
+        await SetCombatAsync(id, "alpha", kills: 1, shipHp: 20);
+        Assert.That(await other.AttackGateNpcAsync(id, "alpha", 0, Start, "fatal-shot", ct), Is.EqualTo(ProgressionChange.Applied));
+        var afterDeath = await h.Economy.GateCombatAsync(id, "alpha", ct);
+        Assert.That((afterDeath!.Lives, afterDeath.ShipHp, afterDeath.Kills), Is.EqualTo((4, 1000, 2)));
+        Assert.That(await other.AttackGateNpcAsync(id, "alpha", 1, Start, "skip", ct), Is.EqualTo(ProgressionChange.Conflict));
         Assert.That(await EnergyAsync(h), Is.EqualTo(216));
+    }
+
+    [Test]
+    public async Task LastLifeLost_BlocksFurtherAttacksAndCompletionRewards()
+    {
+        var h = await HarnessAsync();
+        var ct = TestContext.CurrentContext.CancellationToken;
+        await SpinUntilAsync(h, "alpha", 34);
+        await ActivateAsync(h, h.Gates, "alpha");
+        await SetCombatAsync(h.Session.AccountId, "alpha", 0, 20, lives: 1);
+        Assert.That(await h.Economy.AttackGateNpcAsync(h.Session.AccountId, "alpha", 0, Start, "last-life", ct), Is.EqualTo(ProgressionChange.Applied));
+        Assert.That((await h.Economy.GateCombatAsync(h.Session.AccountId, "alpha", ct))!.Lives, Is.Zero);
+        Assert.That(await h.Economy.AttackGateNpcAsync(h.Session.AccountId, "alpha", 0, Start, "after-death", ct), Is.EqualTo(ProgressionChange.Conflict));
+        Assert.That(await RewardDeltaAsync(h.Session.AccountId, "alpha", "uridium"), Is.Zero);
+        Assert.That(await AchievementCountAsync(h.Session.AccountId, "alpha"), Is.Zero);
+    }
+
+    [Test]
+    public async Task SignedCombatForm_AppliesOnceAndLegacyWaveFormIsRejected()
+    {
+        var h = await HarnessAsync();
+        await SpinUntilAsync(h, "alpha", 34);
+        await ActivateAsync(h, h.Gates, "alpha");
+        var key = LocalProgressionAction.FormKey(h.Session.Dosid, "internalGalaxyGateAttack", "alpha", "0", Start);
+        var form = $"gate=alpha&wave=0&key={Uri.EscapeDataString(key)}";
+        Assert.That((await ProgressionPostAsync(h, "internalGalaxyGateAttack", form)).Response.StatusCode, Is.EqualTo(303));
+        Assert.That((await ProgressionPostAsync(h, "internalGalaxyGateAttack", form)).Response.StatusCode, Is.EqualTo(409));
+        Assert.That((await ProgressionPostAsync(h, "internalGalaxyGateWave", form)).Response.StatusCode, Is.EqualTo(400));
+        Assert.That((await h.Economy.GateCombatAsync(h.Session.AccountId, "alpha", TestContext.CurrentContext.CancellationToken))!.Kills, Is.EqualTo(1));
+    }
+
+    private static async Task<DefaultHttpContext> ProgressionPostAsync(Harness h, string action, string form)
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Method = "POST";
+        context.Request.Path = "/indexInternal.es";
+        context.Request.QueryString = new QueryString($"?action={action}");
+        context.Request.ContentType = "application/x-www-form-urlencoded";
+        context.Request.Headers.Cookie = $"dosid={h.Session.Dosid}";
+        var bytes = Encoding.UTF8.GetBytes(form);
+        context.Request.Body = new MemoryStream(bytes);
+        context.Request.ContentLength = bytes.Length;
+        context.Response.Body = new MemoryStream();
+        await LocalProgressionAction.HandleAsync(context, h.Sessions,
+            new LocalSkylabStore(NewCache(), Clock, h.Economy), h.Gates, h.Economy, Clock,
+            TestContext.CurrentContext.CancellationToken);
+        return context;
+    }
+
+    [TestCase("alpha", 34, 20000, 100000, 4000000)]
+    [TestCase("beta", 48, 40000, 200000, 8000000)]
+    [TestCase("gamma", 82, 60000, 300000, 12000000)]
+    [TestCase("delta", 96, 45000, 225000, 9000000)]
+    public async Task ClearingEachWave_GrantsCompletionRewardsAndAchievementOnce(
+        string gate, int parts, long uridium, long honor, long experience)
+    {
+        var h = await HarnessAsync();
+        var ct = TestContext.CurrentContext.CancellationToken;
+        await SpinUntilAsync(h, gate, parts);
+        Assert.That((await ActivateAsync(h, h.Gates, gate)).Response.StatusCode, Is.EqualTo(303));
+        var id = h.Session.AccountId;
+        for (var wave = 0; wave < 10; wave++)
+        {
+            var composition = EconomyStore.GateWaveAt(gate, wave)!;
+            Assert.That(composition.Count, Is.GreaterThan(1));
+            await SetCombatAsync(id, gate, kills: composition.Count - 1);
+            Assert.That(await h.Economy.AttackGateNpcAsync(id, gate, wave, Start,
+                $"{gate}-wave-{wave}", ct), Is.EqualTo(ProgressionChange.Applied));
+            Assert.That((await h.Economy.GateRunAsync(id, gate, ct))!.Wave, Is.EqualTo(wave + 1));
+        }
+        Assert.That((await h.Economy.GateRunAsync(id, gate, ct))!.CompletedAt, Is.EqualTo(Start));
+        Assert.That(await h.Economy.AttackGateNpcAsync(id, gate, 9, Start, "replay", ct), Is.EqualTo(ProgressionChange.Conflict));
+        Assert.That(await RewardDeltaAsync(id, gate, "uridium"), Is.EqualTo(uridium));
+        Assert.That(await RewardDeltaAsync(id, gate, "ucb_100"), Is.EqualTo(uridium));
+        Assert.That(await RewardDeltaAsync(id, gate, "honor"), Is.EqualTo(honor));
+        Assert.That(await RewardDeltaAsync(id, gate, "experience"), Is.EqualTo(experience));
+        Assert.That(await AchievementCountAsync(id, gate), Is.EqualTo(1));
+    }
+
+    private async Task SetCombatAsync(Guid accountId, string gate, int kills, int? shipHp = null, int? lives = null)
+    {
+        await using var db = new NpgsqlConnection(_postgres.GetConnectionString());
+        await db.OpenAsync();
+        await using var cmd = new NpgsqlCommand("UPDATE economy.gate_runs SET kills=@k,ship_hp=COALESCE(@h,ship_hp),lives=COALESCE(@l,lives) WHERE account_id=@a AND gate_id=@g", db);
+        cmd.Parameters.AddWithValue("a", accountId); cmd.Parameters.AddWithValue("g", gate);
+        cmd.Parameters.AddWithValue("k", kills); cmd.Parameters.AddWithValue("h", (object?)shipHp ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("l", (object?)lives ?? DBNull.Value);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private async Task<long> RewardDeltaAsync(Guid accountId, string gate, string asset)
+    {
+        await using var db = new NpgsqlConnection(_postgres.GetConnectionString());
+        await db.OpenAsync();
+        await using var cmd = new NpgsqlCommand("SELECT COALESCE(sum(delta),0) FROM economy.ledger WHERE account_id=@a AND menu_source=@g AND asset_id=@s AND reason='gate_complete'", db);
+        cmd.Parameters.AddWithValue("a", accountId); cmd.Parameters.AddWithValue("g", gate); cmd.Parameters.AddWithValue("s", asset);
+        return Convert.ToInt64(await cmd.ExecuteScalarAsync());
+    }
+
+    private async Task<long> AchievementCountAsync(Guid accountId, string gate)
+    {
+        await using var db = new NpgsqlConnection(_postgres.GetConnectionString());
+        await db.OpenAsync();
+        await using var cmd = new NpgsqlCommand("SELECT count(*) FROM economy.gate_achievements WHERE account_id=@a AND gate_id=@g", db);
+        cmd.Parameters.AddWithValue("a", accountId); cmd.Parameters.AddWithValue("g", gate);
+        return (long)(await cmd.ExecuteScalarAsync())!;
     }
 
     [Test]

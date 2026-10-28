@@ -10,7 +10,7 @@ public static class LocalProgressionAction
     public static readonly IReadOnlySet<string> Actions = new HashSet<string>(StringComparer.Ordinal)
     {
         "internalSkylabUpgradeStart", "internalSkylabUpgradeFinish", "internalSkylabRefineStart",
-        "internalSkylabRefineClaim", "internalGalaxyGateWave"
+        "internalSkylabRefineClaim", "internalGalaxyGateAttack"
     };
 
     public static string FormKey(string dosid, string action, string target, string expected, DateTimeOffset now) =>
@@ -37,7 +37,7 @@ public static class LocalProgressionAction
         catch (Exception ex) when (ex is InvalidDataException or IOException or InvalidOperationException)
         { await ErrorAsync(context, 400, "Invalid form.", ct); return; }
         var collectorAction = action is "internalSkylabUpgradeStart" or "internalSkylabUpgradeFinish";
-        var waveAction = action == "internalGalaxyGateWave";
+        var waveAction = action == "internalGalaxyGateAttack";
         var target = collectorAction ? form["collector"].ToString() : waveAction ? form["gate"].ToString() : "refinery";
         var expected = action is "internalSkylabUpgradeStart" ? form["level"].ToString()
             : waveAction ? form["wave"].ToString() : "0";
@@ -45,7 +45,7 @@ public static class LocalProgressionAction
         {
             "internalSkylabUpgradeStart" => new[] { "collector", "level", "key" },
             "internalSkylabUpgradeFinish" => ["collector", "key"],
-            "internalGalaxyGateWave" => ["gate", "wave", "key"],
+            "internalGalaxyGateAttack" => ["gate", "wave", "key"],
             _ => new[] { "key" }
         };
         var now = clock.GetUtcNow();
@@ -54,7 +54,8 @@ public static class LocalProgressionAction
             || waveAction && !LocalGalaxyGates.Catalog.Any(g => g.Id == target)
             || action == "internalSkylabUpgradeStart" && (!int.TryParse(expected, out var level) || level is < 1 or > 9)
             || waveAction && (!int.TryParse(expected, out var wave) || wave is < 0 or >= EconomyStore.GalaxyGateWaveCount)
-            || !LocalSkylabAction.ValidProgressionKey(session.Dosid, $"{action}:{target}", expected, form["key"].ToString(), now))
+            || !LocalSkylabAction.ValidProgressionKey(session.Dosid, $"{action}:{target}",
+                expected, form["key"].ToString(), now))
         { await ErrorAsync(context, 400, "The form is invalid or expired.", ct); return; }
         if (collectorAction || action is "internalSkylabRefineStart" or "internalSkylabRefineClaim")
             await skylab.GetAsync(session.AccountId, ct);
@@ -66,7 +67,7 @@ public static class LocalProgressionAction
             "internalSkylabUpgradeFinish" => await economy.FinishCollectorUpgradeAsync(session.AccountId, target, now, key, ct),
             "internalSkylabRefineStart" => await economy.StartRefineryAsync(session.AccountId, now, key, ct),
             "internalSkylabRefineClaim" => await economy.ClaimRefineryAsync(session.AccountId, now, key, ct),
-            _ => await economy.AdvanceGateWaveAsync(session.AccountId, target, int.Parse(expected), now, key, ct)
+            _ => await economy.AttackGateNpcAsync(session.AccountId, target, int.Parse(expected), now, key, ct)
         };
         if (result != ProgressionChange.Applied)
         {
@@ -81,7 +82,7 @@ public static class LocalProgressionAction
         }
         context.Response.StatusCode = StatusCodes.Status303SeeOther;
         context.Response.Headers.CacheControl = "no-store";
-        context.Response.Headers.Location = action == "internalGalaxyGateWave"
+        context.Response.Headers.Location = action == "internalGalaxyGateAttack"
             ? "/indexInternal.es?action=internalGalaxyGates&gate=" + target
             : "/indexInternal.es?action=internalSkylab";
     }

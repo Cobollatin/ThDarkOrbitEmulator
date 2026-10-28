@@ -11,7 +11,7 @@ public sealed record GateRun(int Wave, int TotalWaves, DateTimeOffset? Completed
 
 public sealed partial class EconomyStore
 {
-    public const int GalaxyGateWaveCount = 3;
+    public const int GalaxyGateWaveCount = 10;
 
     private static async Task<bool> PendingCollectorUpgradeAsync(NpgsqlConnection db, NpgsqlTransaction tx,
         Guid accountId, string collectorId, CancellationToken ct)
@@ -175,30 +175,8 @@ public sealed partial class EconomyStore
             rows.IsDBNull(2) ? null : rows.GetFieldValue<DateTimeOffset>(2)) : null;
     }
 
-    public async Task<ProgressionChange> AdvanceGateWaveAsync(Guid accountId, string gateId,
-        int expectedWave, DateTimeOffset now, string key, CancellationToken ct)
-    {
-        if (accountId == Guid.Empty || !IndexInternal.InternalStart.LocalGalaxyGates.Catalog.Any(g => g.Id == gateId)
-            || expectedWave is < 0 or >= GalaxyGateWaveCount || string.IsNullOrWhiteSpace(key)) return ProgressionChange.Invalid;
-        await using var db = Connection(); await db.OpenAsync(ct);
-        await using var tx = await db.BeginTransactionAsync(ct);
-        await LockAccountAsync(db, tx, accountId, ct);
-        await using (var replay = new NpgsqlCommand("SELECT 1 FROM economy.gate_wave_actions WHERE account_id=@a AND action_key=@k", db, tx))
-        {
-            replay.Parameters.AddWithValue("a", accountId); replay.Parameters.AddWithValue("k", key);
-            if (await replay.ExecuteScalarAsync(ct) is not null) return ProgressionChange.Conflict;
-        }
-        await using (var update = new NpgsqlCommand("UPDATE economy.gate_runs SET wave=wave+1,completed_at=CASE WHEN wave+1=total_waves THEN @now ELSE NULL END WHERE account_id=@a AND gate_id=@g AND wave=@wave AND completed_at IS NULL", db, tx))
-        {
-            update.Parameters.AddWithValue("a", accountId); update.Parameters.AddWithValue("g", gateId);
-            update.Parameters.AddWithValue("wave", expectedWave); update.Parameters.AddWithValue("now", now);
-            if (await update.ExecuteNonQueryAsync(ct) != 1) return ProgressionChange.Conflict;
-        }
-        await using (var action = new NpgsqlCommand("INSERT INTO economy.gate_wave_actions(account_id,action_key) VALUES (@a,@k)", db, tx))
-        {
-            action.Parameters.AddWithValue("a", accountId); action.Parameters.AddWithValue("k", key);
-            await action.ExecuteNonQueryAsync(ct);
-        }
-        await tx.CommitAsync(ct); return ProgressionChange.Applied;
-    }
+    // Legacy menu calls carry no NPC kill evidence. Only AttackGateNpcAsync may progress a run.
+    public Task<ProgressionChange> AdvanceGateWaveAsync(Guid accountId, string gateId,
+        int expectedWave, DateTimeOffset now, string key, CancellationToken ct) =>
+        Task.FromResult(ProgressionChange.Conflict);
 }

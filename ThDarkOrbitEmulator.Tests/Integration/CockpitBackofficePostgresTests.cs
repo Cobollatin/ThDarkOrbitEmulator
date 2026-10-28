@@ -10,6 +10,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Testcontainers.PostgreSql;
 using ThDarkOrbitEmulator.ApiService.Features.UnityApi.Login;
+using ThDarkOrbitEmulator.ApiService.Features.GameAuth;
+using ThDarkOrbitEmulator.ApiService.Features.IndexInternal.InternalStart;
 using ThDarkOrbitEmulator.Identity.Infrastructure;
 using ThDarkOrbitEmulator.ServiceDefaults.Authorization;
 
@@ -47,6 +49,8 @@ public sealed class CockpitBackofficePostgresTests
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Services.AddSingleton<IConfiguration>(config);
         builder.Services.AddSingleton<CockpitCatalogStore>();
+        builder.Services.AddSingleton<IGameAuthSessionStore, GameAuthSessionStore>();
+        builder.Services.AddSingleton<LocalHangarStore>();
         builder.Services.AddAuthentication("Test").AddScheme<AuthenticationSchemeOptions, AdminAuthHandler>("Test", _ => { });
         builder.Services.AddAuthorization(options =>
             options.AddPolicy(EmulatorRoles.Admin, policy => policy.RequireRole(EmulatorRoles.Admin)));
