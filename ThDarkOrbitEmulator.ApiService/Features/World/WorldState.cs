@@ -117,6 +117,7 @@ public sealed record WorldPresence(WorldPilot Pilot, DateTimeOffset SeenAtUtc);
 public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex? meshMutex = null,
     IRuntimeVariableRegistry? variables = null, TimeProvider? clock = null, EconomyStore? economy = null)
 {
+    private readonly TimeProvider combatClock = clock ?? TimeProvider.System;
     private readonly ConcurrentDictionary<int, ConcurrentDictionary<long, WorldPilot>> connected = new();
     private readonly ConcurrentDictionary<long, WorldConnection> connections = new();
     private readonly ConcurrentDictionary<long, WorldTravel> travel = new();
@@ -174,7 +175,20 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     }
     private static string Key(long userId) => $"world:position:{userId}";
     private static string RuntimeKey(long userId) => $"world:runtime:{userId}";
+    private static string CombatKey(long userId) => $"world:combat:{userId}";
     private static string PresenceKey(int mapId) => $"world:presence:map:{mapId}";
+    private static readonly TimeSpan PortalCombatWindow = TimeSpan.FromSeconds(10);
+
+    public Task MarkCombatAsync(WorldPilot pilot, CancellationToken ct) =>
+        cache.SetStringAsync(CombatKey(pilot.UserId), combatClock.GetUtcNow().ToUnixTimeMilliseconds().ToString(),
+            new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);
+
+    private async Task<bool> PortalCombatLockedAsync(WorldPilot pilot, CancellationToken ct)
+    {
+        var saved = await cache.GetStringAsync(CombatKey(pilot.UserId), ct);
+        return long.TryParse(saved, out var milliseconds)
+            && combatClock.GetUtcNow() - DateTimeOffset.FromUnixTimeMilliseconds(milliseconds) < PortalCombatWindow;
+    }
 
     public IReadOnlyList<WorldPilot> Connected(int mapId) => connected.TryGetValue(mapId, out var pilots)
         ? pilots.Values.ToArray() : [];
@@ -992,6 +1006,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             var jumpRadius = variables is null ? portal.JumpRadius
                 : (int)await variables.NumberAsync("world.portal.jump_radius", ct);
             if (dx * dx + dy * dy > (long)jumpRadius * jumpRadius) return null;
+            if (!WorldMapInstance.IsGate(pilot.MapId) && await PortalCombatLockedAsync(pilot, ct)) return null;
             var next = pilot with { MapId = portal.DestinationMapId,
                 X = portal.ArrivalX, Y = portal.ArrivalY };
             travel.TryRemove(pilot.UserId, out _);
@@ -1190,6 +1205,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         var expectedMapId = pilot.MapId;
         pilot = await RestoreAsync(pilot, ct);
         if (pilot.MapId != expectedMapId || CurrentHitPoints(pilot) <= 0) return;
+        await MarkCombatAsync(pilot, ct);
         var absorbed = Math.Min(CurrentShield(pilot), damage);
         shields[pilot.UserId] = CurrentShield(pilot) - absorbed;
         hitPoints[pilot.UserId] = Math.Max(0, CurrentHitPoints(pilot) - (damage - absorbed));

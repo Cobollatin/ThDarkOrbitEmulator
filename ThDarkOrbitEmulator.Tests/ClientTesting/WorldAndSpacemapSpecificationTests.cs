@@ -687,6 +687,53 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task PortalJump_RecentNpcCombatBlocksAcrossReplicas_UntilWindowExpires()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var clock = new AdvancingClock();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var replica = new WorldSessionStore(cache, mutex, clock: clock);
+        var npcs = new WorldNpcs(cache, mutex, new TestRewards(),
+            Options.Create(new WorldNpcOptions { Templates =
+                [new("Streuner", "npc_streuner", 1, 1000, 0, 0, 0, 0, 0, 0)] }), clock);
+        var npc = npcs.Spawn(1, clock.GetUtcNow()).Single();
+        var pilot = await sessions.EnterAsync(Pilot() with
+        {
+            AccountId = Guid.NewGuid(), X = npc.X, Y = npc.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+        Assert.That((await npcs.AttackAsync(pilot, npc.Id, sessions, default)).Status, Is.EqualTo("hit"));
+        var nearPortal = await sessions.TeleportAsync(pilot.UserId, 1, 20000, 1300, false, default);
+        Assert.That(nearPortal, Is.Not.Null);
+        Assert.That(await replica.JumpAsync(nearPortal!, 101, null, default), Is.Null);
+        Assert.That(await replica.SavedMapAsync(pilot.UserId, default), Is.EqualTo(1));
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        var jump = await replica.JumpAsync(nearPortal!, 101, null, default);
+        Assert.That(jump?.Pilot.MapId, Is.EqualTo(2));
+    }
+
+    [Test]
+    public async Task PortalJump_RecentNpcHitBlocksJumpWithoutChangingSavedMap()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var sessions = new WorldSessionStore(cache);
+        var pilot = await sessions.EnterAsync(Pilot() with
+        {
+            X = 20000, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+
+        await sessions.ApplyNpcDamageAsync(pilot, 10001, 40, default);
+
+        Assert.That(await sessions.JumpAsync(pilot, 101, null, default), Is.Null);
+        Assert.That(await sessions.SavedMapAsync(pilot.UserId, default), Is.EqualTo(1));
+    }
+
+    [Test]
     public void Movement_ClampsBoundary_ComputesCeilingDuration_AndUsesCurrentTravelOrigin()
     {
         var now = DateTimeOffset.FromUnixTimeMilliseconds(10_000);
@@ -1346,6 +1393,13 @@ public sealed class WorldAndSpacemapSpecificationTests
     private sealed class TestClock : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => DateTimeOffset.FromUnixTimeSeconds(1_000_000);
+    }
+
+    private sealed class AdvancingClock : TimeProvider
+    {
+        private DateTimeOffset now = DateTimeOffset.FromUnixTimeSeconds(1_000_000);
+        public override DateTimeOffset GetUtcNow() => now;
+        public void Advance(TimeSpan duration) => now += duration;
     }
 
     private sealed class OneByteReadStream(byte[] bytes) : MemoryStream(bytes, writable: false)

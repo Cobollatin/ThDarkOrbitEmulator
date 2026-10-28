@@ -297,6 +297,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 var shield = Math.Max(0, vital.Shield - absorbed);
                 var hp = Math.Max(0, vital.Hp - (damage - absorbed));
                 dead = hp == 0;
+                await sessions.MarkCombatAsync(pilot, ct);
                 if (dead)
                 {
                     var adjusted = await RewardAdjustedAsync(npc, ct);
