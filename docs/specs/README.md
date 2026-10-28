@@ -1,5 +1,7 @@
 # Master specification and test traceability
 
+Task 3 adds topical audit files `03-hangar-inventory-and-shop.md`, `07-economy-progression-and-quests.md`, and `08-clans-diplomacy-and-chat.md`. They use `E` suffixes inside their titles to distinguish them from the nine numbered master specs. They document implemented behavior and explicitly identify unimplemented refinery, gate-wave, diplomacy, station, and atomic equipment-transfer contracts.
+
 2026-10-25 documentation update:
 - `SPEC-02` now documents the Unity console patch (PE console subsystem, `nolog=` removal from `boot.config`), the generated `Start-DarkOrbitConsole.cmd` launcher, the `Start-ClientConsole.ps1` lifecycle (log tailing and `Ctrl+C` cleanup), and the dual HTTPS listeners (`https://localhost:60952` and `https://localhost:443`) used by `OpenWebLogin`, `GetLinkRequest`, `GetPost`, `GetHangerPost` and `GetNewsRequest`.
 - `SPEC-08` documents the interactive Server Admin CLI (`scripts/admin/Start-AdminCli.ps1`).

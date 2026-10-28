@@ -24,7 +24,7 @@ public static class CockpitCatalogEndpoints
         admin.MapPut("/servers/{code}", async (string code, ClientServer input, CockpitCatalogStore store, CancellationToken ct) =>
         {
             if (code != input.Code || !Code.IsMatch(code) || string.IsNullOrWhiteSpace(input.InstanceName) || input.InstanceName.Length > 80
-                || !Uri.CheckHostName(input.Host).Equals(UriHostNameType.Dns) && !Uri.CheckHostName(input.Host).Equals(UriHostNameType.IPv4)
+                || string.IsNullOrWhiteSpace(input.Host) || Uri.CheckHostName(input.Host) is not (UriHostNameType.Dns or UriHostNameType.IPv4)
                 || input.MapId <= 0 || input.Status is not ("online" or "maintenance" or "offline") || input.IsDefault && !input.Enabled
                 || !input.IsDefault && (await store.ServersAsync(ct)).Any(item => item.Code == code && item.IsDefault))
                 return Results.BadRequest();
@@ -35,14 +35,14 @@ public static class CockpitCatalogEndpoints
         {
             if (shipId != input.ShipId || !shipId.StartsWith("ship_", StringComparison.Ordinal) || shipId.Length > 80
                 || string.IsNullOrWhiteSpace(input.Name) || input.Name.Length > 80 || input.ModelId <= 0
-                || !input.IconPath.StartsWith("/do_img/", StringComparison.Ordinal) || input.IconPath.Contains("..", StringComparison.Ordinal))
+                || input.IconPath is null || !input.IconPath.StartsWith("/do_img/", StringComparison.Ordinal) || input.IconPath.Contains("..", StringComparison.Ordinal))
                 return Results.BadRequest();
             await store.UpsertShipAsync(input, ct); return Results.NoContent();
         });
         admin.MapGet("/accounts/{accountId:guid}/hangars", (Guid accountId, CockpitCatalogStore store, CancellationToken ct) => store.AssignmentsAsync(accountId, ct));
         admin.MapPut("/accounts/{accountId:guid}/hangars/{slot:int}", async (Guid accountId, int slot, HangarAssignment input, CockpitCatalogStore store, CancellationToken ct) =>
         {
-            if (accountId != input.AccountId || slot != input.SlotNumber || slot is < 1 or > 2 || !Regex.IsMatch(input.HangarId, "\\A[0-9]{6}\\z"))
+            if (accountId != input.AccountId || slot != input.SlotNumber || slot is < 1 or > 2 || input.HangarId is null || !Regex.IsMatch(input.HangarId, "\\A[0-9]{6}\\z"))
                 return Results.BadRequest();
             if (!(await store.ShipsAsync(ct)).Any(item => item.ShipId == input.ShipId && item.Enabled)) return Results.BadRequest();
             await store.UpsertAssignmentAsync(input, ct); return Results.NoContent();
@@ -52,7 +52,7 @@ public static class CockpitCatalogEndpoints
         {
             if (language != input.LanguageCode || category != input.Category || key != input.Key
                 || !Code.IsMatch(language) || !Code.IsMatch(category) || !Regex.IsMatch(key, "\\A[a-zA-Z0-9_.-]{1,160}\\z")
-                || input.Value.Length > 4000 || !(await store.LanguagesAsync(ct)).Any(item => item.Code == language)) return Results.BadRequest();
+                || input.Value is null || input.Value.Length > 4000 || !(await store.LanguagesAsync(ct)).Any(item => item.Code == language)) return Results.BadRequest();
             await store.UpsertLocaleOverrideAsync(input, ct); return Results.NoContent();
         });
 

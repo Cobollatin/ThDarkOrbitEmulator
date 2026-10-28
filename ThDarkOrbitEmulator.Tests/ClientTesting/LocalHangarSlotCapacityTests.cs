@@ -132,7 +132,7 @@ public class LocalHangarSlotCapacityTests
     }
 
     [Test]
-    public async Task Post_LargeLegacyLoadout_Returns409AndKeepsAssignments()
+    public async Task Post_LargeLegacyLoadout_Returns409AndKeepsReconciledAssignments()
     {
         var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
         var cache = services.GetRequiredService<IDistributedCache>();
@@ -158,7 +158,8 @@ public class LocalHangarSlotCapacityTests
         var response = await PostAsync(sessions, equipment, created.Dosid,
             "slot=1&configuration=1&item=laser_c&quantity=1");
         Assert.That(response.Response.StatusCode, Is.EqualTo(409));
-        Assert.That((await equipment.GetAsync(account.Id, CancellationToken.None)).Assignments, Is.EqualTo(legacy));
+        Assert.That((await equipment.GetAsync(account.Id, CancellationToken.None)).Assignments,
+            Is.EqualTo(new[] { new LocalEquipmentAssignment(1, 1, "laser_a", 5) }));
     }
 
     [TestCase("laser_x", "Equipment", null, "laser")]

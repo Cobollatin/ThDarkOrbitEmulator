@@ -112,17 +112,27 @@ public sealed class LocalHangarEquipmentStore(IDistributedCache cache, EconomySt
             var remaining = item.Quantity;
             foreach (var slot in new[] { 1, 2 })
             {
+                var kind = CapacityKind(item);
                 var requested = assignments.Where(a => a.ItemId == item.Id && a.HangarSlot == slot
                     && (a.Configuration is 1 or 2) && a.Quantity > 0)
                     .GroupBy(a => a.Configuration)
                     .Select(group => new { Configuration = group.Key, Quantity = group.Max(a => a.Quantity) })
                     .OrderBy(a => a.Configuration).ToArray();
-                var reserved = Math.Min(remaining, requested.Select(a => a.Quantity).DefaultIfEmpty(0).Max());
+                var reserved = 0;
                 foreach (var assignment in requested)
                 {
-                    var quantity = Math.Min(reserved, assignment.Quantity);
+                    var quantity = Math.Min(remaining, assignment.Quantity);
+                    if (kind is not null)
+                    {
+                        var used = result.Where(a => a.HangarSlot == slot && a.Configuration == assignment.Configuration
+                                && inventory.First(candidate => candidate.Id == a.ItemId) is { } equipped
+                                && CapacityKind(equipped) == kind)
+                            .Sum(a => (long)a.Quantity);
+                        quantity = (int)Math.Min(quantity, Math.Max(0, SlotCapacity(slot, kind) - used));
+                    }
                     if (quantity > 0)
                         result.Add(new LocalEquipmentAssignment(slot, assignment.Configuration, item.Id, quantity));
+                    reserved = Math.Max(reserved, quantity);
                 }
                 remaining -= reserved;
             }

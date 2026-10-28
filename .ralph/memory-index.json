@@ -16,6 +16,27 @@
     "contractNotes": "docs/world-protocol.md",
     "availableSpec": "docs/specs/06-world-server-and-spacemap.md"
   },
+  "economyAndBackoffice": {
+    "store": "ThDarkOrbitEmulator.ApiService/Features/Economy/EconomyStore.cs",
+    "menuSlices": "ThDarkOrbitEmulator.ApiService/Features/IndexInternal/InternalStart/",
+    "cockpitEndpoints": "ThDarkOrbitEmulator.ApiService/Features/UnityApi/Login/CockpitCatalogEndpoints.cs",
+    "runtimeVariables": "ThDarkOrbitEmulator.ApiService/Features/World/Admin/RuntimeVariableStore.cs",
+    "topicalSpecs": [
+      "docs/specs/03-hangar-inventory-and-shop.md",
+      "docs/specs/07-economy-progression-and-quests.md",
+      "docs/specs/08-clans-diplomacy-and-chat.md",
+      "docs/specs/09-cms-backoffice-and-placeholder-ui.md"
+    ],
+    "integrationTests": [
+      "ThDarkOrbitEmulator.Tests/Integration/EconomyPostgresTests.cs",
+      "ThDarkOrbitEmulator.Tests/Integration/LocalSkylabPostgresTests.cs",
+      "ThDarkOrbitEmulator.Tests/Integration/LocalGalaxyGatePostgresTests.cs",
+      "ThDarkOrbitEmulator.Tests/Integration/LocalClanPostgresTests.cs",
+      "ThDarkOrbitEmulator.Tests/Integration/CockpitBackofficePostgresTests.cs",
+      "ThDarkOrbitEmulator.Tests/Integration/RuntimeVariablePostgresTests.cs"
+    ],
+    "remainingGaps": "Atomic Dock transfer, Skylab refinery and upgrade timers, Galaxy Gate waves, clan diplomacy and station modules have no persisted domain model or routes."
+  },
   "missingRequestedSpecs": [
     "docs/specs/04-world-simulation-and-movement.md",
     "docs/specs/05-combat-weapons-and-damage.md",

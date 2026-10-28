@@ -100,6 +100,7 @@ Rules:
 
 - Hangar origin: the first Unity login, or the first Backoffice view of that account, creates the two starter assignments (Pusat Plus and Phoenix) in Postgres with stable six-digit hangar IDs. Later admin edits survive login. World combat stat formulas stay slot based.
 - Limits: the Unity build has not been observed calling `languages.php` or `servers.php`, so these are emulator contracts. The Unity asset bundle does not read locale overrides yet. Server descriptors do not reconfigure the running mesh or its TCP listener. Evidence: `docs/cockpit-catalog.md`.
+- Cockpit write routes reject JSON nulls for required host, ship icon path, hangar ID, and locale value with HTTP 400 before mutation. `CockpitBackofficePostgresTests.CockpitRoutes_RejectNullFieldsWithoutChangingPersistedCatalog` exercises the HTTP routes against PostgreSQL and confirms a valid server update persists. Runtime-variable set, reset, history, rollback, aliases, and cross-replica visibility are covered by `AdminCommandHttpTests` and `RuntimeVariablePostgresTests`.
 
 ### Backoffice operations overview and cache contract
 

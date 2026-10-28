@@ -20,6 +20,47 @@ public class EconomyPostgresTests
 {
     [Test]
     [Category("Integration")]
+    public async Task LegacyEquipmentImport_CapsShipSlotsAndKeepsRemainderTransferable()
+    {
+        var ct = TestContext.CurrentContext.CancellationToken;
+        await using var postgres = new PostgreSqlBuilder("postgres:16-alpine")
+            .WithDatabase("thdarkorbit").WithUsername("app").WithPassword("app").Build();
+        await postgres.StartAsync(ct);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["ConnectionStrings:identity-write"] = postgres.GetConnectionString() }).Build();
+        await new SqlMigrationHostedService(config, Options.Create(new IdentityDatabaseOptions
+        { AutoMigrate = true, BackupBeforeMigration = false, Schema = "identity" }),
+            NullLogger<SqlMigrationHostedService>.Instance).StartAsync(ct);
+        var account = Guid.NewGuid();
+        await using var db = new NpgsqlConnection(postgres.GetConnectionString());
+        await db.OpenAsync(ct);
+        await using (var create = new NpgsqlCommand(
+            "INSERT INTO identity.accounts(id,username,game_user_id) VALUES (@a,'transfer-pilot',4003)", db))
+        { create.Parameters.AddWithValue("a", account); await create.ExecuteNonQueryAsync(ct); }
+
+        var first = new EconomyStore(config);
+        var second = new EconomyStore(config);
+        await first.ImportAsync(account, new LocalEquipmentState(
+            [new("laser_lf3", "LF-3 laser", "Equipment", 4, "laser"),
+             new("laser_lf2", "LF-2 laser", "Equipment", 2, "laser")], []), ct);
+        await first.ImportHangarEquipmentAsync(account,
+            [new(1, 1, "laser_lf3", 4), new(1, 1, "laser_lf2", 2)], ct);
+
+        var imported = await second.HangarEquipmentAsync(account, ct);
+        Assert.That(imported, Is.EquivalentTo(new[]
+        {
+            new LocalEquipmentAssignment(1, 1, "laser_lf2", 2),
+            new LocalEquipmentAssignment(1, 1, "laser_lf3", 3)
+        }));
+        Assert.That(await second.ChangeHangarEquipmentAsync(account, 2, 1, "laser_lf3", 1, ct),
+            Is.EqualTo(LocalHangarChange.Applied));
+        Assert.That(await first.ChangeHangarEquipmentAsync(account, 2, 2, "laser_lf3", 2, ct),
+            Is.EqualTo(LocalHangarChange.Conflict));
+        Assert.That(await first.HangarEquipmentAsync(account, ct), Has.Count.EqualTo(3));
+    }
+
+    [Test]
+    [Category("Integration")]
     public async Task ShopRestock_CapsAtBigintLimitAndAuditsActualAddition()
     {
         var ct = TestContext.CurrentContext.CancellationToken;
