@@ -176,6 +176,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private static string Key(long userId) => $"world:position:{userId}";
     private static string RuntimeKey(long userId) => $"world:runtime:{userId}";
     private static string CombatKey(long userId) => $"world:combat:{userId}";
+    private static string ShieldRecoveryKey(long userId) => $"world:shield-recovery:{userId}";
     private static string PresenceKey(int mapId) => $"world:presence:map:{mapId}";
     private static readonly TimeSpan PortalCombatWindow = TimeSpan.FromSeconds(10);
 
@@ -188,6 +189,39 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         var saved = await cache.GetStringAsync(CombatKey(pilot.UserId), ct);
         return long.TryParse(saved, out var milliseconds)
             && combatClock.GetUtcNow() - DateTimeOffset.FromUnixTimeMilliseconds(milliseconds) < PortalCombatWindow;
+    }
+
+    // The map owner advances pilot recovery. Both timestamps and vitals live in shared state
+    // so an owner handoff cannot grant an extra tick or erase a recently applied hit.
+    public async Task RecoverShieldsAsync(int mapId, CancellationToken ct, WorldLeaseFence? fence = null)
+    {
+        foreach (var connectedPilot in await ConnectedAsync(mapId, ct))
+        {
+            var gate = movementGates.GetOrAdd(connectedPilot.UserId, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync(ct);
+            try
+            {
+                await using var held = meshMutex is null ? null : await meshMutex.AcquireAsync(ct);
+                await CheckLeaseAsync(mapId, fence, ct);
+                var pilot = await RefreshAsync(connectedPilot, ct);
+                if (pilot.MapId != mapId || CurrentHitPoints(pilot) <= 0) continue;
+                var maxShield = ActiveStats(pilot).MaxShield;
+                var shield = CurrentShield(pilot);
+                if (maxShield <= 0 || shield >= maxShield) continue;
+                var now = combatClock.GetUtcNow();
+                var combat = await cache.GetStringAsync(CombatKey(pilot.UserId), ct);
+                if (long.TryParse(combat, out var combatMs) &&
+                    now - DateTimeOffset.FromUnixTimeMilliseconds(combatMs) < PortalCombatWindow) continue;
+                var recovery = await cache.GetStringAsync(ShieldRecoveryKey(pilot.UserId), ct);
+                if (long.TryParse(recovery, out var recoveryMs) &&
+                    now - DateTimeOffset.FromUnixTimeMilliseconds(recoveryMs) < TimeSpan.FromSeconds(1)) continue;
+                shields[pilot.UserId] = Math.Min(maxShield, shield + Math.Max(1, maxShield / 25));
+                await PersistRuntimeAsync(pilot, ct);
+                await cache.SetStringAsync(ShieldRecoveryKey(pilot.UserId), now.ToUnixTimeMilliseconds().ToString(),
+                    new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);
+            }
+            finally { gate.Release(); }
+        }
     }
 
     public IReadOnlyList<WorldPilot> Connected(int mapId) => connected.TryGetValue(mapId, out var pilots)

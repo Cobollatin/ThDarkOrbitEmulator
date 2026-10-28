@@ -1114,6 +1114,42 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(replica.CurrentShield(restored), Is.EqualTo(410));
     }
 
+    [Test]
+    public async Task PilotShieldRecovery_WaitsForCombatQuiet_AndPersistsCappedTicks()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingClock();
+        var store = new WorldSessionStore(cache, clock: clock);
+        var pilot = await store.EnterAsync(Pilot() with
+        {
+            UserId = 905, Stats = new WorldShipStats(300, 1000, 500, 0, 0, [])
+        }, default);
+        store.SetCurrentShield(pilot, 470);
+        await store.MarkCombatAsync(pilot, default);
+
+        clock.Advance(TimeSpan.FromSeconds(9));
+        await store.RecoverShieldsAsync(pilot.MapId, default);
+        Assert.That(store.CurrentShield(pilot), Is.EqualTo(470));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await store.RecoverShieldsAsync(pilot.MapId, default);
+        await store.RecoverShieldsAsync(pilot.MapId, default);
+        Assert.That(store.CurrentShield(pilot), Is.EqualTo(490));
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await store.RecoverShieldsAsync(pilot.MapId, default);
+        Assert.That(store.CurrentShield(pilot), Is.EqualTo(500));
+        var replica = new WorldSessionStore(cache, clock: clock);
+        var restored = await replica.RestoreAsync(pilot, default);
+        Assert.That(replica.CurrentShield(restored), Is.EqualTo(500));
+
+        store.SetCurrentShield(pilot, 400);
+        await store.MarkCombatAsync(pilot, default);
+        clock.Advance(TimeSpan.FromSeconds(9));
+        await store.RecoverShieldsAsync(pilot.MapId, default);
+        Assert.That(store.CurrentShield(pilot), Is.EqualTo(400));
+    }
+
     [TestCase("0", 0)]
     [TestCase("1000000", 1000000)]
     [TestCase("-1", 150)]
