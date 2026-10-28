@@ -1961,6 +1961,82 @@ public class WorldTransportTests
         }
     }
 
+    [Test]
+    public async Task Loopback_NativeMove_UsesSavedOriginAndKeepsSocketOpenForNextCommand()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var sessions = new WorldSessionStore(cache);
+        var pilot = new WorldPilot(42, "mmo", 1, 1, "ship_phoenix", 0, 0)
+        {
+            FactionId = 1, X = 2000, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 30, [])
+        };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), sessions);
+        using (client)
+        using (server)
+        {
+            var stream = client.GetStream();
+            await WriteNativeAsync(stream, NativeWorldHandshake.VersionRequest,
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, NativeWorldHandshake.ClientVersion)));
+            Assert.That((await ReadNativeAsync(stream)).Module, Is.EqualTo(NativeWorldHandshake.VersionCommand));
+            await WriteNativeAsync(stream, NativeWorldHandshake.LoginRequest, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt32(w, (int)BitOperations.RotateLeft(42u, 3));
+                w.Write(BinaryPrimitives.ReverseEndianness((ushort)BitOperations.RotateLeft(1u, 7)));
+                WorldPayload.WriteString(w, "opaque");
+                WorldPayload.WriteString(w, NativeWorldHandshake.ClientVersion);
+                WorldPayload.WriteInt32(w, (int)BitOperations.RotateLeft(1u, 12));
+                w.Write(false);
+            }));
+            Assert.That((await ReadNativeAsync(stream)).Module, Is.EqualTo(NativeWorldHandshake.LoginResponse));
+            Assert.That((await ReadNativeAsync(stream)).Module, Is.EqualTo(NativeWorldHandshake.MapChanged));
+            Assert.That((await ReadNativeAsync(stream)).Module, Is.EqualTo(NativeWorldHandshake.ShipInitialization));
+            foreach (var _ in WorldMapInstance.Starter(1).Portals)
+                Assert.That((await ReadNativeAsync(stream)).Module, Is.EqualTo(NativeWorldHandshake.JumpgateCreate));
+
+            async Task<int> MoveAsync(int x, int y)
+            {
+                await WriteNativeAsync(stream, NativeWorldHandshake.MoveRequest, WorldPayload.Encode(w =>
+                {
+                    WorldPayload.WriteInt32(w, 9999); // client position cannot set the travel origin
+                    WorldPayload.WriteInt32(w, y);
+                    WorldPayload.WriteInt32(w, x);
+                    WorldPayload.WriteInt32(w, 9999);
+                }));
+                var hero = await ReadNativeAsync(stream).WaitAsync(TimeSpan.FromSeconds(2));
+                Assert.That(hero.Module, Is.EqualTo(NativeWorldHandshake.HeroMoveCommand));
+                Assert.That(BitOperations.RotateRight((uint)BinaryPrimitives.ReadInt32BigEndian(hero.Payload.Span), 9),
+                    Is.EqualTo(x));
+                Assert.That(BitOperations.RotateRight((uint)BinaryPrimitives.ReadInt32BigEndian(hero.Payload.Span[4..]), 25),
+                    Is.EqualTo(y));
+                var move = await ReadNativeAsync(stream).WaitAsync(TimeSpan.FromSeconds(2));
+                Assert.That(move.Module, Is.EqualTo(NativeWorldHandshake.MoveCommand));
+                Assert.That(BitOperations.RotateRight((uint)BinaryPrimitives.ReadInt32BigEndian(move.Payload.Span), 16),
+                    Is.EqualTo(42));
+                Assert.That(BitOperations.RotateRight((uint)BinaryPrimitives.ReadInt32BigEndian(move.Payload.Span[4..]), 13),
+                    Is.EqualTo(x));
+                Assert.That(BitOperations.RotateRight((uint)BinaryPrimitives.ReadInt32BigEndian(move.Payload.Span[8..]), 16),
+                    Is.EqualTo(y));
+                return (int)BitOperations.RotateRight(
+                    (uint)BinaryPrimitives.ReadInt32BigEndian(move.Payload.Span[12..]), 18);
+            }
+
+            Assert.That(await MoveAsync(2300, 1300), Is.EqualTo(1000));
+            Assert.That(sessions.Destination(pilot), Is.EqualTo((2300, 1300)));
+            await MoveAsync(2400, 1400);
+            Assert.That(sessions.Destination(pilot), Is.EqualTo((2400, 1400)));
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker.WaitAsync(TimeSpan.FromSeconds(2));
+            var restored = await new WorldSessionStore(cache).RestoreAsync(pilot, CancellationToken.None);
+            Assert.That(restored.MapId, Is.EqualTo(1));
+            using var saved = JsonDocument.Parse((await cache.GetStringAsync("world:position:42"))!);
+            Assert.That(saved.RootElement.GetProperty("TargetX").GetInt32(), Is.EqualTo(2400));
+            Assert.That(saved.RootElement.GetProperty("TargetY").GetInt32(), Is.EqualTo(1400));
+            Assert.That(sessions.Connected(1), Is.Empty);
+        }
+    }
+
     [TestCase(1, false)]
     [TestCase(2, true)]
     public async Task Loopback_NativeLogin_RequiresSelectedSessionInstance(int requested, bool accepted)

@@ -62,11 +62,13 @@ visual type), `AttackRocketCommand` `0x0006` (four integers and two Booleans),
 `AttackHitCommand` `0x001C` (nested attack type, IDs, victim vitals,
 damage, flags and cannon type), and `JumpInitiatedCommand` `0x0013`
 (`mapId,gateId`).
-`NativeWorldPackets` serializes their verified field order and rotations;
-the native socket path currently returns after its entry burst, so movement,
-combat and jump events are not sent on that path. The four-byte local
+`NativeWorldPackets` serializes their verified field order and rotations.
+With a world session store, the native socket now accepts `MoveRequest` after
+entry, applies the server-authoritative destination through `MoveAsync`, and
+sends `HeroMoveCommand` and `MoveCommand` on that socket. Combat and jump
+events are not yet routed on the native path. The four-byte local
 diagnostic transport retains its existing event handling. A native traffic
-capture and event routing are still required for live Unity gameplay.
+capture and remaining event routing are still required for live Unity gameplay.
 
 The transport fixture's hosted-listener smoke test uses a dynamically bound
 loopback port and checks the published port. Its former reserve/release of an

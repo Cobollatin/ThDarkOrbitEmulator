@@ -17,6 +17,7 @@ public sealed class NativeWorldHandshake(IWorldPilotResolver resolver, WorldServ
     public const ushort MapChanged = 0x008a;
     public const ushort ShipInitialization = 0x0031;
     public const ushort JumpgateCreate = 0x0d3d;
+    public const ushort MoveRequest = 0x0052;
     public const ushort MoveCommand = 0x005a;
     public const ushort HeroMoveCommand = 0x001d;
     public const ushort AttackLaserRun = 0x0003;
@@ -78,7 +79,31 @@ public sealed class NativeWorldHandshake(IWorldPilotResolver resolver, WorldServ
                 foreach (var portal in map.Portals)
                     await WriteFrameAsync(stream, JumpgateCreate,
                         NativeWorldPackets.JumpgateCreate(portal, map.FactionId), ct);
-                return;
+                if (sessions is null) return;
+                pilot = await sessions.EnterAsync(pilot, ct);
+                try
+                {
+                    while (true)
+                    {
+                        var command = await ReadFrameAsync(stream, null, ct);
+                        if (command is null) return;
+                        if (BinaryPrimitives.ReadUInt16BigEndian(command) != MoveRequest) continue;
+                        if (command.Length != 18) return;
+                        // MoveRequest's four fields are positionX, targetY, targetX, positionY.
+                        // The reported position is diagnostic; the saved travel is authoritative.
+                        var targetY = BinaryPrimitives.ReadInt32BigEndian(command.AsSpan(6));
+                        var targetX = BinaryPrimitives.ReadInt32BigEndian(command.AsSpan(10));
+                        var move = await sessions.MoveAsync(pilot, targetX, targetY, null, ct,
+                            expectedMapId: pilot.MapId);
+                        await WriteFrameAsync(stream, HeroMoveCommand,
+                            NativeWorldPackets.HeroMove(move.X, move.Y), ct);
+                        await WriteFrameAsync(stream, MoveCommand,
+                            NativeWorldPackets.Move(checked((int)pilot.UserId), move.X, move.Y,
+                                move.TimeToTargetMs), ct);
+                    }
+                }
+                catch (WorldLeaseLostException) { return; }
+                finally { await sessions.LeaveAsync(pilot, null, CancellationToken.None); }
             }
             catch (Exception error) when (error is EndOfStreamException or InvalidDataException or DecoderFallbackException)
             {

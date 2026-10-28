@@ -16,7 +16,7 @@ button calling it.
 | Hangar | `indexInternal.es?action=internalDock` / `internalDockEquipment`; `POST /unityApi/activate.php` | Served. Native activation maps the submitted assigned `hangarId` to the player's PostgreSQL active slot. |
 | Shop | `indexInternal.es?action=internalShop`, `internalPayment` | Served. |
 | Forum / Help / Account | `boardLink`, `helpLink`, `/unityApi/links.php` (`forum`, `support`, `help`, `accountCenter`) | Served on the advertised `:60952` host. |
-| Open World / Spacemap | Portal `LAUNCH` link on `internalWebGL`; HTTP canvas `indexInternal.es?action=internalMapRevolution` (`/spacemap/world/*`); world TCP listener `127.0.0.1:60954` | The HTTP spacemap works. The portal link disappears by design when `OpenWebLogin` closes the WebView at the `internalWebGL` handoff. Native START → world socket entry is **unverified**. |
+| Open World / Spacemap | Portal `LAUNCH` link on `internalWebGL`; HTTP canvas `indexInternal.es?action=internalMapRevolution` (`/spacemap/world/*`); world TCP listener `127.0.0.1:60954` | The HTTP spacemap works. The portal link disappears by design when `OpenWebLogin` closes the WebView at the `internalWebGL` handoff. Native socket entry and movement pass loopback tests; Unity START remains **unverified**. |
 
 ## Installed `StreamingAssets/config.txt` route table
 
@@ -295,11 +295,22 @@ burst or its sequencing.
 
 `NativeWorldHandshake` now sends `MapChanged`, `ShipInitialization`, and one
 `JumpgateCreate` per local starter-map portal after successful native login.
-`NativeWorldPackets` also serializes the proven move, hero move, laser, rocket,
-hit, and jump-initiation shapes for later event routing. Current `WorldPilot` data
+`NativeWorldPackets` also serializes the move, hero move, laser, rocket,
+hit, and jump-initiation shapes. Current `WorldPilot` data
 does not supply clan, rank, premium, nano hull, visual modifier, jackpot, or
 captain energy values; those entry fields are zero/false, and `typeId` uses
-the local ship ID. The native session still ends after entry, so these
-gameplay serializers are not yet dispatched to a live native client. Portal
+the local ship ID. With a `WorldSessionStore`, the native socket now stays open
+after entry and accepts module `0x0052` with four big-endian integers in
+`positionX,targetY,targetX,positionY` order. The reported position is ignored;
+`WorldSessionStore.MoveAsync` uses authoritative saved travel, clamps the target,
+and persists it. The socket sends `HeroMoveCommand` `0x001D` and `MoveCommand`
+`0x005A` with the server destination and duration, then accepts another move.
+Other well-formed modules are ignored during this movement slice. On disconnect
+it removes local presence. The hosted listener supplies the
+session store; the no-store handshake fixture still exits after entry.
+`WorldTransportTests.Loopback_NativeMove_UsesSavedOriginAndKeepsSocketOpenForNextCommand`
+verifies framing, rotations, duration, repeat commands, persistence and cleanup.
+Laser, rocket, hit and jump serializers are not yet dispatched to native sockets.
+Portal
 design ID zero and the entry command order remain emulator choices pending a
 captured native server burst.
