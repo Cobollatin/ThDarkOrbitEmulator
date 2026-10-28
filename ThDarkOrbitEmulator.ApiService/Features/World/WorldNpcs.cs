@@ -29,6 +29,8 @@ public sealed class WorldNpcOptions
     public int NpcFireRange { get; set; } = 650;
     public int NpcDamage { get; set; } = 40;
     public int NpcFireCooldownSeconds { get; set; } = 2;
+    public int NpcShieldRepairDelaySeconds { get; set; } = 10;
+    public int NpcShieldRepairIntervalSeconds { get; set; } = 1;
     public List<WorldNpcTemplate> Templates { get; set; } =
     [
         new("Streuner", "npc_streuner", 3, 800, 200, 400, 1, 400, 2, 90),
@@ -66,7 +68,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
     private sealed record Vital(int Hp, int Shield, bool Destroyed, Guid Killer,
         WorldNpcReward? Reward = null, WorldNpc? Snapshot = null,
         int? X = null, int? Y = null, long TargetUserId = 0, long LastFireUnixMs = 0,
-        long LastStepUnixMs = 0);
+        long LastStepUnixMs = 0, long LastHitUnixMs = 0, long LastShieldRepairUnixMs = 0);
     private long Cycle => clock.GetUtcNow().ToUnixTimeSeconds() / Math.Max(30, settings.RespawnSeconds);
     public long CurrentCycle => Cycle;
     private string Key(int map, int id, long cycle) => $"world:npc:{map}:{id}:{cycle}";
@@ -306,7 +308,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 }
                 await cache.SetStringAsync(key, JsonSerializer.Serialize(vital with { Hp = hp, Shield = shield,
                     Destroyed = dead, Killer = dead ? pilot.AccountId : Guid.Empty,
-                    Reward = reward, Snapshot = dead ? npc : null }), Expiry, ct);
+                    Reward = reward, Snapshot = dead ? npc : null,
+                    LastHitUnixMs = clock.GetUtcNow().ToUnixTimeMilliseconds() }), Expiry, ct);
                 observerSnapshots.TryRemove(pilot.MapId, out _);
                 target = npc with { Hp = hp, Shield = shield };
             }
@@ -343,6 +346,19 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             var vital = saved is null ? new Vital(spawn.Hp, spawn.Shield, false, Guid.Empty)
                 : JsonSerializer.Deserialize<Vital>(saved)!;
             if (vital.Destroyed) continue;
+            var nowMs = now.ToUnixTimeMilliseconds();
+            if (vital.Shield < spawn.MaxShield && vital.LastHitUnixMs > 0 &&
+                nowMs - vital.LastHitUnixMs >= Math.Max(0, settings.NpcShieldRepairDelaySeconds) * 1000L &&
+                nowMs - vital.LastShieldRepairUnixMs >= Math.Max(1, settings.NpcShieldRepairIntervalSeconds) * 1000L)
+            {
+                vital = vital with
+                {
+                    Shield = Math.Min(spawn.MaxShield, vital.Shield + Math.Max(1, spawn.MaxShield / 10)),
+                    LastShieldRepairUnixMs = nowMs
+                };
+                await cache.SetStringAsync(key, JsonSerializer.Serialize(vital), Expiry, ct);
+                observerSnapshots.TryRemove(mapId, out _);
+            }
             var npc = spawn with { Hp = vital.Hp, Shield = vital.Shield,
                 X = vital.X ?? spawn.X, Y = vital.Y ?? spawn.Y };
             var eligible = pilots.Where(p => sessions.CurrentHitPoints(p) > 0)

@@ -61,6 +61,52 @@ public sealed class WorldNpcTests
     }
 
     [Test]
+    public async Task NpcShield_RepairsAfterQuietPeriod_OncePerTickIntervalAndNeverBeyondMaximum()
+    {
+        using var provider = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = provider.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var npcs = new WorldNpcs(cache, mutex, new Rewards(), Options.Create(new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 200, 100, 0, 0, 0, 0, 0)]
+        }), clock);
+        var spawn = (await npcs.VisibleAsync(1, default)).Single();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var pilot = new WorldPilot(71, "mmo", 1, 1, "ship", 0, 0)
+        {
+            AccountId = Guid.NewGuid(), X = spawn.X, Y = spawn.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        };
+        var hit = await npcs.AttackAsync(pilot, spawn.Id, sessions, default);
+        Assert.That(hit.Target!.Shield, Is.Zero);
+
+        clock.Now = clock.Now.AddSeconds(9);
+        await npcs.TickAggroAsync(1, sessions, default);
+        Assert.That((await npcs.VisibleAsync(1, default)).Single().Shield, Is.Zero);
+        clock.Now = clock.Now.AddSeconds(1);
+        await npcs.TickAggroAsync(1, sessions, default);
+        await npcs.TickAggroAsync(1, sessions, default);
+        Assert.That((await npcs.VisibleAsync(1, default)).Single().Shield, Is.EqualTo(10));
+        clock.Now = clock.Now.AddSeconds(1);
+        await npcs.TickAggroAsync(1, sessions, default);
+        Assert.That((await npcs.VisibleAsync(1, default)).Single().Shield, Is.EqualTo(20));
+        await npcs.AttackAsync(pilot, spawn.Id, sessions, default);
+        clock.Now = clock.Now.AddSeconds(9);
+        await npcs.TickAggroAsync(1, sessions, default);
+        Assert.That((await npcs.VisibleAsync(1, default)).Single().Shield, Is.Zero);
+        clock.Now = clock.Now.AddSeconds(1);
+        await npcs.TickAggroAsync(1, sessions, default);
+        Assert.That((await npcs.VisibleAsync(1, default)).Single().Shield, Is.EqualTo(10));
+        for (var i = 0; i < 10; i++)
+        {
+            clock.Now = clock.Now.AddSeconds(1);
+            await npcs.TickAggroAsync(1, sessions, default);
+        }
+        Assert.That((await npcs.VisibleAsync(1, default)).Single().Shield, Is.EqualTo(100));
+    }
+
+    [Test]
     public async Task SharedHealth_OnlyOnePilotGetsKill_AndNpcRespawns()
     {
         using var provider = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
