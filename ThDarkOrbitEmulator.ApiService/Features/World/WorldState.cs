@@ -1248,7 +1248,17 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         }
     }
 
-    public async Task BroadcastAdminBoxAsync(int mapId, WorldCollectible box, CancellationToken ct)
+    public async Task BroadcastBoxRemovalAsync(int mapId, int boxId, CancellationToken ct)
+    {
+        var payload = WorldPayload.Encode(w => WorldPayload.WriteInt32(w, boxId));
+        foreach (var observer in connections.Values.Where(c => c.Pilot.MapId == mapId).ToArray())
+        {
+            try { await observer.SendAsync(WorldCommandId.CollectBoxRemoveCommand, payload, ct); }
+            catch (IOException) { }
+        }
+    }
+
+    public async Task BroadcastBoxSpawnAsync(int mapId, WorldCollectible box, CancellationToken ct)
     {
         var payload = WorldPayload.Encode(w =>
         {

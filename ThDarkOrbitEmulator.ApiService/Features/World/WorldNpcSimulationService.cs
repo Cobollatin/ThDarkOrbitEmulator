@@ -58,14 +58,14 @@ public sealed class WorldNpcSimulationService(WorldNpcs npcs, WorldSessionStore 
                 ids.IntersectWith(visible.Select(n => n.Id));
                 if (collectibles is not null)
                 {
-                    var boxes = (await collectibles.VisibleAsync(lease.MapId, stoppingToken))
-                        .Where(b => b.Id < 0).ToArray();
+                    var boxes = await collectibles.VisibleAsync(lease.MapId, stoppingToken);
                     if (!knownBoxes.TryGetValue(lease.MapId, out var boxIds))
                         knownBoxes[lease.MapId] = boxIds = [];
-                    foreach (var box in boxes)
-                        if (boxIds.Add(box.Id))
-                            await sessions.BroadcastAdminBoxAsync(lease.MapId, box, stoppingToken);
-                    boxIds.IntersectWith(boxes.Select(b => b.Id));
+                    var (removed, created) = WorldCollectibleVisibility.Diff(boxIds, boxes);
+                    foreach (var id in removed)
+                        await sessions.BroadcastBoxRemovalAsync(lease.MapId, id, stoppingToken);
+                    foreach (var box in created)
+                        await sessions.BroadcastBoxSpawnAsync(lease.MapId, box, stoppingToken);
                 }
             }
         }

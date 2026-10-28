@@ -11,6 +11,36 @@ public sealed class WorldCollectiblePickupSpecificationTests
     private static readonly DateTimeOffset Start = DateTimeOffset.FromUnixTimeSeconds(1_800_000_000);
 
     [Test]
+    public void Visibility_AnnouncesRespawnedBoxes_AndRemovesPriorCycle()
+    {
+        var announced = new HashSet<int>();
+        var first = WorldCollectibles.Spawn(1, 42, 2);
+        var next = WorldCollectibles.Spawn(1, 43, 2);
+
+        var initial = WorldCollectibleVisibility.Diff(announced, first);
+        Assert.Multiple(() =>
+        {
+            Assert.That(initial.Removed, Is.Empty);
+            Assert.That(initial.Created.Select(box => box.Id), Is.EqualTo(first.Select(box => box.Id)));
+        });
+
+        var unchanged = WorldCollectibleVisibility.Diff(announced, first);
+        Assert.That(unchanged.Removed, Is.Empty);
+        Assert.That(unchanged.Created, Is.Empty);
+
+        var respawn = WorldCollectibleVisibility.Diff(announced, next);
+        Assert.Multiple(() =>
+        {
+            Assert.That(respawn.Removed, Is.EqualTo(first.Select(box => box.Id)));
+            Assert.That(respawn.Created.Select(box => box.Id), Is.EqualTo(next.Select(box => box.Id)));
+        });
+
+        var claimed = WorldCollectibleVisibility.Diff(announced, next.Skip(1).ToArray());
+        Assert.That(claimed.Removed, Is.EqualTo(new[] { next[0].Id }));
+        Assert.That(claimed.Created, Is.Empty);
+    }
+
+    [Test]
     public void Spawn_UsesFixedRewardRotation_AndSeededCoordinateFormula()
     {
         var boxes = WorldCollectibles.Spawn(3, 42, 8);
