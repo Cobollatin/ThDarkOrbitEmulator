@@ -621,7 +621,8 @@ public sealed class IndexInternalStartEndpoint(ILogger<IndexInternalStartEndpoin
             await WriteEconomyPageAsync(session, LocalGalaxyGates.Page(session, gateState, gateDetail,
                 LocalGalaxyGateAction.NoticeGate(HttpContext.Request.Query, "spun"),
                 LocalGalaxyGateAction.NoticeGate(HttpContext.Request.Query, "activated"), gateFilter,
-                LocalGalaxyGateAction.Search(HttpContext.Request.Query)), ct);
+                LocalGalaxyGateAction.Search(HttpContext.Request.Query),
+                await LocalProgressionPanel.GatesAsync(session, gateState, economyStore, clock.GetUtcNow(), ct)), ct);
             return;
         }
 
@@ -673,7 +674,8 @@ public sealed class IndexInternalStartEndpoint(ILogger<IndexInternalStartEndpoin
                 skylabDetail.Length > 0 ? skylabDetail : null,
                 HttpContext.Request.Query.TryGetValue("upgraded", out var skylabUpgraded) ? skylabUpgraded.ToString() : null,
                 HttpContext.Request.Query.ContainsKey("collected"), skylabFilter,
-                LocalSkylabAction.Search(HttpContext.Request.Query)), ct);
+                LocalSkylabAction.Search(HttpContext.Request.Query),
+                await LocalProgressionPanel.SkylabAsync(session, skylabState, economyStore, clock.GetUtcNow(), ct)), ct);
             return;
         }
 

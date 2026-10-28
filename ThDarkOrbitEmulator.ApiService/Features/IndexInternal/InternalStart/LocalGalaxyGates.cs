@@ -241,7 +241,8 @@ public static class LocalGalaxyGates
     }
 
     public static string Page(GameAuthSession session, LocalGalaxyGateState state, string? gateId = null,
-        string? spun = null, string? activated = null, string? filter = null, string? search = null)
+        string? spun = null, string? activated = null, string? filter = null, string? search = null,
+        string progressionHtml = "")
     {
         search = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
         var notice = Notice(state, spun, activated);
@@ -251,7 +252,7 @@ public static class LocalGalaxyGates
             $"<article data-gate=\"{gate.Id}\"{(gate.Id == gateId ? " class=\"selected\"" : "")}><h2><a href=\"{Link(gate.Id, filter)}\">{HtmlEncoder.Default.Encode(gate.Name)}</a></h2><p>Parts: {gate.PartsOwned} / {gate.PartsRequired}</p><p class=\"status\">Status: {Status(gate, state.Energy)}</p>{(gate.Id == gateId ? "" : ActionForm(session, state, gate, filter))}</article>"));
         var activatedCount = state.Gates.Count(g => g.Activated);
         return $$"""
-            <!doctype html><html lang="es"><head><meta charset="utf-8"><title>Galaxy Gates - DarkOrbit</title><style>body{background:#050b12;color:#e3f2fc;font:18px Arial,sans-serif}main{max-width:900px;margin:7vh auto}a{color:#8cdcff;margin-right:20px}article{border:1px solid #4c7896;padding:16px;margin:16px 0}button{background:#1789b5;color:white;padding:8px;border:0}#gate-detail,.selected{border:1px solid #8cdcff;padding:16px}</style></head><body><main id="galaxy-gates"><h1>Galaxy Gates</h1><p>Pilot {{HtmlEncoder.Default.Encode(session.Username)}} · Energy: {{state.Energy}} · Activated gates: {{activatedCount}} / {{state.Gates.Count}}</p><p>Each spin adds one local gate part. Complete a gate to activate it; activation does not enter the world. Completed gates cannot be spun again.</p>{{FilterTabs(state, filter, search)}}{{SearchForm(filter, search, visible.Count, state.Gates.Count(g => Matches(g, filter)))}}{{notice}}{{detail}}{{cards}}<p><a href="/indexInternal.es?action=internalWebGL&amp;from=internalStart">Back to game</a></p></main></body></html>
+            <!doctype html><html lang="es"><head><meta charset="utf-8"><title>Galaxy Gates - DarkOrbit</title><style>body{background:#050b12;color:#e3f2fc;font:18px Arial,sans-serif}main{max-width:900px;margin:7vh auto}a{color:#8cdcff;margin-right:20px}article{border:1px solid #4c7896;padding:16px;margin:16px 0}button{background:#1789b5;color:white;padding:8px;border:0}#gate-detail,.selected{border:1px solid #8cdcff;padding:16px}</style></head><body><main id="galaxy-gates"><h1>Galaxy Gates</h1><p>Pilot {{HtmlEncoder.Default.Encode(session.Username)}} · Energy: {{state.Energy}} · Activated gates: {{activatedCount}} / {{state.Gates.Count}}</p><p>Each spin adds one local gate part. Complete a gate to activate it; activation does not enter the world. Completed gates cannot be spun again.</p>{{FilterTabs(state, filter, search)}}{{SearchForm(filter, search, visible.Count, state.Gates.Count(g => Matches(g, filter)))}}{{notice}}{{detail}}{{cards}}{{progressionHtml}}<p><a href="/indexInternal.es?action=internalWebGL&amp;from=internalStart">Back to game</a></p></main></body></html>
             """;
     }
 }

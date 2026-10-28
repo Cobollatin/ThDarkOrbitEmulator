@@ -63,6 +63,66 @@ public sealed class LocalSkylabPostgresTests
     }
 
     [Test]
+    public async Task TimedUpgrade_IsDurableAndCannotFinishEarlyOrChargeTwice()
+    {
+        var h = await HarnessAsync();
+        var ct = TestContext.CurrentContext.CancellationToken;
+        var id = h.Session.AccountId;
+        Assert.That(await h.Economy.StartCollectorUpgradeAsync(id, "prometium", 1, Start, "timer-1", ct), Is.EqualTo(ProgressionChange.Applied));
+        Assert.That(await h.Economy.StartCollectorUpgradeAsync(id, "prometium", 1, Start, "timer-1", ct), Is.EqualTo(ProgressionChange.Conflict));
+        Assert.That(await h.Economy.FinishCollectorUpgradeAsync(id, "prometium", Start.AddSeconds(59), "finish-1", ct), Is.EqualTo(ProgressionChange.NotReady));
+        Assert.That(await LevelAsync(h, "prometium"), Is.EqualTo(1));
+        Assert.That(await BalanceAsync(h, "prometium"), Is.EqualTo(400));
+        Assert.That((await h.Economy.CollectorUpgradeJobsAsync(id, ct)).Single().ReadyAt, Is.EqualTo(Start.AddMinutes(1)));
+        Assert.That(await new EconomyStore(_config).FinishCollectorUpgradeAsync(id, "prometium", Start.AddMinutes(1), "finish-1", ct), Is.EqualTo(ProgressionChange.Applied));
+        Assert.That(await h.Economy.FinishCollectorUpgradeAsync(id, "prometium", Start.AddMinutes(2), "finish-1", ct), Is.EqualTo(ProgressionChange.Conflict));
+        Assert.That(await LevelAsync(h, "prometium"), Is.EqualTo(2));
+        Assert.That(await BalanceAsync(h, "prometium"), Is.EqualTo(400));
+    }
+
+    [Test]
+    public async Task Refinery_ConsumesInputsAndCreditsOutputOnlyAfterTimer()
+    {
+        var h = await HarnessAsync();
+        var ct = TestContext.CurrentContext.CancellationToken;
+        var id = h.Session.AccountId;
+        Assert.That(await h.Economy.StartRefineryAsync(id, Start, "refine-1", ct), Is.EqualTo(ProgressionChange.Applied));
+        Assert.That(await h.Economy.StartRefineryAsync(id, Start, "refine-2", ct), Is.EqualTo(ProgressionChange.Conflict));
+        Assert.That(await BalanceAsync(h, "prometium"), Is.EqualTo(490));
+        Assert.That(await BalanceAsync(h, "endurium"), Is.EqualTo(490));
+        Assert.That(await h.Economy.ClaimRefineryAsync(id, Start.AddMinutes(4), "claim-1", ct), Is.EqualTo(ProgressionChange.NotReady));
+        Assert.That((await new EconomyStore(_config).RefineryJobAsync(id, ct))?.ReadyAt, Is.EqualTo(Start.AddMinutes(5)));
+        Assert.That(await new EconomyStore(_config).ClaimRefineryAsync(id, Start.AddMinutes(5), "claim-1", ct), Is.EqualTo(ProgressionChange.Applied));
+        Assert.That(await h.Economy.ClaimRefineryAsync(id, Start.AddMinutes(6), "claim-1", ct), Is.EqualTo(ProgressionChange.Conflict));
+        Assert.That(await BalanceAsync(h, "prometid"), Is.EqualTo(10));
+    }
+
+    [Test]
+    public async Task TimedUpgradeForm_UsesSignedActionAndReturnsToSkylab()
+    {
+        var h = await HarnessAsync();
+        var action = "internalSkylabUpgradeStart";
+        var key = LocalProgressionAction.FormKey(h.Session.Dosid, action, "terbium", "1", Start);
+        var context = new DefaultHttpContext();
+        context.Request.Method = "POST";
+        context.Request.Path = "/indexInternal.es";
+        context.Request.QueryString = new QueryString($"?action={action}");
+        context.Request.ContentType = "application/x-www-form-urlencoded";
+        context.Request.Headers.Cookie = $"dosid={h.Session.Dosid}";
+        var bytes = Encoding.UTF8.GetBytes($"collector=terbium&level=1&key={Uri.EscapeDataString(key)}");
+        context.Request.Body = new MemoryStream(bytes);
+        context.Request.ContentLength = bytes.Length;
+        context.Response.Body = new MemoryStream();
+        await LocalProgressionAction.HandleAsync(context, h.Sessions, h.Skylab,
+            new LocalGalaxyGateStore(NewCache(), h.Economy), h.Economy, h.Clock,
+            TestContext.CurrentContext.CancellationToken);
+        Assert.That(context.Response.StatusCode, Is.EqualTo(StatusCodes.Status303SeeOther));
+        Assert.That(context.Response.Headers.Location.ToString(), Is.EqualTo("/indexInternal.es?action=internalSkylab"));
+        Assert.That((await h.Economy.CollectorUpgradeJobsAsync(h.Session.AccountId,
+            TestContext.CurrentContext.CancellationToken)).Single().CollectorId, Is.EqualTo("terbium"));
+    }
+
+    [Test]
     public async Task Upgrade_AtCurrentLevel_DebitsOwnResourceAndRaisesLevel()
     {
         var harness = await HarnessAsync();

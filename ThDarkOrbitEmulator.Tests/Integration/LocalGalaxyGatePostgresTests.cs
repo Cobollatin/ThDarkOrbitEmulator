@@ -65,6 +65,26 @@ public sealed class LocalGalaxyGatePostgresTests
     }
 
     [Test]
+    public async Task ActivatedGate_ProgressesThreeDurableWavesOnceEach()
+    {
+        var h = await HarnessAsync();
+        var ct = TestContext.CurrentContext.CancellationToken;
+        await SpinUntilAsync(h, "alpha", 34);
+        var activation = await ActivateAsync(h, h.Gates, "alpha");
+        Assert.That(activation.Response.StatusCode, Is.EqualTo(StatusCodes.Status303SeeOther), Body(activation));
+        var id = h.Session.AccountId;
+        var other = new EconomyStore(_config);
+        Assert.That(await other.GateRunAsync(id, "alpha", ct), Is.EqualTo(new GateRun(0, 3, null)));
+        Assert.That(await h.Economy.AdvanceGateWaveAsync(id, "alpha", 0, Start, "wave-1", ct), Is.EqualTo(ProgressionChange.Applied));
+        Assert.That(await other.AdvanceGateWaveAsync(id, "alpha", 0, Start, "wave-1", ct), Is.EqualTo(ProgressionChange.Conflict));
+        Assert.That(await other.AdvanceGateWaveAsync(id, "alpha", 1, Start.AddMinutes(1), "wave-2", ct), Is.EqualTo(ProgressionChange.Applied));
+        Assert.That(await other.AdvanceGateWaveAsync(id, "alpha", 2, Start.AddMinutes(2), "wave-3", ct), Is.EqualTo(ProgressionChange.Applied));
+        Assert.That(await h.Economy.GateRunAsync(id, "alpha", ct), Is.EqualTo(new GateRun(3, 3, Start.AddMinutes(2))));
+        Assert.That(await other.AdvanceGateWaveAsync(id, "alpha", 2, Start.AddMinutes(3), "wave-4", ct), Is.EqualTo(ProgressionChange.Conflict));
+        Assert.That(await EnergyAsync(h), Is.EqualTo(216));
+    }
+
+    [Test]
     public async Task Spin_DebitsEnergyOnceAndSavesParts()
     {
         var harness = await HarnessAsync();

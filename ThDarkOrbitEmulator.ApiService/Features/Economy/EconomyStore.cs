@@ -25,7 +25,7 @@ public enum SkylabChange { Applied, Invalid, Conflict, InsufficientResources, Ma
 public enum TechFactoryChange { Applied, Invalid, Conflict, InsufficientComponents }
 public enum ClanChange { Applied, Invalid, Conflict }
 
-public sealed class EconomyStore(IConfiguration configuration, IRuntimeVariableRegistry? variables = null)
+public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeVariableRegistry? variables = null)
 {
     public async Task<string?> ClanMembershipAsync(Guid accountId, CancellationToken ct)
     {
@@ -1051,6 +1051,7 @@ public sealed class EconomyStore(IConfiguration configuration, IRuntimeVariableR
         {
             var current = progress.FirstOrDefault(p => p.Id == collectorId);
             if (current.Id is null || current.Level != expectedLevel) return SkylabChange.Conflict;
+            if (await PendingCollectorUpgradeAsync(db, tx, accountId, collectorId, ct)) return SkylabChange.Conflict;
             if (current.Level >= 10) return SkylabChange.MaxLevel;
             if (!await ChangeBalanceAsync(db, tx, accountId, collectorId, -100L * current.Level,
                 "skylab_upgrade", "skylab", key, ct)) return SkylabChange.InsufficientResources;
@@ -1114,6 +1115,13 @@ public sealed class EconomyStore(IConfiguration configuration, IRuntimeVariableR
             cmd.Parameters.AddWithValue("p", Math.Clamp(gate.PartsOwned, 0, definition.PartsRequired));
             cmd.Parameters.AddWithValue("active", gate.Activated && gate.PartsOwned >= definition.PartsRequired);
             await cmd.ExecuteNonQueryAsync(ct);
+            if (gate.Activated && gate.PartsOwned >= definition.PartsRequired)
+            {
+                await using var run = new NpgsqlCommand("INSERT INTO economy.gate_runs(account_id,gate_id,wave,total_waves) VALUES (@a,@g,0,@total) ON CONFLICT DO NOTHING", db, tx);
+                run.Parameters.AddWithValue("a", accountId); run.Parameters.AddWithValue("g", gate.Id);
+                run.Parameters.AddWithValue("total", GalaxyGateWaveCount);
+                await run.ExecuteNonQueryAsync(ct);
+            }
         }
         await tx.CommitAsync(ct);
     }
@@ -1153,6 +1161,13 @@ public sealed class EconomyStore(IConfiguration configuration, IRuntimeVariableR
         update.Parameters.AddWithValue("a", accountId); update.Parameters.AddWithValue("g", gateId);
         update.Parameters.AddWithValue("p", parts + amount); update.Parameters.AddWithValue("active", amount == 0);
         await update.ExecuteNonQueryAsync(ct);
+        if (amount == 0)
+        {
+            await using var wave = new NpgsqlCommand("INSERT INTO economy.gate_runs(account_id,gate_id,wave,total_waves) VALUES (@a,@g,0,@total)", db, tx);
+            wave.Parameters.AddWithValue("a", accountId); wave.Parameters.AddWithValue("g", gateId);
+            wave.Parameters.AddWithValue("total", GalaxyGateWaveCount);
+            await wave.ExecuteNonQueryAsync(ct);
+        }
         await tx.CommitAsync(ct);
         return GalaxyGateChange.Applied;
     }

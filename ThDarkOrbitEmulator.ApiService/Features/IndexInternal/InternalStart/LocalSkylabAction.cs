@@ -40,6 +40,9 @@ public static class LocalSkylabAction
         return DateTimeOffset.FromUnixTimeSeconds(seconds);
     }
 
+    public static bool ValidProgressionKey(string dosid, string target, string expected, string key, DateTimeOffset now) =>
+        KeyIssued(dosid, target, expected, key) is { } issued && issued <= now + ClockSkew && now - issued <= FormLifetime;
+
     // GET page accepts only exact lowercase shell keys, each once, at most 64 characters and without control characters.
     // The optional lowercase `detail` key names one collector by its lowercase ASCII id (existence is checked after the session).
     // Menu-121: the redirect targets add either lowercase `upgraded={collector}` (same shape as `detail`) or

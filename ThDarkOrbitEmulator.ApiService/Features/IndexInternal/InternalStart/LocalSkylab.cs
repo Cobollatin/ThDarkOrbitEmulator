@@ -198,7 +198,8 @@ public static class LocalSkylab
         $"/indexInternal.es?action=internalSkylab{FilterSuffix(filter)}&amp;detail={id}";
 
     public static string Page(GameAuthSession session, LocalSkylabState state, DateTimeOffset? now = null, string? detail = null,
-        string? upgraded = null, bool collected = false, string? filter = null, string? search = null)
+        string? upgraded = null, bool collected = false, string? filter = null, string? search = null,
+        string progressionHtml = "")
     {
         if (filter == "all") filter = null;
         search = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
@@ -229,16 +230,16 @@ public static class LocalSkylab
             : $"<p id=\"skylabEmpty\">No collectors match the {Filters.First(f => f.Id == filter).Label.ToLowerInvariant()} filter.</p>";
         var rows = string.Join("", shown.Select(c =>
             $"<tr id=\"skylabRow-{c.Id}\" data-status=\"{StatusOf(c)}\"><td><a href=\"{DetailLink(c.Id, filter)}\">{HtmlEncoder.Default.Encode(c.Name)}</a></td><td>{c.Level}</td><td>{c.Stock}</td><td>{minutes * c.Level * 10}</td><td>" +
-            (c.Level >= 10 ? "Maximum level" :
+            (c.Level >= 10 ? "Maximum level" : progressionHtml.Length > 0 ? "Timed upgrade below" :
                 $"<form method=\"post\" action=\"/indexInternal.es?action=internalSkylabUpgrade\"><input type=\"hidden\" name=\"collector\" value=\"{c.Id}\"><input type=\"hidden\" name=\"level\" value=\"{c.Level}\"><input type=\"hidden\" name=\"key\" value=\"{LocalSkylabAction.CreateFormKey(session.Dosid, c.Id, c.Level.ToString(), current)}\"><button type=\"submit\">Upgrade ({100 * c.Level} {HtmlEncoder.Default.Encode(c.Name)})</button></form>") + "</td></tr>"));
         var totalOutput = state.Collectors.Sum(c => c.Level * 10L);
         var levelsLeft = state.Collectors.Sum(c => Math.Max(0, MaxLevel - c.Level));
         var summary = $"<p id=\"skylabSummary\">Total output: {totalOutput} units/minute. " +
             (levelsLeft == 0 ? "All collectors are at the maximum level." :
                 $"{levelsLeft} upgrade(s) left, costing {state.Collectors.Sum(c => CostToMax(c.Level))} units in total.") + "</p>";
-        var panel = ActionNotice(state, upgraded, collected) + (detail is null ? "" : DetailPanel(session, state, detail, minutes, current, filter));
+        var panel = ActionNotice(state, upgraded, collected) + (detail is null ? "" : DetailPanel(session, state, detail, minutes, current, filter, progressionHtml.Length > 0));
         return $$"""
-            <!doctype html><html lang="es"><head><meta charset="utf-8"><title>Skylab - DarkOrbit</title><style>body{background:#050b12;color:#e3f2fc;font:18px Arial,sans-serif}main{max-width:900px;margin:7vh auto}a{color:#8cdcff}td,th{padding:12px;border:1px solid #4c7896}button{background:#1789b5;color:white;padding:8px;border:0}</style></head><body><main id="skylab"><h1>Skylab</h1><p>Pilot {{HtmlEncoder.Default.Encode(session.Username)}}</p><p>Collectors produce 10 units per level each minute. Up to 60 minutes can be collected at once.</p>{{status}}{{summary}}{{panel}}<ul>{{notices}}</ul>{{tabs}}{{empty}}<table><thead><tr><th>Collector</th><th>Level</th><th>Stock</th><th>Pending</th><th>Upgrade</th></tr></thead><tbody>{{rows}}</tbody></table><form method="post" action="/indexInternal.es?action=internalSkylabCollect"><input type="hidden" name="time" value="{{state.LastCollected.Ticks}}"><input type="hidden" name="key" value="{{LocalSkylabAction.CreateFormKey(session.Dosid, "collect", state.LastCollected.Ticks.ToString(), current)}}"><button type="submit"{{(minutes < 1 ? " disabled" : "")}}>Collect production</button></form><p><a href="/indexInternal.es?action=internalWebGL&amp;from=internalStart">Back to game</a></p></main></body></html>
+            <!doctype html><html lang="es"><head><meta charset="utf-8"><title>Skylab - DarkOrbit</title><style>body{background:#050b12;color:#e3f2fc;font:18px Arial,sans-serif}main{max-width:900px;margin:7vh auto}a{color:#8cdcff}td,th{padding:12px;border:1px solid #4c7896}button{background:#1789b5;color:white;padding:8px;border:0}</style></head><body><main id="skylab"><h1>Skylab</h1><p>Pilot {{HtmlEncoder.Default.Encode(session.Username)}}</p><p>Collectors produce 10 units per level each minute. Up to 60 minutes can be collected at once.</p>{{status}}{{summary}}{{panel}}<ul>{{notices}}</ul>{{tabs}}{{empty}}<table><thead><tr><th>Collector</th><th>Level</th><th>Stock</th><th>Pending</th><th>Upgrade</th></tr></thead><tbody>{{rows}}</tbody></table><form method="post" action="/indexInternal.es?action=internalSkylabCollect"><input type="hidden" name="time" value="{{state.LastCollected.Ticks}}"><input type="hidden" name="key" value="{{LocalSkylabAction.CreateFormKey(session.Dosid, "collect", state.LastCollected.Ticks.ToString(), current)}}"><button type="submit"{{(minutes < 1 ? " disabled" : "")}}>Collect production</button></form>{{progressionHtml}}<p><a href="/indexInternal.es?action=internalWebGL&amp;from=internalStart">Back to game</a></p></main></body></html>
             """;
     }
 
@@ -261,7 +262,7 @@ public static class LocalSkylab
     }
 
     private static string DetailPanel(GameAuthSession session, LocalSkylabState state, string detail, long minutes, DateTimeOffset current,
-        string? filter)
+        string? filter, bool timedUpgrades)
     {
         var shown = state.Collectors.Where(c => Matches(c, filter)).ToList();
         var index = shown.FindIndex(c => c.Id == detail);
@@ -276,7 +277,8 @@ public static class LocalSkylab
               (c.Stock >= cost ? "Stock covers it now." :
                   $"{cost - c.Stock} more units needed: about {wait} minute(s) of production" +
                   (wait > MaxCollectMinutes ? $", more than one {MaxCollectMinutes}-minute collection." : ".")) + "</p>" +
-              $"<form method=\"post\" action=\"/indexInternal.es?action=internalSkylabUpgrade\"><input type=\"hidden\" name=\"collector\" value=\"{c.Id}\"><input type=\"hidden\" name=\"level\" value=\"{c.Level}\"><input type=\"hidden\" name=\"key\" value=\"{LocalSkylabAction.CreateFormKey(session.Dosid, c.Id, c.Level.ToString(), current)}\"><button type=\"submit\"{(c.Stock < cost ? " disabled" : "")}>Upgrade ({cost} {name})</button></form>";
+              (timedUpgrades ? "<p>Use the timed upgrade form below.</p>" :
+              $"<form method=\"post\" action=\"/indexInternal.es?action=internalSkylabUpgrade\"><input type=\"hidden\" name=\"collector\" value=\"{c.Id}\"><input type=\"hidden\" name=\"level\" value=\"{c.Level}\"><input type=\"hidden\" name=\"key\" value=\"{LocalSkylabAction.CreateFormKey(session.Dosid, c.Id, c.Level.ToString(), current)}\"><button type=\"submit\"{(c.Stock < cost ? " disabled" : "")}>Upgrade ({cost} {name})</button></form>");
         var nav = (index > 0 ? $"<a id=\"skylabDetailPrevious\" href=\"{DetailLink(shown[index - 1].Id, filter)}\">Previous</a> " : "") +
             (index < shown.Count - 1 ? $"<a id=\"skylabDetailNext\" href=\"{DetailLink(shown[index + 1].Id, filter)}\">Next</a> " : "") +
             $"<a id=\"skylabDetailClose\" href=\"/indexInternal.es?action=internalSkylab{FilterSuffix(filter)}\">Close</a>";

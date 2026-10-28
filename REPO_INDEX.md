@@ -12,5 +12,6 @@
 - `ThDarkOrbitEmulator.Tests/Integration/WorldRocketAndNpcAggroTests.cs`: shared-cache rocket cooldown, lethal reward, NPC pursuit and pilot damage integration tests.
 - `.ralph/memory-index.json`: focused world entry, transport, simulation, and test paths; records the currently missing requested spec files.
 - `docs/specs/03-hangar-inventory-and-shop.md`, `07-economy-progression-and-quests.md`, `08-clans-diplomacy-and-chat.md`: topical Task 3 audits supplement the existing numbered master specs. Shop, Dock, Skylab, and Galaxy Gates live in `ApiService/Features/IndexInternal/InternalStart/` with durable mutations in `ApiService/Features/Economy/EconomyStore.cs`; Cockpit routes live in `ApiService/Features/UnityApi/Login/CockpitCatalogEndpoints.cs`.
+- `ApiService/Features/Economy/EconomyProgression.cs`: Task 6 provisional timed collector upgrades, refinery batches, and gate wave transitions; `IndexInternal/InternalStart/LocalProgressionAction.cs` and `LocalProgressionPanel.cs` expose signed menu forms. Schema migration: `Identity.Infrastructure/Migrations/Sql/031_skylab_jobs_and_gate_waves.*.pgsql`; integration coverage lives in the Skylab and Galaxy Gate PostgreSQL fixtures.
 
 Read the relevant feature directory and documentation before broader searches. Update this index when adding or moving modules.

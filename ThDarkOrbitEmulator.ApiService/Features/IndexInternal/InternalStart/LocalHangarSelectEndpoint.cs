@@ -36,6 +36,9 @@ public sealed class LocalHangarSelectEndpoint(
             await LocalGalaxyGateAction.HandleAsync(HttpContext, sessions, galaxyGates, ct);
         else if (HttpContext.Request.Query["action"].ToString() is "internalSkylabUpgrade" or "internalSkylabCollect")
             await LocalSkylabAction.HandleAsync(HttpContext, sessions, skylab, ct, clock);
+        else if (LocalProgressionAction.Actions.Contains(HttpContext.Request.Query["action"].ToString()))
+            await LocalProgressionAction.HandleAsync(HttpContext, sessions, skylab, galaxyGates,
+                HttpContext.RequestServices.GetRequiredService<ThDarkOrbitEmulator.ApiService.Features.Economy.EconomyStore>(), clock, ct);
         else if (HttpContext.Request.Query["action"].ToString() is "internalTechFactoryStart" or "internalTechFactoryClaim")
             await LocalTechFactoryAction.HandleAsync(HttpContext, sessions, techFactory, ct, clock);
         else if (HttpContext.Request.Query["action"].ToString() is "internalClanJoin" or "internalClanLeave")
