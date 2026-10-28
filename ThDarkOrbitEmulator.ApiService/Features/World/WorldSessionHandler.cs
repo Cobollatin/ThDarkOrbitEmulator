@@ -406,6 +406,7 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                     }
                     if (packet.Value.Command == WorldCommandId.SelectShipRequest && (npcs is not null || gates is not null))
                     {
+                        if (npcs is not null) await npcs.StopLaserAsync(connected.UserId, ct);
                         var id = WorldPayload.Decode(packet.Value.Payload, WorldPayload.ReadInt32);
                         var target = WorldMapInstance.IsGate(connected.MapId)
                             ? gates is null ? null : await gates.SelectAsync(connected, id, ct)
@@ -419,6 +420,12 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                             WorldPayload.WriteInt32(w, target?.MaxHp ?? 0);
                             WorldPayload.WriteInt32(w, target?.MaxShield ?? 0);
                         }), ct);
+                        continue;
+                    }
+                    if (packet.Value.Command == WorldCommandId.LaserStopRequest && npcs is not null)
+                    {
+                        if (packet.Value.Payload.Length != 0) throw new InvalidDataException();
+                        await npcs.StopLaserAsync(connected.UserId, ct);
                         continue;
                     }
                     if (packet.Value.Command is WorldCommandId.LaserFireRequest or WorldCommandId.RocketFireRequest &&
@@ -441,6 +448,11 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                             if (hit.Status is "missing" or "destroyed") selectedNpcId = null;
                         }
                         else await SendLaserFireResultAsync(connection!, id, "hit", ct);
+                        if (packet.Value.Command == WorldCommandId.LaserFireRequest &&
+                            !WorldMapInstance.IsGate(connected.MapId) && hit.Status == "hit" && !hit.Destroyed)
+                            await npcs!.StartLaserAsync(connected, id, ct);
+                        else if (npcs is not null && hit.Status != "hit")
+                            await npcs.StopLaserAsync(connected.UserId, ct);
                         if (hit.Destroyed) selectedNpcId = null;
                         continue;
                     }

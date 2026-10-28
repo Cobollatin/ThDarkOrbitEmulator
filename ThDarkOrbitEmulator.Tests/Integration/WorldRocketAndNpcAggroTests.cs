@@ -11,6 +11,82 @@ namespace ThDarkOrbitEmulator.Tests.Integration;
 public sealed class WorldRocketAndNpcAggroTests
 {
     [Test]
+    public async Task LaserRepeatsOnServerInterval_AndStopsExplicitly()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var npcs = CreateNpcs(cache, mutex, new Rewards(), clock, new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 0)],
+            LaserCooldownMilliseconds = 1000, AggroRange = 0
+        });
+        var npc = (await npcs.VisibleAsync(1, default)).Single();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var pilot = await sessions.EnterAsync(Pilot(npc.X, npc.Y), default);
+        await npcs.SelectAsync(pilot, npc.Id, default);
+        Assert.That((await npcs.AttackAsync(pilot, npc.Id, sessions, default)).Target!.Hp, Is.EqualTo(299));
+        await npcs.StartLaserAsync(pilot, npc.Id, default);
+        await npcs.TickLasersAsync(1, sessions, default);
+        Assert.That((await npcs.VisibleAsync(1, default)).Single().Hp, Is.EqualTo(299));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await npcs.TickLasersAsync(1, sessions, default);
+        Assert.That((await npcs.VisibleAsync(1, default)).Single().Hp, Is.EqualTo(298));
+        await npcs.StopLaserAsync(pilot.UserId, default);
+        clock.Advance(TimeSpan.FromSeconds(2));
+        await npcs.TickLasersAsync(1, sessions, default);
+        Assert.That((await npcs.VisibleAsync(1, default)).Single().Hp, Is.EqualTo(298));
+    }
+
+    [Test]
+    public async Task LaserStopsWhenTargetLockChanges()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var npcs = CreateNpcs(cache, mutex, new Rewards(), clock, new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 2, 300, 0, 0, 0, 0, 0, 0)]
+        });
+        var target = (await npcs.VisibleAsync(1, default)).First();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var pilot = await sessions.EnterAsync(Pilot(target.X, target.Y), default);
+        await npcs.SelectAsync(pilot, target.Id, default);
+        await npcs.StartLaserAsync(pilot, target.Id, default);
+        await npcs.SelectAsync(pilot, target.Id + 1, default);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await npcs.TickLasersAsync(1, sessions, default);
+        Assert.That((await npcs.VisibleAsync(1, default)).First().Hp, Is.EqualTo(300));
+    }
+
+    [Test]
+    public async Task LaserStopsWhenPilotLeavesRange()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var npcs = CreateNpcs(cache, mutex, new Rewards(), clock, new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 0)]
+        });
+        var target = (await npcs.VisibleAsync(1, default)).Single();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var pilot = await sessions.EnterAsync(Pilot(target.X, target.Y), default);
+        await npcs.SelectAsync(pilot, target.Id, default);
+        await npcs.StartLaserAsync(pilot, target.Id, default);
+        await sessions.TeleportAsync(pilot.UserId, 1, target.X + 2000, target.Y, false, default);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await npcs.TickLasersAsync(1, sessions, default);
+        await sessions.TeleportAsync(pilot.UserId, 1, target.X, target.Y, false, default);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await npcs.TickLasersAsync(1, sessions, default);
+        Assert.That((await npcs.VisibleAsync(1, default)).Single().Hp, Is.EqualTo(300));
+    }
+
+    [Test]
     public async Task Rocket_UsesCooldown_ThenCreditsLethalRewardOnce()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

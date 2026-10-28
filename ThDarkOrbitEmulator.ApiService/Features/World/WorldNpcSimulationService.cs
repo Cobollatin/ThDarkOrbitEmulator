@@ -39,8 +39,12 @@ public sealed class WorldNpcSimulationService(WorldNpcs npcs, WorldSessionStore 
             { known.Remove(mapId); knownBoxes.Remove(mapId); cycles.Remove(mapId); }
             foreach (var lease in snapshot.Leases.Where(l => l.NodeId == nodeId && l.ExpiresAtUtc > DateTimeOffset.UtcNow))
             {
-                try { await npcs.TickAggroAsync(lease.MapId, sessions, stoppingToken,
-                    new WorldLeaseFence(registry, nodeId, lease.Epoch)); }
+                try
+                {
+                    var fence = new WorldLeaseFence(registry, nodeId, lease.Epoch);
+                    await npcs.TickAggroAsync(lease.MapId, sessions, stoppingToken, fence);
+                    await npcs.TickLasersAsync(lease.MapId, sessions, stoppingToken, fence);
+                }
                 catch (WorldLeaseLostException) { continue; }
                 var visible = await npcs.VisibleAsync(lease.MapId, stoppingToken);
                 if (!cycles.TryGetValue(lease.MapId, out var cycle) || cycle != npcs.CurrentCycle)

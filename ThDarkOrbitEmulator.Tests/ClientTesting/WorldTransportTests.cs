@@ -1048,6 +1048,7 @@ public class WorldTransportTests
             Assert.That(firstResult.Command, Is.EqualTo(WorldCommandId.LaserFireResultCommand));
             Assert.That(WorldPayload.Decode(firstResult.Payload, r =>
                 (WorldPayload.ReadInt32(r), WorldPayload.ReadString(r))), Is.EqualTo((npc.Id, "hit")));
+            await output.WriteAsync(WorldCommandId.LaserStopRequest, ReadOnlyMemory<byte>.Empty);
             await output.WriteAsync(WorldCommandId.LaserFireRequest,
                 WorldPayload.Encode(w => WorldPayload.WriteInt32(w, npc.Id)));
             Assert.That((await input.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.LaserHitCommand));
