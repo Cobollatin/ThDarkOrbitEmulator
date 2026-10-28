@@ -10,6 +10,7 @@
 - `ThDarkOrbitEmulator.AppHost/`: Aspire wiring, including HTTPS and world listener ports.
 - `ThDarkOrbitEmulator.Tests/Integration/WorldAssignedHangarPostgresTests.cs`: PostgreSQL cockpit assignment to world stat entry regression.
 - `ApiService/Features/UnityApi/Login/UnityHangarActivateAction.cs`: installed `config.txt` `hangerChange:/unityApi/activate.php` POST (`hangarId` form, JSON `success`/`message`) selects the player's assigned PostgreSQL hangar; mapped in `CockpitCatalogEndpoints.cs` and covered by `UnityHangarActivatePostgresTests.cs`.
+- `ApiService/Features/UnityApi/Login/UnityConfigRoutes.cs`: maps the seven remaining installed `config.txt` endpoints (instance, close, agent, changeInstance, evoucher, package, setLang) with game-session checks; `UnityHangarActivatePostgresTests.cs` covers them through HTTP and PostgreSQL. The complete twelve-template table and native callback trace are in `docs/cockpit-catalog.md`.
 - `ThDarkOrbitEmulator.Tests/Integration/WorldRocketAndNpcAggroTests.cs`: shared-cache rocket cooldown, lethal reward, NPC pursuit and pilot damage integration tests.
 - `ApiService/Features/World/NativeWorldHandshake.cs`: native Unity three-byte framing, version and login modules, session authentication, and provisional map/hero entry payloads; loopback coverage in `WorldTransportTests.cs`.
 - `.ralph/memory-index.json`: focused world entry, transport, simulation, and test paths; records the currently missing requested spec files.

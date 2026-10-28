@@ -18,6 +18,46 @@ button calling it.
 | Forum / Help / Account | `boardLink`, `helpLink`, `/unityApi/links.php` (`forum`, `support`, `help`, `accountCenter`) | Served on the advertised `:60952` host. |
 | Open World / Spacemap | Portal `LAUNCH` link on `internalWebGL`; HTTP canvas `indexInternal.es?action=internalMapRevolution` (`/spacemap/world/*`); world TCP listener `127.0.0.1:60954` | The HTTP spacemap works. The portal link disappears by design when `OpenWebLogin` closes the WebView at the `internalWebGL` handoff. Native START → world socket entry is **unverified**. |
 
+## Installed `StreamingAssets/config.txt` route table
+
+`Init.<LoadConfig>d__32.MoveNext` copies these suffixes into `Settings`, and
+`Init.UpdateHost` (`0xEFD580`) joins them to the selected HTTPS host. The
+installed `localHost:localhost:60952` is an authority, not a route. All twelve
+templates below have an ApiService mapping. The seven newly mapped routes use
+local response contracts because no retained Live HAR contains those replies.
+
+| Config key | Installed template | Native use / ApiService behavior |
+| --- | --- | --- |
+| `instanceHost` | `GET /unityApi/instance.php` | `LaunchShow.<Start>b__55_7` passes `Settings.InstanceHost` to `GetRequest`; its iterator parses `ServerData.data` with region `serverList` collections. Local response lists enabled catalog servers; requires `dosid`. |
+| `loginHost` | `GET /unityApi/login.php` | Existing nested login JSON and authenticated `dosid` handling. |
+| `newsHost` | `GET /unityApi/news.php` | Existing news countdown JSON and session handling. |
+| `logoutHost` | `GET /indexInternal.es?action=externalLogout` | Existing local session invalidation and WebView redirect. |
+| `quitHost` | `GET /unityApi/close.php` | The configured quit suffix is mapped. The cockpit quit callback `<>c.<Start>b__55_2` calls `Application.Quit`; a native HTTP call to this template has not been established. Local close reply has `data: []` and invalidates `dosid`. |
+| `hangerChange` | `POST /unityApi/activate.php` | `hangarId` form field; selects an assigned hangar and returns `success`/`message`. |
+| `UnityRequest` | `POST /unityApi/agent.php` | `LaunchShow.<GetUnityPost>d__52.MoveNext` posts one `functionId` field to `Settings.UnityRequest`. Local handler validates it and acknowledges; server-side meaning is unverified. |
+| `changeInstance` | `POST /unityApi/changeInstance.php` | `GameLoadingManager.<PostChangeInstance>d__64.MoveNext` posts `instanceId` and parses `ChooseServerData` (`result`, `link`, `error`, `status`). Local handler accepts an enabled online catalog ID and supplies a same-origin login link; no mesh migration is implied. |
+| `voucher` | `GET /unityApi/evoucher.php` | Local authenticated navigation to `internalPayment`; native request shape is unverified. |
+| `package` | `GET /unityApi/package.php` | Local authenticated navigation to `internalShop`; native request shape is unverified. |
+| `link` | `GET /unityApi/links.php` | Existing six-link JSON; a valid `dosid` is propagated/refreshed. |
+| `language` | `POST /unityApi/setLang.php` | `LaunchShow.<GetUnityPostLanguage>d__53.MoveNext` injects a WebView `fetch` with URL-encoded `lang` and `credentials:'include'`. Local handler saves the enabled language for that account. |
+
+The native `LaunchShow.<Start>b__55_3` and `_4` callbacks set
+`Unity_OpenProfile` and `Unity_OpenRank`, then call `StartGame`; neither
+callback contains an HTTP URL. `LaunchShow.OnBtnClick` (`0xEE0FD0`) distinguishes
+`?action=internalDock`, `internalGalaxyGates`, and `internalPayment`, sets
+`Unity_OpenShop`, `Unity_OpenGate`, or `Unity_Vouchers`, or opens an absolute URL.
+Its empty-link branch calls `JavascriptHelper.OpenPackageUrl`. Equipment is
+reached through the Dock menu at `internalDockEquipment`, and Account Center
+through the existing `links.php` `accountCenter` destination. Breaking News
+uses the existing `news.php` and Command Center routes. `OpenWebLogin` wires a
+`CallUnityOpenWindow` message callback to `JavascriptHelper.OpenWebUrl`; its
+`UpdateWebData` path recognizes the `Unity_OpenProfile`, `Unity_OpenRank`, and
+`Unity_ChangeLanguage` flags. These local menu destinations are served, but
+their exact native navigation after a button click still needs a redirect
+capture. The native server picker requests `instance.php`; its selected
+instance posts to `changeInstance.php`. The native language choice posts to
+`setLang.php` from the embedded WebView.
+
 ## Evidence
 
 The supplied Unity console shows `OpenWebLogin` navigating to
@@ -64,9 +104,8 @@ review of the retained session HARs found no 401 hangar request or native
 Profile, Rank, or News button navigation. One redirect capture contains a
 `GET /GameAPI.php?action=core.bpid` 401; it has no evidence tying it to
 `GetHangerPost`. The saved Live capture ends after initial news images.
-Metadata names `LaunchShow.GetHangerPost(url)`,
-`GetNewsRequest`, `Start`, and button callbacks but does not expose their native
-method bodies. Known `/unityApi/login.php`, `/unityApi/news.php`,
+The bounded disassembly exposes `LaunchShow.GetHangerPost(url)`,
+`GetNewsRequest`, `Start`, and the button callback bodies. Known `/unityApi/login.php`, `/unityApi/news.php`,
 `/unityApi/links.php`, and both `/indexInternal.es` endpoint methods already
 allow anonymous HTTP routing and perform `dosid` checks themselves. An
 unmapped route can be rejected by the API fallback authorization policy; a

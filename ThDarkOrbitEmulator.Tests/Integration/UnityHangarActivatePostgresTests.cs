@@ -55,9 +55,11 @@ public sealed class UnityHangarActivatePostgresTests
         builder.Services.AddSingleton<IGameAuthSessionStore>(sp => sp.GetRequiredService<GameAuthSessionStore>());
         builder.Services.AddSingleton<EconomyStore>();
         builder.Services.AddSingleton<LocalHangarStore>();
+        builder.Services.AddSingleton<LocalAccountPreferencesStore>();
         builder.Services.AddSingleton<CockpitCatalogStore>();
         await using var app = builder.Build();
         app.MapCockpitCatalog();
+        app.MapUnityConfigRoutes();
         var sessions = app.Services.GetRequiredService<GameAuthSessionStore>();
         var hangars = app.Services.GetRequiredService<LocalHangarStore>();
         var catalog = app.Services.GetRequiredService<CockpitCatalogStore>();
@@ -101,6 +103,101 @@ public sealed class UnityHangarActivatePostgresTests
             });
             Assert.That(await hangars.GetActiveSlotAsync(accountId, ct), Is.EqualTo(2));
             Assert.That((await catalog.HangarsAsync(session, 2, ct)).Single(item => item.HangarId == "654321").HangarActive, Is.True);
+        }
+        finally { await app.StopAsync(ct); }
+    }
+
+    [Test]
+    public async Task ConfigRoutes_RequireSession_PropagateItThroughServerLanguageAndNavigation()
+    {
+        var ct = TestContext.CurrentContext.CancellationToken;
+        await using var postgres = new PostgreSqlBuilder("postgres:16-alpine")
+            .WithDatabase("thdarkorbit").WithUsername("app").WithPassword("app").Build();
+        await postgres.StartAsync(ct);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["ConnectionStrings:identity-write"] = postgres.GetConnectionString() }).Build();
+        await new SqlMigrationHostedService(config, Options.Create(new IdentityDatabaseOptions
+        { AutoMigrate = true, BackupBeforeMigration = false, Schema = "identity" }),
+            NullLogger<SqlMigrationHostedService>.Instance).StartAsync(ct);
+        var accountId = Guid.NewGuid();
+        await using (var db = new NpgsqlConnection(postgres.GetConnectionString()))
+        {
+            await db.OpenAsync(ct);
+            await using var insert = new NpgsqlCommand(
+                "INSERT INTO identity.accounts(id,username,game_user_id,company) VALUES (@id,'config-pilot',100000079,'mmo')", db);
+            insert.Parameters.AddWithValue("id", accountId);
+            await insert.ExecuteNonQueryAsync(ct);
+        }
+
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddSingleton<IConfiguration>(config);
+        builder.Services.AddDistributedMemoryCache();
+        builder.Services.AddSingleton<GameAuthSessionStore>();
+        builder.Services.AddSingleton<IGameAuthSessionStore>(sp => sp.GetRequiredService<GameAuthSessionStore>());
+        builder.Services.AddSingleton<EconomyStore>();
+        builder.Services.AddSingleton<LocalHangarStore>();
+        builder.Services.AddSingleton<LocalAccountPreferencesStore>();
+        builder.Services.AddSingleton<CockpitCatalogStore>();
+        await using var app = builder.Build();
+        app.MapCockpitCatalog();
+        app.MapUnityConfigRoutes();
+        var session = (await app.Services.GetRequiredService<GameAuthSessionStore>().CreateSessionAsync(
+            new AccountSummary(accountId, "config-pilot", null, 100000079, "mmo"), null, ct)).Session;
+        await app.StartAsync(ct);
+        try
+        {
+            using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+            { BaseAddress = new Uri(app.Urls.Single()) };
+            async Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, bool authenticated,
+                params (string Key, string Value)[] fields)
+            {
+                using var request = new HttpRequestMessage(method, path);
+                if (authenticated) request.Headers.Add("Cookie", $"dosid={session.Dosid}");
+                if (method == HttpMethod.Post) request.Content = new FormUrlEncodedContent(
+                    fields.Select(field => new KeyValuePair<string, string>(field.Key, field.Value)));
+                return await client.SendAsync(request, ct);
+            }
+
+            var cases = new (HttpMethod Method, string Path, (string Key, string Value)[] Fields)[]
+            {
+                (HttpMethod.Get, "/unityApi/instance.php", []),
+                (HttpMethod.Post, "/unityApi/changeInstance.php", [("instanceId", "1")]),
+                (HttpMethod.Post, "/unityApi/agent.php", [("functionId", "Unity_OpenProfile")]),
+                (HttpMethod.Post, "/unityApi/setLang.php", [("lang", "en")]),
+                (HttpMethod.Get, "/unityApi/evoucher.php", []),
+                (HttpMethod.Get, "/unityApi/package.php", []),
+                (HttpMethod.Get, "/unityApi/close.php", [])
+            };
+            foreach (var (method, path, fields) in cases)
+            {
+                using var unauthenticated = await SendAsync(method, path, false, fields);
+                Assert.That(unauthenticated.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized), path);
+            }
+
+            using var instance = await SendAsync(HttpMethod.Get, "/unityApi/instance.php", true);
+            using var instanceJson = System.Text.Json.JsonDocument.Parse(await instance.Content.ReadAsStringAsync(ct));
+            Assert.That(instanceJson.RootElement.GetProperty("data").GetProperty("euWest")
+                .GetProperty("serverList").GetArrayLength(), Is.GreaterThan(0));
+            using var choose = await SendAsync(HttpMethod.Post, "/unityApi/changeInstance.php", true, ("instanceId", "1"));
+            using var chooseJson = System.Text.Json.JsonDocument.Parse(await choose.Content.ReadAsStringAsync(ct));
+            Assert.That(chooseJson.RootElement.GetProperty("link").GetString(), Does.Contain("/indexInternal.es?action=internalWebGL"));
+            using var badChoose = await SendAsync(HttpMethod.Post, "/unityApi/changeInstance.php", true, ("instanceId", "999"));
+            Assert.That(badChoose.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+            using var agent = await SendAsync(HttpMethod.Post, "/unityApi/agent.php", true, ("functionId", "Unity_OpenProfile"));
+            Assert.That(agent.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            using var language = await SendAsync(HttpMethod.Post, "/unityApi/setLang.php", true, ("lang", "en"));
+            Assert.That(language.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            Assert.That((await app.Services.GetRequiredService<LocalAccountPreferencesStore>().GetAsync(accountId, ct)).Language,
+                Is.EqualTo("en"));
+            using var voucher = await SendAsync(HttpMethod.Get, "/unityApi/evoucher.php", true);
+            using var package = await SendAsync(HttpMethod.Get, "/unityApi/package.php", true);
+            Assert.That(voucher.Headers.Location?.ToString(), Is.EqualTo("/indexInternal.es?action=internalPayment"));
+            Assert.That(package.Headers.Location?.ToString(), Is.EqualTo("/indexInternal.es?action=internalShop"));
+            using var close = await SendAsync(HttpMethod.Get, "/unityApi/close.php", true);
+            Assert.That(close.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            using var afterClose = await SendAsync(HttpMethod.Get, "/unityApi/instance.php", true);
+            Assert.That(afterClose.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
         }
         finally { await app.StopAsync(ct); }
     }
