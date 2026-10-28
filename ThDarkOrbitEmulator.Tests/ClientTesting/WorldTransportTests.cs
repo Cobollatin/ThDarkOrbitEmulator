@@ -1947,14 +1947,120 @@ public class WorldTransportTests
             }));
             Assert.That((await ReadNativeAsync(stream)).Module, Is.EqualTo(NativeWorldHandshake.LoginResponse));
             var map = await ReadNativeAsync(stream);
-            Assert.That(map.Module, Is.EqualTo(NativeWorldHandshake.MapInitialization));
-            Assert.That(BinaryPrimitives.ReadInt32BigEndian(map.Payload.Span), Is.EqualTo(5));
+            Assert.That(map.Module, Is.EqualTo(NativeWorldHandshake.MapChanged));
+            Assert.That(BitOperations.RotateRight((uint)BinaryPrimitives.ReadInt32BigEndian(map.Payload.Span), 4), Is.EqualTo(5));
             var hero = await ReadNativeAsync(stream);
-            Assert.That(hero.Module, Is.EqualTo(NativeWorldHandshake.HeroInitialization));
-            Assert.That(BinaryPrimitives.ReadInt64BigEndian(hero.Payload.Span), Is.EqualTo(42));
+            Assert.That(hero.Module, Is.EqualTo(NativeWorldHandshake.ShipInitialization));
+            Assert.That(BitOperations.RotateRight((uint)BinaryPrimitives.ReadInt32BigEndian(hero.Payload.Span), 14), Is.EqualTo(42));
+            var gate = await ReadNativeAsync(stream);
+            Assert.That(gate.Module, Is.EqualTo(NativeWorldHandshake.JumpgateCreate));
+            Assert.That(BitOperations.RotateRight((uint)BinaryPrimitives.ReadInt32BigEndian(gate.Payload.Span), 10), Is.EqualTo(501));
             await worker.WaitAsync(TimeSpan.FromSeconds(2));
             Assert.That(account.Calls, Is.EqualTo(1));
         }
+    }
+
+    [Test]
+    public void NativeWorldPackets_UseIl2CppFieldOrderAndRotations()
+    {
+        var pilot = new WorldPilot(42, "eic", 5, 2, "phoenix", 1234, 56)
+        {
+            UserName = "Ace", FactionId = 2, X = 345, Y = 678,
+            Stats = new WorldShipStats(320, 4000, 5000, 100, 150, []),
+            Experience = 789, Honor = 1011, Level = 7
+        };
+        using var bytes = new MemoryStream(NativeWorldPackets.ShipInitialization(pilot));
+        using var reader = new BinaryReader(bytes);
+        uint Number(int left) => BitOperations.RotateRight((uint)WorldPayload.ReadInt32(reader), left);
+        long DoubleNumber() => checked((long)BitConverter.Int64BitsToDouble(WorldPayload.ReadInt64(reader)));
+        Assert.Multiple(() =>
+        {
+            Assert.That(Number(14), Is.EqualTo(42));
+            Assert.That(WorldPayload.ReadString(reader), Is.EqualTo("Ace"));
+            Assert.That(WorldPayload.ReadString(reader), Is.EqualTo("phoenix"));
+            Assert.That(Number(20), Is.EqualTo(320));
+            Assert.That(Number(18), Is.EqualTo(5000));
+            Assert.That(Number(19), Is.EqualTo(5000));
+            Assert.That(DoubleNumber(), Is.EqualTo(4000));
+            Assert.That(DoubleNumber(), Is.EqualTo(4000));
+            Assert.That(Number(22), Is.EqualTo(100));
+            Assert.That(Number(14), Is.EqualTo(100));
+            Assert.That(Number(11), Is.Zero);
+            Assert.That(Number(15), Is.Zero);
+            Assert.That(Number(14), Is.EqualTo(345));
+            Assert.That(Number(4), Is.EqualTo(678));
+            Assert.That(Number(21), Is.EqualTo(5));
+            Assert.That(Number(27), Is.EqualTo(2));
+            Assert.That(Number(29), Is.Zero);
+            Assert.That(Number(5), Is.Zero);
+            Assert.That(reader.ReadBoolean(), Is.False);
+            Assert.That(DoubleNumber(), Is.EqualTo(789));
+            Assert.That(DoubleNumber(), Is.EqualTo(1011));
+            Assert.That(Number(15), Is.EqualTo(7));
+            Assert.That(DoubleNumber(), Is.EqualTo(1234));
+            Assert.That(DoubleNumber(), Is.EqualTo(56));
+            Assert.That(BitConverter.Int32BitsToSingle(WorldPayload.ReadInt32(reader)), Is.Zero);
+            Assert.That(Number(18), Is.Zero);
+            Assert.That(WorldPayload.ReadString(reader), Is.Empty);
+            Assert.That(Number(27), Is.Zero);
+            Assert.That(reader.ReadBoolean(), Is.False);
+            Assert.That(reader.ReadBoolean(), Is.False);
+            Assert.That(reader.ReadBoolean(), Is.True);
+            Assert.That(Number(23), Is.Zero);
+            Assert.That(Number(31), Is.Zero);
+            Assert.That(reader.ReadByte(), Is.Zero);
+            Assert.That(bytes.Position, Is.EqualTo(bytes.Length));
+        });
+
+        using var move = new MemoryStream(NativeWorldPackets.Move(42, 345, 678, 900));
+        using var moveReader = new BinaryReader(move);
+        Assert.That(BitOperations.RotateRight((uint)WorldPayload.ReadInt32(moveReader), 16), Is.EqualTo(42));
+        Assert.That(BitOperations.RotateRight((uint)WorldPayload.ReadInt32(moveReader), 13), Is.EqualTo(345));
+        Assert.That(BitOperations.RotateRight((uint)WorldPayload.ReadInt32(moveReader), 16), Is.EqualTo(678));
+        Assert.That(BitOperations.RotateRight((uint)WorldPayload.ReadInt32(moveReader), 18), Is.EqualTo(900));
+        Assert.That(move.Position, Is.EqualTo(move.Length));
+
+        using var laser = new MemoryStream(NativeWorldPackets.Laser(42, 123, 7, 9, true));
+        using var laserReader = new BinaryReader(laser);
+        Assert.That(BitOperations.RotateRight((uint)WorldPayload.ReadInt32(laserReader), 2), Is.EqualTo(42));
+        Assert.That(BitOperations.RotateRight((uint)WorldPayload.ReadInt32(laserReader), 31), Is.EqualTo(123));
+        Assert.That(BitOperations.RotateRight((uint)WorldPayload.ReadInt32(laserReader), 16), Is.EqualTo(7));
+        Assert.That(laserReader.ReadBoolean(), Is.True);
+        Assert.That(laserReader.ReadBoolean(), Is.False);
+        Assert.That(BitOperations.RotateRight((uint)WorldPayload.ReadInt32(laserReader), 23), Is.EqualTo(9));
+        Assert.That(laser.Position, Is.EqualTo(laser.Length));
+
+        using var rocket = new MemoryStream(NativeWorldPackets.Rocket(42, 123, 4, 5, true));
+        using var rocketReader = new BinaryReader(rocket);
+        Assert.That(BitOperations.RotateRight((uint)WorldPayload.ReadInt32(rocketReader), 16), Is.EqualTo(42));
+        Assert.That(BitOperations.RotateRight((uint)WorldPayload.ReadInt32(rocketReader), 11), Is.EqualTo(123));
+        Assert.That(BitOperations.RotateRight((uint)WorldPayload.ReadInt32(rocketReader), 3), Is.EqualTo(4));
+        Assert.That(BitOperations.RotateRight((uint)WorldPayload.ReadInt32(rocketReader), 3), Is.EqualTo(5));
+        Assert.That(rocketReader.ReadBoolean(), Is.True);
+        Assert.That(rocketReader.ReadBoolean(), Is.False);
+        Assert.That(rocket.Position, Is.EqualTo(rocket.Length));
+
+        using var hit = new MemoryStream(NativeWorldPackets.Hit(1, 42, 123, 4000, 500, 0, 75,
+            false, true, 2));
+        using var hitReader = new BinaryReader(hit);
+        Assert.That(BinaryPrimitives.ReverseEndianness(hitReader.ReadUInt16()), Is.EqualTo(0x001b));
+        Assert.That(BinaryPrimitives.ReverseEndianness(hitReader.ReadInt16()), Is.EqualTo(1));
+        Assert.That(BitOperations.RotateRight((uint)WorldPayload.ReadInt32(hitReader), 25), Is.EqualTo(42));
+        Assert.That(BitOperations.RotateRight((uint)WorldPayload.ReadInt32(hitReader), 3), Is.EqualTo(123));
+        Assert.That(BitConverter.Int64BitsToDouble(WorldPayload.ReadInt64(hitReader)), Is.EqualTo(4000));
+        Assert.That(BitOperations.RotateRight((uint)WorldPayload.ReadInt32(hitReader), 19), Is.EqualTo(500));
+        Assert.That(BitOperations.RotateRight((uint)WorldPayload.ReadInt32(hitReader), 8), Is.Zero);
+        Assert.That(BitOperations.RotateRight((uint)WorldPayload.ReadInt32(hitReader), 8), Is.EqualTo(75));
+        Assert.That(hitReader.ReadBoolean(), Is.False);
+        Assert.That(hitReader.ReadBoolean(), Is.True);
+        Assert.That(BinaryPrimitives.ReverseEndianness(hitReader.ReadInt16()), Is.EqualTo(2));
+        Assert.That(hit.Position, Is.EqualTo(hit.Length));
+
+        using var jump = new MemoryStream(NativeWorldPackets.JumpInitiated(6, 501));
+        using var jumpReader = new BinaryReader(jump);
+        Assert.That(BitOperations.RotateRight((uint)WorldPayload.ReadInt32(jumpReader), 25), Is.EqualTo(6));
+        Assert.That(BitOperations.RotateRight((uint)WorldPayload.ReadInt32(jumpReader), 26), Is.EqualTo(501));
+        Assert.That(jump.Position, Is.EqualTo(jump.Length));
     }
 
     [Test]
@@ -1996,7 +2102,7 @@ public class WorldTransportTests
         frame[1] = (byte)(length >> 8);
         frame[2] = (byte)length;
         var offset = preamble ? 4 : 3;
-        BinaryPrimitives.WriteUInt16LittleEndian(frame.AsSpan(offset), module);
+        BinaryPrimitives.WriteUInt16BigEndian(frame.AsSpan(offset), module);
         payload.CopyTo(frame, offset + 2);
         await stream.WriteAsync(frame);
     }
@@ -2008,7 +2114,7 @@ public class WorldTransportTests
         var length = header[0] << 16 | header[1] << 8 | header[2];
         var body = new byte[length];
         await stream.ReadExactlyAsync(body);
-        return (BinaryPrimitives.ReadUInt16LittleEndian(body), body.AsMemory(2));
+        return (BinaryPrimitives.ReadUInt16BigEndian(body), body.AsMemory(2));
     }
 
     [Test]

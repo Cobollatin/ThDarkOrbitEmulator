@@ -70,7 +70,7 @@ public sealed class WorldPacketReader(Stream stream, int maximumPacketBytes = 65
         // The installed Unity client uses a three-byte length and libcom module IDs.
         // Do not interpret its version frame as a large local-protocol allocation.
         if (preLogin && header[0] == 0 && header[1] == 0 && header[2] >= 2
-            && (header[3] == 0x9a || header[3] == 0))
+            && (header[3] == 0x02 || header[3] == 0))
             throw new NativeWorldProtocolException(header);
         var length = BinaryPrimitives.ReadInt32BigEndian(header);
         if (length < 2 || length > maximumPacketBytes || preLogin && length > 4096)

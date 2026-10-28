@@ -23,7 +23,7 @@ later world packets.
 
 The emulator's four-byte length, local command IDs 1..40, and `local-1`
 handshake remain a separate diagnostic protocol. A native three-byte frame
-whose first body byte is `0x9A` or the special zero version preamble is routed
+whose first body byte is `0x02` or the special zero version preamble is routed
 to the native handshake. Version module `0x029A` must contain the installed
 hash `05bcf83b06964a516a8282e10dbf3369`; response module `0x029B` returns
 the hash and an equal flag. Login module `0x0007` decodes the rotated 32-bit
@@ -32,14 +32,35 @@ ID and mini-client flag. Session resolution uses the same authoritative
 `IWorldPilotResolver` as the local protocol; the faction must match the pilot.
 When a world session store is present, saved map and position are restored
 before entry payloads are written.
-The native-framed `0xA50C` login status is followed on success by map and hero
-initialization payloads in local extension modules `0xF100` and `0xF101`.
-Their module IDs and payloads are provisional and are not claimed to be
-understood by the installed Unity client. Native gameplay requires a captured
-server entry burst. Prelogin frames are capped at 4,096 bytes in either mode;
+The native-framed `0xA50C` login status is followed on success by
+`MapChangedCommand` `0x008A` (`newMapId:i32`, rotate right 4 on write),
+`ShipInitializationCommand` `0x0031` (full native reader field sequence), and
+`JumpgateCreateCommand` `0x0D3D` for each local starter-map portal. The ship
+fields include a 32-bit user ID, two length-prefixed UTF-8 strings, rotated
+32-bit stats and coordinates, 64-bit IEEE doubles for HP, XP, honor and
+balances, Booleans, and a one-byte visual-modifier count. The factory/getter
+and read RVAs, every field and rotation, and the nested `AttackHitCommand`
+module are in `docs/cockpit-catalog.md`. Existing pilot
+state supplies the known entry fields; unavailable clan, rank, nano hull,
+premium, jackpot, and captain values are zero/false. The ship type string is
+the local ship ID and portal design ID is zero, pending a captured native
+server burst. Prelogin frames are capped at 4,096 bytes in either mode;
 the configured `MaximumPacketBytes` applies to local frames after login.
 The session store has no persisted instance ID; native login decodes and bounds
 that field but cannot compare it with an account-specific value.
+
+The installed readers also establish `MoveCommand` `0x005A`
+(`userId,x,y,timeToTarget`), `HeroMoveCommand` `0x001D` (`x,y`),
+`AttackLaserRunCommand` `0x0003` (three integer IDs/colors, two Booleans,
+visual type), `AttackRocketCommand` `0x0006` (four integers and two Booleans),
+`AttackHitCommand` `0x001C` (nested attack type, IDs, victim vitals,
+damage, flags and cannon type), and `JumpInitiatedCommand` `0x0013`
+(`mapId,gateId`).
+`NativeWorldPackets` serializes their verified field order and rotations;
+the native socket path currently returns after its entry burst, so movement,
+combat and jump events are not sent on that path. The four-byte local
+diagnostic transport retains its existing event handling. A native traffic
+capture and event routing are still required for live Unity gameplay.
 
 The transport fixture's hosted-listener smoke test uses a dynamically bound
 loopback port and checks the published port. Its former reserve/release of an

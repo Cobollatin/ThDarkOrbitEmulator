@@ -251,8 +251,55 @@ The listener now recognizes the native three-byte length and optional version
 preamble, answers module `0x029B` for the installed version hash, and decodes
 module `0x0007` with the documented bit rotations. It resolves `userID` and
 `sessionID` against the current game session, checks faction, then sends native
-framed login status and emulator map/hero initialization payloads (`0xF100` and
-`0xF101`). Those two module IDs and their payloads are local extensions because
-the installed client has not supplied a captured server entry burst. Native
-gameplay and end-to-end Unity START remain unverified. The four-byte local
+framed login status followed by the server commands documented below. Native gameplay and end-to-end Unity
+START remain unverified. The four-byte local
 protocol and its 4,096-byte prelogin cap remain available on the same port.
+
+### Server command factory and inbound readers
+
+The `darkorbit-protocol.dll` IL2CPP types in installed `global-metadata.dat`
+name the fields; the matching `GameAssembly.dll` method bodies establish their
+read order, primitive widths, and integer bit rotations. `ModuleFactory.createInstance`
+starts at `0x154BC40` and registers/constructs protocol modules; `ModuleFactory.get`
+is `0x1563D70`. `DarkOrbit.ByteArray.ReadShort` (`0xF414E0`) combines the
+first byte shifted by eight with the second byte for a big-endian 16-bit
+module number. `PacketParser.Parse` (`0xF45420`) reads the three-byte
+big-endian frame length. `ByteArray..ctor` (`0xF415F0`) constructs
+`DarkOrbit.EndianBinaryWriter` and `DarkOrbit.EndianBinaryReader` with the
+`Big` enum value; the generated commands use their virtual 16-bit, 32-bit,
+double, single, and Boolean reads and writes. `LoginResponseHandler.Handle` (`0xF5CA80`)
+treats status zero as success at `0xF5CBD9`. All RVAs refer to the two hashes
+above.
+
+In the table, `i32(rN)` means a big-endian 32-bit wire value that the native
+reader rotates **left** by N to obtain the named field. Therefore the server
+encodes with a right rotation by N. `f64` is an IEEE 754 double, converted to
+the metadata `Int64` field by the reader; `f32` is an IEEE 754 single. `str`
+is a big-endian 16-bit UTF-8 byte count followed by the bytes; `bool` is one
+byte. These are reader contracts; no retained Live capture confirms an entry
+burst or its sequencing.
+
+| Server command (ID getter / reader RVA) | Reader order after 16-bit module ID |
+| --- | --- |
+| `MapChangedCommand` `0x15492A0` / `0x14C2690`, `0x008A` | `newMapId:i32(r28)` |
+| `ShipInitializationCommand` `0x158B630` / `0x158B640`, `0x0031` | `userId:i32(r18), userName:str, typeId:str, speed:i32(r12), shield:i32(r14), shieldMax:i32(r13), hitPoints:f64, hitMax:f64, cargoSpace:i32(r10), cargoSpaceMax:i32(r18), nanoHull:i32(r21), maxNanoHull:i32(r17), x:i32(r18), y:i32(r28), mapId:i32(r11), factionId:i32(r5), clanId:i32(r3), expansionStage:i32(r27), premium:bool, ep:f64, honourPoints:f64, level:i32(r17), credits:f64, uridium:f64, jackpot:f32, dailyRank:i32(r14), clanTag:str, galaxyGatesDone:i32(r5), useSystemFont:bool, cloaked:bool, refreshMap:bool, captainEnergy:i32(r9), maxCaptainEnergy:i32(r1), modifierCount:u8, then that many `VisualModifierCommand` modules. The local entry sends zero modifiers. |
+| `ShipCreateCommand` `0x158A1F0` / `0x158A200`, `0x0053` | Metadata names `userId,typeId,expansionStage,clanTag,userName,x,y,factionId,clanId,dailyRank,warnBox,galaxyGatesDone,useSystemFont,npc,cloaked,motherShipId,positionIndex,designSet,specialNpcType`; the full nested read path has not yet been mapped, so the listener does not emit it. |
+| `MoveCommand` `0x1564EF0` / `0x1564F00`, `0x005A` | `userId:i32(r16), x:i32(r19), y:i32(r16), timeToTarget:i32(r14)` |
+| `HeroMoveCommand` `0x14E7780` / `0x1538BB0`, `0x001D` | `x:i32(r23), y:i32(r7)` |
+| `AttackLaserRunCommand` `0x10A4110` / `0x14B5B00`, `0x0003` | `attackerId:i32(r30), targetId:i32(r1), laserColor:i32(r16), isDiminishedBySkillShield:bool, skilledLaser:bool, visualType:i32(r9)` |
+| `AttackRocketCommand` `0x10A9A00` / `0x14B6130`, `0x0006` | `attackerId:i32(r16), targetId:i32(r21), rocketType:i32(r29), smokeId:i32(r29), hit:bool, isHeatSeeking:bool` |
+| `AttackHitCommand` `0x11D3F30` / `0x14B5000`, `0x001C` | Nested `AttackTypeModule` ID `0x001B` (`get` `0x14B63F0`, `read` `0x14AC830`) with `attackTypeValue:i16`, then `attackerId:i32(r7), victimId:i32(r29), victimHitpoints:f64, victimShield:i32(r13), victimNanoHull:i32(r24), damage:i32(r24), skilled:bool, strike:bool, cannonType:i16`. The local native path has no hit event routing yet. |
+| `JumpgateCreateCommand` `0x153EDA0` / `0x153EDB0`, `0x0D3D` | `gateId:i32(r22), factionId:i32(r2), designId:i32(r15), x:i32(r21), y:i32(r23), isVisibleOnMinimap:bool, showBubble:bool` |
+| `JumpInitiatedCommand` `0x153EB50` / `0x153EB60`, `0x0013` | `mapId:i32(r7), gateId:i32(r6)` |
+| `JumpDeniedCommand` `0x14AF990` / `0x1529C40`, `0x0012` | `mandatoryLevel:i32`; exact rotation is not yet mapped. |
+
+`NativeWorldHandshake` now sends `MapChanged`, `ShipInitialization`, and one
+`JumpgateCreate` per local starter-map portal after successful native login.
+`NativeWorldPackets` also serializes the proven move, hero move, laser, rocket,
+hit, and jump-initiation shapes for later event routing. Current `WorldPilot` data
+does not supply clan, rank, premium, nano hull, visual modifier, jackpot, or
+captain energy values; those entry fields are zero/false, and `typeId` uses
+the local ship ID. The native session still ends after entry, so these
+gameplay serializers are not yet dispatched to a live native client. Portal
+design ID zero and the entry command order remain emulator choices pending a
+captured native server burst.
