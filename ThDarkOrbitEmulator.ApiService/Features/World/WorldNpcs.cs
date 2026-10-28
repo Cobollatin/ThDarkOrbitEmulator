@@ -344,12 +344,17 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             if (vital.Destroyed) continue;
             var npc = spawn with { Hp = vital.Hp, Shield = vital.Shield,
                 X = vital.X ?? spawn.X, Y = vital.Y ?? spawn.Y };
-            var target = pilots.Where(p => sessions.CurrentHitPoints(p) > 0)
+            var eligible = pilots.Where(p => sessions.CurrentHitPoints(p) > 0)
                 .Select(p => (Pilot: p, Position: sessions.CurrentPosition(p, now)))
                 .Where(p => !InsidePeaceZone(mapId, p.Position))
                 .Select(p => (p.Pilot, p.Position, Distance: DistanceSquared(npc.X, npc.Y, p.Position.X, p.Position.Y)))
                 .Where(p => p.Distance <= (long)settings.AggroRange * settings.AggroRange)
-                .OrderBy(p => p.Distance).ThenBy(p => p.Pilot.UserId).FirstOrDefault();
+                .ToArray();
+            // A pursuing NPC keeps its current valid target until that pilot leaves,
+            // dies, enters the peace zone, or escapes aggro range.
+            var target = eligible.FirstOrDefault(p => p.Pilot.UserId == vital.TargetUserId);
+            if (target.Pilot is null)
+                target = eligible.OrderBy(p => p.Distance).ThenBy(p => p.Pilot.UserId).FirstOrDefault();
             if (target.Pilot is null)
             {
                 if (vital.TargetUserId != 0)

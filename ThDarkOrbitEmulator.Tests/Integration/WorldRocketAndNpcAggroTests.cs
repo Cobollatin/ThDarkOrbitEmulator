@@ -192,6 +192,42 @@ public sealed class WorldRocketAndNpcAggroTests
         Assert.That((await npcs.VisibleAsync(1, default)).Single().X, Is.EqualTo(approached.X));
     }
 
+    [Test]
+    public async Task AutonomousNpc_KeepsTargetUntilPeaceZoneThenRetargets()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var npcs = CreateNpcs(cache, mutex, new Rewards(), clock, new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 0)],
+            AggroRange = 1000, NpcFireRange = 1000, NpcDamage = 10,
+            NpcFireCooldownSeconds = 1
+        });
+        var npc = (await npcs.VisibleAsync(1, default)).Single();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var first = await sessions.EnterAsync(Pilot(npc.X + 400, npc.Y), default);
+        var second = await sessions.EnterAsync(Pilot(npc.X + 600, npc.Y) with { UserId = 8 }, default);
+
+        await npcs.TickAggroAsync(1, sessions, default);
+        Assert.That(sessions.CurrentHitPoints(first), Is.EqualTo(990));
+        await sessions.TeleportAsync(second.UserId, 1, npc.X + 100, npc.Y, false, default);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await npcs.TickAggroAsync(1, sessions, default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(sessions.CurrentHitPoints(first), Is.EqualTo(980));
+            Assert.That(sessions.CurrentHitPoints(second), Is.EqualTo(1000));
+        });
+
+        var station = WorldMapInstance.Starter(1).HomeStation;
+        await sessions.TeleportAsync(first.UserId, 1, station.X, station.Y, false, default);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await npcs.TickAggroAsync(1, sessions, default);
+        Assert.That(sessions.CurrentHitPoints(second), Is.EqualTo(990));
+    }
+
     private static WorldNpcs CreateNpcs(IDistributedCache cache, Mutex mutex, Rewards rewards,
         Clock clock, WorldNpcOptions options) => new(cache, mutex, rewards, Options.Create(options), clock);
 

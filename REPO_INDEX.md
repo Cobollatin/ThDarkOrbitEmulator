@@ -5,7 +5,7 @@
 - `ThDarkOrbitEmulator.Tests/ClientTesting/`: focused Unity contract and world protocol tests; `Integration/` holds database and HTTP integration tests.
 - `docs/cockpit-catalog.md`: cockpit evidence, unresolved native contracts, and public catalog routes.
 - `docs/client-endpoint-map.md` and `docs/world-protocol.md`: observed client endpoints and provisional local world protocol.
-- `docs/reference-parity.md`: ranked gameplay gaps from ignored third-party reference clones; iteration 1 implements NPC pursuit stand-off, and iteration 2 adds server-timed NPC laser fire with a provisional stop command in `WorldNpcs.cs`/`WorldSessionHandler.cs`.
+- `docs/reference-parity.md`: ranked gameplay gaps from ignored third-party reference clones; iteration 1 implements NPC pursuit stand-off, and iteration 2 adds server-timed NPC laser fire with a provisional stop command plus persistent NPC target choice in `WorldNpcs.cs`/`WorldSessionHandler.cs`.
 - `_reversing/`: local analysis artifacts and captured sessions; `scripts/client-testing/` contains capture helpers.
 - `_reversing/Analysis/trace_il2cpp.py`: bounded native disassembly using the ignored `il2cpp-dump/` method map; findings are recorded in `docs/cockpit-catalog.md`.
 - `ThDarkOrbitEmulator.AppHost/`: Aspire wiring, including HTTPS and world listener ports.
