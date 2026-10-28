@@ -22,6 +22,7 @@ Verified by `Backoffice/BackofficeAndPlaceholderCmsSpecificationTests` (contract
 | `/backoffice/runtime-vars` | `RuntimeVarsComponent` (admin commands & runtime variables) | `permissionGuard('backoffice.ops.read')` | `/login` | `/` |
 | `/backoffice/economy` | `EconomyComponent` (catalog, listings/stock, vouchers/reward offers, auction lots, balances = compensation, ledger & stock audit) | `economyAdminGuard` (realm role `emulator-admin`) | `/login` | `/` |
 | `/backoffice/cockpit` | `CockpitComponent` (Unity cockpit catalog: languages, server lists / instances, hangar ship catalog, per-account hangar slots, locale overrides) | `economyAdminGuard` (realm role `emulator-admin`) | `/login` | `/` |
+| `/backoffice/progression` | `ProgressionComponent` (active hangars, Skylab jobs, Galaxy Gate runs, clan stations and relations) | `economyAdminGuard` (realm role `emulator-admin`) | `/login` | `/` |
 
 Invariants:
 - The shell navigation (`backoffice-shell.component.html`) shows each link only under the same permission/role as its route guard; a hidden link is never reachable via a weaker guard.
@@ -101,6 +102,20 @@ Rules:
 - Hangar origin: the first Unity login, or the first Backoffice view of that account, creates the two starter assignments (Pusat Plus and Phoenix) in Postgres with stable six-digit hangar IDs. Later admin edits survive login. World combat stat formulas stay slot based.
 - Limits: the Unity build has not been observed calling `languages.php` or `servers.php`, so these are emulator contracts. The Unity asset bundle does not read locale overrides yet. Server descriptors do not reconfigure the running mesh or its TCP listener. Evidence: `docs/cockpit-catalog.md`.
 - Cockpit write routes reject JSON nulls for required host, ship icon path, hangar ID, and locale value with HTTP 400 before mutation. `CockpitBackofficePostgresTests.CockpitRoutes_RejectNullFieldsWithoutChangingPersistedCatalog` exercises the HTTP routes against PostgreSQL and confirms a valid server update persists. Runtime-variable set, reset, history, rollback, aliases, and cross-replica visibility are covered by `AdminCommandHttpTests` and `RuntimeVariablePostgresTests`.
+
+### Player progression and clan operations
+
+The minimal API group `/api/v1/backoffice/progression` requires the `emulator-admin` realm role for every route. The CMS uses the matching admin guard and generic Space Emulator CMS labels. Account IDs are UUIDs; the hangar route displays both assigned slots and the authoritative active slot used by `POST /unityApi/activate.php`.
+
+| Resource | Inspect | Override |
+| :--- | :--- | :--- |
+| Active hangar | `GET /accounts/{accountId}/hangar` | `PUT /accounts/{accountId}/hangar` `{ slot }` (assigned slot 1 or 2) |
+| Skylab jobs | `GET /accounts/{accountId}/skylab` | `PUT /accounts/{accountId}/skylab/collectors/{collectorId}` and `PUT /accounts/{accountId}/skylab/refinery` `{ readyAt }` |
+| Gate runs | `GET /accounts/{accountId}/gates` | `PUT /accounts/{accountId}/gates/{gateId}` `{ wave, kills, npcHp, shipHp, lives }` |
+| Clan station | `GET /clans/{clanId}/station` | `PUT /clans/{clanId}/station/{moduleId}` `{ level, readyAt }` |
+| Clan relations | `GET /clans/{clanId}/relations` | `PUT /clans/{clanId}/relations/{otherClanId}` `{ status, proposer }` |
+
+Timer and station overrides update existing jobs/modules only; missing records return 404. Gate overrides update existing unfinished runs only and validate the gate wave, kill count, HP and lives; they do not create a completion, achievement, or reward. Completed runs return 404 on override. Relation overrides update existing same-company clan pairs and accept only `pending`, `allied`, or `war`. Gameplay still owns starting jobs, activating gates, creating diplomacy records, and paying gate rewards. `ProgressionBackofficePostgresTests` exercises the HTTP routes and persisted state.
 
 ### Backoffice operations overview and cache contract
 

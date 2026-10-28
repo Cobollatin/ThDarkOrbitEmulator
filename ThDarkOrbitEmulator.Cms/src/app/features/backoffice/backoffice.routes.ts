@@ -53,6 +53,11 @@ export const backofficeRoutes: Routes = [
         path: 'cockpit',
         canActivate: [economyAdminGuard],
         loadComponent: () => import('./cockpit/cockpit.component').then((m) => m.CockpitComponent)
+      },
+      {
+        path: 'progression',
+        canActivate: [economyAdminGuard],
+        loadComponent: () => import('./progression/progression.component').then((m) => m.ProgressionComponent)
       }
     ]
   }

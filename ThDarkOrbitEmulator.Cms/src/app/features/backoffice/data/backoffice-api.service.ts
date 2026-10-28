@@ -15,6 +15,12 @@ export interface ClientServer { code: string; instanceName: string; host: string
 export interface CatalogShip { shipId: string; name: string; modelId: number; iconPath: string; enabled: boolean }
 export interface HangarAssignment { accountId: string; slotNumber: number; shipId: string; hangarId: string }
 export interface LocaleOverride { languageCode: string; category: string; key: string; value: string }
+export interface ActiveHangarState { activeSlot: number; assignments: HangarAssignment[] }
+export interface CollectorJob { collectorId: string; expectedLevel: number; readyAt: string }
+export interface SkylabState { collectors: CollectorJob[]; refinery: { readyAt: string } | null }
+export interface GateState { gateId: string; wave: number; totalWaves: number; kills: number; npcHp: number; shipHp: number; lives: number; completedAt: string | null }
+export interface StationModule { moduleId: string; level: number; readyAt: string | null }
+export interface ClanRelation { otherClanId: string; status: string; proposer: string }
 
 export interface KeycloakUserRow {
   id: string;
@@ -157,6 +163,18 @@ export class BackofficeApiService {
   putHangarAssignment(item: HangarAssignment): Observable<void> { return this.http.put<void>(this.url(`cockpit/accounts/${encodeURIComponent(item.accountId)}/hangars/${item.slotNumber}`), item); }
   listLocaleOverrides(): Observable<LocaleOverride[]> { return this.http.get<LocaleOverride[]>(this.url('cockpit/locale-overrides')); }
   putLocaleOverride(item: LocaleOverride): Observable<void> { return this.http.put<void>(this.url(`cockpit/locale-overrides/${encodeURIComponent(item.languageCode)}/${encodeURIComponent(item.category)}/${encodeURIComponent(item.key)}`), item); }
+
+  getActiveHangar(accountId: string): Observable<ActiveHangarState> { return this.http.get<ActiveHangarState>(this.url(`progression/accounts/${encodeURIComponent(accountId)}/hangar`)); }
+  setActiveHangar(accountId: string, slot: number): Observable<void> { return this.http.put<void>(this.url(`progression/accounts/${encodeURIComponent(accountId)}/hangar`), { slot }); }
+  getSkylabState(accountId: string): Observable<SkylabState> { return this.http.get<SkylabState>(this.url(`progression/accounts/${encodeURIComponent(accountId)}/skylab`)); }
+  setCollectorReadyAt(accountId: string, collectorId: string, readyAt: string): Observable<void> { return this.http.put<void>(this.url(`progression/accounts/${encodeURIComponent(accountId)}/skylab/collectors/${encodeURIComponent(collectorId)}`), { readyAt }); }
+  setRefineryReadyAt(accountId: string, readyAt: string): Observable<void> { return this.http.put<void>(this.url(`progression/accounts/${encodeURIComponent(accountId)}/skylab/refinery`), { readyAt }); }
+  getGateStates(accountId: string): Observable<GateState[]> { return this.http.get<GateState[]>(this.url(`progression/accounts/${encodeURIComponent(accountId)}/gates`)); }
+  setGateState(accountId: string, gate: GateState): Observable<void> { return this.http.put<void>(this.url(`progression/accounts/${encodeURIComponent(accountId)}/gates/${encodeURIComponent(gate.gateId)}`), gate); }
+  getStation(clanId: string): Observable<StationModule[]> { return this.http.get<StationModule[]>(this.url(`progression/clans/${encodeURIComponent(clanId)}/station`)); }
+  setStation(clanId: string, module: StationModule): Observable<void> { return this.http.put<void>(this.url(`progression/clans/${encodeURIComponent(clanId)}/station/${encodeURIComponent(module.moduleId)}`), module); }
+  getClanRelations(clanId: string): Observable<ClanRelation[]> { return this.http.get<ClanRelation[]>(this.url(`progression/clans/${encodeURIComponent(clanId)}/relations`)); }
+  setClanRelation(clanId: string, relation: ClanRelation): Observable<void> { return this.http.put<void>(this.url(`progression/clans/${encodeURIComponent(clanId)}/relations/${encodeURIComponent(relation.otherClanId)}`), relation); }
 
   getMeshTopology(): Observable<MeshTopology> {
     return this.http.get<MeshTopology>(this.url('mesh/topology'));

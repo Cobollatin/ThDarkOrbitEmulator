@@ -71,7 +71,8 @@ public class BackofficeAndPlaceholderCmsSpecificationTests
         ["mesh"] = EmulatorPermissions.OpsRead,
         ["runtime-vars"] = EmulatorPermissions.OpsRead,
         ["economy"] = "@admin",
-        ["cockpit"] = "@admin"
+        ["cockpit"] = "@admin",
+        ["progression"] = "@admin"
     };
 
     [Test]
@@ -905,6 +906,10 @@ public class BackofficeAndPlaceholderCmsSpecificationTests
                 @"admin\.Map(?:Get|Put)\(""/([^""]+)""")
             .Select(m => Normalize("backoffice/cockpit/" + m.Groups[1].Value));
         backofficeRoutes.UnionWith(cockpitRoutes);
+        var progressionRoutes = Regex.Matches(File.ReadAllText(Path.Combine(FeaturesRoot, "Backoffice", "Progression", "ProgressionBackofficeEndpoints.cs")),
+                @"admin\.Map(?:Get|Put)\(""/([^""]+)""")
+            .Select(m => Normalize("backoffice/progression/" + m.Groups[1].Value));
+        backofficeRoutes.UnionWith(progressionRoutes);
         var economyRoutes = Regex.Matches(File.ReadAllText(Path.Combine(FeaturesRoot, "Economy", "EconomyAdminEndpoints.cs")),
                 @"routes\.Map(?:Get|Post|Put|Delete)\(""/([^""]+)""")
             .Select(m => Normalize(m.Groups[1].Value)).ToHashSet();
