@@ -276,6 +276,47 @@ public class WorldTransportTests
             "An expired snapshot must re-read shared presence.");
     }
 
+    [Test]
+    public async Task RemoteCloakChanges_ReachObservers_AndHeartbeatKeepsSharedState()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingWorldClock();
+        var observerNode = new WorldSessionStore(cache, clock: clock);
+        var pilotNode = new WorldSessionStore(cache, clock: clock);
+        var pilot = await pilotNode.EnterAsync(new WorldPilot(912, "remote", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
+        var observer = new WorldPilot(913, "observer", 1, 1, "ship", 0, 0);
+        using var wire = new MemoryStream();
+        var connection = new WorldConnection(observer, new WorldPacketWriter(wire));
+
+        await observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+        pilot = await observerNode.SetCloakAsync(pilot, true, default);
+        clock.Advance(WorldSessionStore.PresenceHeartbeatInterval + TimeSpan.FromSeconds(1));
+        await pilotNode.RefreshLocalPresenceAsync(default);
+        Assert.That((await observerNode.ConnectedAsync(1, default)).Single().IsInvisible, Is.True);
+        Assert.That((await pilotNode.ConnectedAsync(1, default)).Single().IsInvisible, Is.True);
+
+        await Task.Delay(WorldSessionStore.RemoteSnapshotTtl + TimeSpan.FromMilliseconds(100));
+        await observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+        await observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+        await pilotNode.MarkCombatAsync(pilot, default);
+        await Task.Delay(WorldSessionStore.RemoteSnapshotTtl + TimeSpan.FromMilliseconds(100));
+        await observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.PilotCreateCommand));
+        foreach (var active in new[] { false, true, false })
+        {
+            var packet = await reader.ReadAsync();
+            Assert.That(packet?.Command, Is.EqualTo(WorldCommandId.CloakStateCommand));
+            Assert.That(WorldPayload.Decode(packet!.Value.Payload, r =>
+                (WorldPayload.ReadInt64(r), r.ReadBoolean())), Is.EqualTo((912L, active)));
+        }
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
     private sealed class CountingCache(IDistributedCache inner) : IDistributedCache
     {
         public readonly System.Collections.Concurrent.ConcurrentQueue<string> Reads = new();

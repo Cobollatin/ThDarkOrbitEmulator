@@ -138,6 +138,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private readonly ConcurrentDictionary<long, ConcurrentDictionary<long, WorldTravel>> remoteAnnounced = new();
     private readonly ConcurrentDictionary<long, ConcurrentDictionary<long, (int X, int Y)>> remotePositions = new();
     private readonly ConcurrentDictionary<long, ConcurrentDictionary<long, byte>> remoteVisible = new();
+    private readonly ConcurrentDictionary<long, ConcurrentDictionary<long, bool>> remoteCloaks = new();
     // Map-level fanout: every idle observer on this node shares one presence + saved-state read per map.
     public static readonly TimeSpan RemoteSnapshotTtl = TimeSpan.FromMilliseconds(500);
     public static readonly TimeSpan PresenceHeartbeatInterval = TimeSpan.FromSeconds(15);
@@ -162,6 +163,22 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         var absent = new Dictionary<int, List<long>>();
         foreach (var pilot in connected.Values.SelectMany(p => p.Values).ToArray())
         {
+            var current = pilot;
+            var runtimeJson = await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct);
+            if (runtimeJson is not null)
+            {
+                try
+                {
+                    var runtime = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(runtimeJson);
+                    if (runtime?.MapId == pilot.MapId && runtime.IsInvisible != pilot.IsInvisible)
+                    {
+                        current = pilot with { IsInvisible = runtime.IsInvisible };
+                        RefreshConnectedPilot(current);
+                        await BroadcastCloakAsync(current, ct);
+                    }
+                }
+                catch (JsonException) { }
+            }
             var saved = await cache.GetStringAsync(Key(pilot.UserId), ct);
             if (saved is not null)
             {
@@ -179,8 +196,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 }
                 catch (JsonException) { }
             }
-            if (HeartbeatDue(pilot))
-                (present.TryGetValue(pilot.MapId, out var due) ? due : present[pilot.MapId] = []).Add(pilot);
+            if (HeartbeatDue(current))
+                (present.TryGetValue(current.MapId, out var due) ? due : present[current.MapId] = []).Add(current);
         }
         foreach (var mapId in present.Keys.Union(absent.Keys).ToArray())
             await WritePresenceBatchAsync(mapId, present.GetValueOrDefault(mapId) ?? [],
@@ -822,6 +839,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         announcedPosition.TryRemove(pilot.UserId, out _);
         remoteAnnounced.TryRemove(pilot.UserId, out _);
         remoteVisible.TryRemove(pilot.UserId, out _);
+        remoteCloaks.TryRemove(pilot.UserId, out _);
         remotePositions.TryRemove(pilot.UserId, out _);
         configurations.TryRemove(pilot.UserId, out _);
         lastSwitches.TryRemove(pilot.UserId, out _);
@@ -897,6 +915,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         CancellationToken ct)
     {
         var visible = remoteVisible.GetOrAdd(observer.UserId, _ => new());
+        var cloaks = remoteCloaks.GetOrAdd(observer.UserId, _ => new());
         var now = DateTimeOffset.UtcNow;
         var present = new HashSet<long>();
         foreach (var (entry, saved) in (await RemoteSnapshotAsync(observer.MapId, ct)).Entries)
@@ -929,22 +948,34 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 catch (JsonException) { }
             }
             present.Add(remote.UserId);
-            if (!visible.TryAdd(remote.UserId, 0)) continue;
-            remotePositions.GetOrAdd(observer.UserId, _ => new())[remote.UserId] = (remote.X, remote.Y);
-            await connection.SendAsync(WorldCommandId.PilotCreateCommand, WorldPayload.Encode(w =>
+            if (visible.TryAdd(remote.UserId, 0))
             {
-                WorldPayload.WriteInt64(w, remote.UserId);
-                WorldPayload.WriteString(w, remote.UserName);
-                WorldPayload.WriteString(w, remote.ShipId);
-                WorldPayload.WriteInt32(w, remote.FactionId);
-                WorldPayload.WriteInt32(w, remote.MapId);
-                WorldPayload.WriteInt32(w, remote.X);
-                WorldPayload.WriteInt32(w, remote.Y);
-            }), ct);
+                remotePositions.GetOrAdd(observer.UserId, _ => new())[remote.UserId] = (remote.X, remote.Y);
+                await connection.SendAsync(WorldCommandId.PilotCreateCommand, WorldPayload.Encode(w =>
+                {
+                    WorldPayload.WriteInt64(w, remote.UserId);
+                    WorldPayload.WriteString(w, remote.UserName);
+                    WorldPayload.WriteString(w, remote.ShipId);
+                    WorldPayload.WriteInt32(w, remote.FactionId);
+                    WorldPayload.WriteInt32(w, remote.MapId);
+                    WorldPayload.WriteInt32(w, remote.X);
+                    WorldPayload.WriteInt32(w, remote.Y);
+                }), ct);
+            }
+            if (!cloaks.TryGetValue(remote.UserId, out var announced) || announced != remote.IsInvisible)
+            {
+                cloaks[remote.UserId] = remote.IsInvisible;
+                await connection.SendAsync(WorldCommandId.CloakStateCommand, WorldPayload.Encode(w =>
+                {
+                    WorldPayload.WriteInt64(w, remote.UserId);
+                    w.Write(remote.IsInvisible);
+                }), ct);
+            }
         }
         foreach (var id in visible.Keys.Where(id => !present.Contains(id)).ToArray())
         {
             if (!visible.TryRemove(id, out _)) continue;
+            cloaks.TryRemove(id, out _);
             remoteAnnounced.GetOrAdd(observer.UserId, _ => new()).TryRemove(id, out _);
             remotePositions.GetOrAdd(observer.UserId, _ => new()).TryRemove(id, out _);
             await connection.SendAsync(WorldCommandId.PilotRemoveCommand,
