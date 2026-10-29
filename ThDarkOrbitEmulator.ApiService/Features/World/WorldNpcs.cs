@@ -30,6 +30,7 @@ public sealed class WorldNpcOptions
     public int LauncherCapacity { get; set; } = 5;
     public int LauncherReloadSeconds { get; set; } = 2;
     public int LauncherRocketDamage { get; set; } = 100;
+    public bool AutoLauncherOnLaser { get; set; }
     public int PulseRange { get; set; } = 700;
     public int PulseCooldownSeconds { get; set; } = 30;
     public int LaserCooldownMilliseconds { get; set; } = 1000;
@@ -225,6 +226,14 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
     public async Task StartLaserAsync(WorldPilot pilot, int npcId, CancellationToken ct)
     {
         await using var held = await mutex.AcquireAsync(ct);
+        if (settings.AutoLauncherOnLaser)
+        {
+            var loadKey = $"world:launcher:{pilot.UserId}";
+            if (await cache.GetStringAsync(loadKey, ct) is null)
+                await cache.SetStringAsync(loadKey,
+                    JsonSerializer.Serialize(new LauncherLoad(0, clock.GetUtcNow().ToUnixTimeMilliseconds())),
+                    Expiry, ct);
+        }
         await cache.SetStringAsync(LaserKey(pilot.UserId),
             JsonSerializer.Serialize(new ActiveLaser(pilot.MapId, npcId, Cycle,
                 clock.GetUtcNow().ToUnixTimeMilliseconds() + Math.Max(1, settings.LaserCooldownMilliseconds))),
@@ -263,7 +272,19 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                     new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5) }, ct);
             }
             var hit = await AttackAsync(pilot, active.NpcId, sessions, ct, fence, mapId);
-            if (hit.Status != "hit" || hit.Destroyed) await StopLaserAsync(pilot.UserId, ct);
+            if (hit.Status != "hit" || hit.Destroyed)
+            {
+                await StopLaserAsync(pilot.UserId, ct);
+                continue;
+            }
+            if (settings.AutoLauncherOnLaser &&
+                (await LauncherStatusAsync(pilot.UserId, ct)).Loaded == Math.Clamp(settings.LauncherCapacity, 1, 20))
+            {
+                var volley = await AttackAsync(pilot, active.NpcId, sessions, ct, fence, mapId,
+                    launcher: true);
+                if (volley.Destroyed)
+                    await StopLaserAsync(pilot.UserId, ct);
+            }
         }
     }
 
