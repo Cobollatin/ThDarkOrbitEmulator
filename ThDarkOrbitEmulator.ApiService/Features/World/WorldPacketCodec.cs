@@ -45,7 +45,8 @@ public enum WorldCommandId : ushort
     RocketFireRequest = 38,
     RocketHitCommand = 39,
     NpcFireCommand = 40,
-    LaserStopRequest = 41
+    LaserStopRequest = 41,
+    RadiationDamageCommand = 42
 }
 
 public enum WorldLoginError : byte

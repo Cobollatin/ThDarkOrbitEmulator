@@ -1184,6 +1184,13 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         if (hitPoints[pilot.UserId] == 0)
             pilot = await RecordDestructionAsync(pilot, ct);
         await PersistRuntimeAsync(pilot, ct);
+        await BroadcastAsync(pilot, WorldCommandId.RadiationDamageCommand, WorldPayload.Encode(w =>
+        {
+            WorldPayload.WriteInt64(w, pilot.UserId);
+            WorldPayload.WriteInt64(w, damage);
+            WorldPayload.WriteInt64(w, CurrentHitPoints(pilot));
+            WorldPayload.WriteInt64(w, CurrentShield(pilot));
+        }), ct);
     }
 
     public async Task RepairAtBaseAsync(WorldPilot pilot, DateTimeOffset now, CancellationToken ct)

@@ -1220,10 +1220,16 @@ public sealed class WorldAndSpacemapSpecificationTests
 
         stream.Position = 0;
         var reader = new WorldPacketReader(stream);
+        var damage = await reader.ReadAsync();
         var started = await reader.ReadAsync();
         var cleared = await reader.ReadAsync();
         Assert.Multiple(() =>
         {
+            Assert.That(damage?.Command, Is.EqualTo(WorldCommandId.RadiationDamageCommand));
+            Assert.That(WorldPayload.Decode(damage!.Value.Payload, r =>
+                (WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r),
+                    WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r))),
+                Is.EqualTo((pilot.UserId, 10L, 990L, 0L)));
             Assert.That(started?.Command, Is.EqualTo(WorldCommandId.RadiationWarningCommand));
             Assert.That(started?.Payload.ToArray(), Is.EqualTo(new byte[] { 1 }));
             Assert.That(cleared?.Command, Is.EqualTo(WorldCommandId.RadiationWarningCommand));
