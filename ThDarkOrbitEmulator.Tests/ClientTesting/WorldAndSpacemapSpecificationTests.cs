@@ -1576,6 +1576,20 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(WorldMapInstance.Starter(1).AllowsPortalRepair, Is.True);
         Assert.That(WorldMapInstance.Starter(101).AllowsPortalRepair, Is.False);
 
+        var disabledMap = emptyMap with
+        {
+            Portals = [new WorldPortal(201, 100, 100, 1, 100, 100, Working: false)]
+        };
+        Assert.That(disabledMap.AllowsPortalRepair, Is.False);
+        Assert.That(disabledMap.NearestWorkingPortal(100, 100), Is.Null);
+
+        var mixedMap = disabledMap with
+        {
+            Portals = [.. disabledMap.Portals, new WorldPortal(202, 500, 500, 1, 100, 100)]
+        };
+        Assert.That(mixedMap.AllowsPortalRepair, Is.True);
+        Assert.That(mixedMap.NearestWorkingPortal(100, 100)?.Id, Is.EqualTo(202));
+
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
         var wallet = new TestRepairWallet { CanPay = true };
         var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(),

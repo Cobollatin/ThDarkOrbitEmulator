@@ -11,12 +11,16 @@ namespace ThDarkOrbitEmulator.ApiService.Features.World;
 // Emulator world geometry pending a redacted native map fixture.
 public sealed record WorldStation(int Id, int X, int Y, int PeaceRadius);
 public sealed record WorldPortal(int Id, int X, int Y, int DestinationMapId, int ArrivalX, int ArrivalY,
-    int JumpRadius = 500);
+    int JumpRadius = 500, bool Working = true);
 public enum WorldRespawnLocation { Base, DeathLocation, NearestPortal }
 public sealed record WorldMapInstance(int MapId, int FactionId, int Width, int Height,
     WorldStation HomeStation, IReadOnlyList<WorldPortal> Portals)
 {
-    public bool AllowsPortalRepair => !IsGate(MapId) && Portals.Count > 0;
+    public bool AllowsPortalRepair => !IsGate(MapId) && Portals.Any(portal => portal.Working);
+    public WorldPortal? NearestWorkingPortal(int x, int y) => Portals
+        .Where(portal => portal.Working)
+        .MinBy(portal => (long)(portal.X - x) * (portal.X - x)
+            + (long)(portal.Y - y) * (portal.Y - y));
     public static bool IsGate(int mapId) => mapId is >= 101 and <= 120;
     public static string? GateId(int mapId) => IsGate(mapId)
         ? new[] { "alpha", "beta", "gamma", "delta", "epsilon" }[(mapId - 101) % 5] : null;
@@ -1281,7 +1285,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             if (pilot.MapId != admittedMap) throw new WorldLeaseLostException();
             await CheckLeaseAsync(pilot.MapId, fence, ct);
             if (CurrentHitPoints(pilot) <= 0) throw new WorldPilotDestroyedException();
-            var portal = WorldMapInstance.Starter(pilot.MapId).Portals.FirstOrDefault(p => p.Id == portalId);
+            var portal = WorldMapInstance.Starter(pilot.MapId).Portals.FirstOrDefault(p => p.Id == portalId && p.Working);
             if (portal is null) return null;
             if (WorldMapInstance.GateId(portal.DestinationMapId) is { } gateId)
             {
@@ -1454,9 +1458,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
 
     private static WorldPilot AtNearestPortal(WorldPilot pilot)
     {
-        var portal = WorldMapInstance.Starter(pilot.MapId).Portals
-            .MinBy(p => (long)(p.X - pilot.X) * (p.X - pilot.X)
-                + (long)(p.Y - pilot.Y) * (p.Y - pilot.Y));
+        var portal = WorldMapInstance.Starter(pilot.MapId).NearestWorkingPortal(pilot.X, pilot.Y);
         return portal is null ? pilot : pilot with { X = portal.X, Y = portal.Y };
     }
 
