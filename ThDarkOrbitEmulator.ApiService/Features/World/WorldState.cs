@@ -323,16 +323,19 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 await using var held = meshMutex is null ? null : await meshMutex.AcquireAsync(ct);
                 await CheckLeaseAsync(mapId, fence, ct);
                 var pilot = await RefreshAsync(connectedPilot, ct);
-                if (pilot.MapId != mapId || CurrentHitPoints(pilot) <= 0 || !RadiationWarning(pilot.UserId))
+                if (pilot.MapId != mapId || CurrentHitPoints(pilot) <= 0)
                     continue;
                 var map = WorldMapInstance.Starter(mapId);
-                if (WorldMovement.IsInsideBoundary(Destination(pilot), map)
-                    && WorldMovement.IsInsideBoundary(CurrentPosition(pilot, combatClock.GetUtcNow()), map))
+                var inside = WorldMovement.IsInsideBoundary(CurrentPosition(pilot, combatClock.GetUtcNow()), map);
+                if (!RadiationWarning(pilot.UserId) && inside)
+                    continue;
+                if (inside && WorldMovement.IsInsideBoundary(Destination(pilot), map))
                 {
                     radiationWarnings[pilot.UserId] = false;
                     await PersistRuntimeAsync(pilot, ct);
                     continue;
                 }
+                radiationWarnings[pilot.UserId] = true;
                 await ApplyBoundaryDamageAsync(pilot, combatClock.GetUtcNow(), ct);
             }
             finally { gate.Release(); }
