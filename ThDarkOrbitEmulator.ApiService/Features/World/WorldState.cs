@@ -1157,8 +1157,9 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         foreach (var presence in (await ReadPresenceAsync(mapId, CancellationToken.None)).Values)
         {
             var userId = presence.Pilot.UserId;
-            var saved = connections.ContainsKey(userId) ? null
-                : await cache.GetStringAsync(Key(userId));
+            // A local socket can lag a transfer performed on another node. Check the
+            // shared position even for that socket before announcing map membership.
+            var saved = await cache.GetStringAsync(Key(userId));
             if (saved is null)
             {
                 var runtime = await cache.GetStringAsync(RuntimeKey(userId));
