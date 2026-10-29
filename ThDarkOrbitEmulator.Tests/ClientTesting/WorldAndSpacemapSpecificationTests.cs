@@ -2706,6 +2706,49 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task LauncherVolley_ConsumesSharedLoadAndReloadsOneRocketAtATime()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var options = new WorldNpcOptions
+        {
+            LauncherCapacity = 3, LauncherReloadSeconds = 2, LauncherRocketDamage = 10,
+            Templates = [new("Scout", "npc_scout", 1, 1000, 0, 0, 0, 0, 0, 0)]
+        };
+        var clock = new AdvancingClock();
+        var npcs = new WorldNpcs(cache, mutex, new TestRewards(), Options.Create(options), clock);
+        var replica = new WorldNpcs(cache, mutex, new TestRewards(), Options.Create(options), clock);
+        var spawn = npcs.Spawn(1, clock.GetUtcNow()).Single();
+        var sessions = new WorldSessionStore(cache, mutex);
+        var pilot = await sessions.EnterAsync(Pilot() with
+        {
+            AccountId = Guid.NewGuid(), X = spawn.X, Y = spawn.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+
+        var full = await npcs.AttackAsync(pilot, spawn.Id, sessions, default, launcher: true);
+        var empty = await replica.AttackAsync(pilot, spawn.Id, sessions, default, launcher: true);
+        clock.Advance(TimeSpan.FromSeconds(2));
+        var single = await replica.AttackAsync(pilot, spawn.Id, sessions, default, launcher: true);
+        clock.Advance(TimeSpan.FromSeconds(6));
+        var refilled = await npcs.AttackAsync(pilot, spawn.Id, sessions, default, launcher: true);
+        options.RocketMissChance = 1;
+        clock.Advance(TimeSpan.FromSeconds(2));
+        var miss = await replica.AttackAsync(pilot, spawn.Id, sessions, default, launcher: true);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(full.Damage, Is.EqualTo(30));
+            Assert.That(empty.Status, Is.EqualTo("reloading"));
+            Assert.That(single.Damage, Is.EqualTo(10));
+            Assert.That(refilled.Damage, Is.EqualTo(30));
+            Assert.That(miss.Damage, Is.Zero);
+            Assert.That(miss.Target!.Hp, Is.EqualTo(930));
+        });
+    }
+
+    [Test]
     public async Task NpcPulse_DamagesNearbyTargets_AndSharesCooldownAcrossReplicas()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

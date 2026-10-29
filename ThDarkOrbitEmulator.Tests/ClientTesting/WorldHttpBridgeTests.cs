@@ -429,6 +429,43 @@ public sealed class WorldHttpBridgeTests
     }
 
     [Test]
+    public async Task BrowserLauncherFire_UsesSeparateSharedLoad()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new NpcMutex();
+        var npcs = new WorldNpcs(cache, mutex, new NpcRewards(), Options.Create(new WorldNpcOptions
+        {
+            LauncherCapacity = 2, LauncherRocketDamage = 10, LauncherReloadSeconds = 30,
+            Templates = [new("Scout", "npc_scout", 1, 100, 0, 0, 0, 0, 0, 0)]
+        }), TimeProvider.System);
+        using var appServices = new ServiceCollection().AddSingleton(npcs).BuildServiceProvider();
+        var a = new WorldSessionStore(cache, mutex);
+        var b = new WorldSessionStore(cache, mutex);
+        var npc = (await npcs.VisibleAsync(1, default)).Single();
+        await a.EnterAsync(new WorldPilot(73, "mmo", 1, 1, "ship", 0, 0)
+        {
+            AccountId = Session.AccountId, X = npc.X, Y = npc.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+        var auth = new Auth(); var resolver = new Resolver(100);
+        await SendAsync("POST", "target", $"{{\"npcId\":{npc.Id}}}", auth, resolver, a, services: appServices);
+
+        var request = $"{{\"npcId\":{npc.Id},\"weapon\":\"launcher\"}}";
+        var first = await SendAsync("POST", "fire", request, auth, resolver, a, services: appServices);
+        var second = await SendAsync("POST", "fire", request, auth, resolver, b, services: appServices);
+        using var hit = JsonDocument.Parse(Body(first));
+        using var empty = JsonDocument.Parse(Body(second));
+        Assert.Multiple(() =>
+        {
+            Assert.That(first.Response.StatusCode, Is.EqualTo(200));
+            Assert.That(hit.RootElement.GetProperty("damage").GetInt32(), Is.EqualTo(20));
+            Assert.That(second.Response.StatusCode, Is.EqualTo(409));
+            Assert.That(empty.RootElement.GetProperty("status").GetString(), Is.EqualTo("reloading"));
+        });
+    }
+
+    [Test]
     [Explicit("Runs the shipped Spacemap page against live Kestrel pickup endpoints.")]
     public async Task SpacemapClient_UsesLivePickupRadius_BeforeReachingDefaultRange()
     {

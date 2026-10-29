@@ -512,14 +512,16 @@ public static class WorldHttpBridge
         int id;
         int? expectedMapId;
         bool rocket;
+        bool launcher;
         try { using var body = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: ct);
             id = body.RootElement.GetProperty("npcId").GetInt32();
             expectedMapId = body.RootElement.TryGetProperty("mapId", out var map)
                 ? map.GetInt32() : null;
             var weaponName = body.RootElement.TryGetProperty("weapon", out var weapon)
                 ? weapon.GetString() : "laser";
-            if (weaponName is not ("laser" or "rocket")) throw new JsonException("Unknown weapon.");
-            rocket = weaponName == "rocket"; }
+            if (weaponName is not ("laser" or "rocket" or "launcher")) throw new JsonException("Unknown weapon.");
+            rocket = weaponName == "rocket";
+            launcher = weaponName == "launcher"; }
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         { context.Response.StatusCode = 400; return; }
         if (expectedMapId is <= 0) { context.Response.StatusCode = 400; return; }
@@ -532,10 +534,13 @@ public static class WorldHttpBridge
             !await npcs.CanRetryRewardAsync(pilot, id, ct))
         { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "not_selected" }, ct); return; }
         WorldNpcAttack result;
+        if (launcher && WorldMapInstance.IsGate(pilot.MapId))
+        { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "unsupported_weapon" }, ct); return; }
         try { result = WorldMapInstance.IsGate(pilot.MapId)
             ? await context.RequestServices.GetRequiredService<WorldGateCombat>().AttackAsync(pilot, id, sessions, ct)
             : await npcs.AttackAsync(pilot, id, sessions, ct,
-                await LeaseFenceAsync(context, pilot.MapId, ct), expectedMapId, rocket); }
+                await LeaseFenceAsync(context, pilot.MapId, ct), expectedMapId, rocket,
+                launcher: launcher); }
         catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
         catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
         if (result.Status != "hit") context.Response.StatusCode = 409;

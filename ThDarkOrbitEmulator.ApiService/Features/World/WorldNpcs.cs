@@ -26,6 +26,9 @@ public sealed class WorldNpcOptions
     public double RocketMissChance { get; set; }
     public double RocketDamageSpread { get; set; }
     public int RocketCooldownSeconds { get; set; } = 3;
+    public int LauncherCapacity { get; set; } = 5;
+    public int LauncherReloadSeconds { get; set; } = 2;
+    public int LauncherRocketDamage { get; set; } = 100;
     public int PulseRange { get; set; } = 700;
     public int PulseCooldownSeconds { get; set; } = 30;
     public int LaserCooldownMilliseconds { get; set; } = 1000;
@@ -88,6 +91,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
     private static string TargetKey(long userId) => $"world:npc:target:{userId}";
     private static string LaserKey(long userId) => $"world:npc:laser:{userId}";
     private sealed record ActiveLaser(int MapId, int NpcId, long Cycle, long NextShotUnixMs);
+    private sealed record LauncherLoad(int Count, long UpdatedAtUnixMs);
     private static DistributedCacheEntryOptions Expiry => new();
 
     public IReadOnlyList<WorldNpc> Spawn(int mapId, DateTimeOffset at,
@@ -391,7 +395,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
     public async Task<WorldNpcAttack> AttackAsync(WorldPilot pilot, int npcId,
         WorldSessionStore sessions, CancellationToken ct, WorldLeaseFence? fence = null,
         int? expectedMapId = null, bool rocket = false, bool pulse = false,
-        Guid? pulseActionId = null, long? expectedGeneration = null, bool resumePulse = false)
+        Guid? pulseActionId = null, long? expectedGeneration = null, bool resumePulse = false,
+        bool launcher = false)
     {
         if (pilot.AccountId == Guid.Empty) return new("invalid");
         WorldNpc? npc;
@@ -438,11 +443,38 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                     WorldMapInstance.Starter(pilot.MapId).Portals.Any(portal =>
                         DistanceSquared(x, y, portal.X, portal.Y) <= 300L * 300)))
                     return new("restricted", npc);
-                var fireRange = pulse ? settings.PulseRange : rocket ? settings.RocketRange : variables is null ? settings.LaserRange
+                var fireRange = pulse ? settings.PulseRange : rocket || launcher ? settings.RocketRange : variables is null ? settings.LaserRange
                     : await variables.NumberAsync("world.combat.fire_range", ct);
                 if (!resumePulse && (long)(x - npc.X) * (x - npc.X) + (long)(y - npc.Y) * (y - npc.Y) >
                     (long)fireRange * fireRange) return new("distant", npc);
                 if (pulse) damage = Math.Max(1, vital.Hp / 5);
+                else if (launcher)
+                {
+                    var loadKey = $"world:launcher:{pilot.UserId}";
+                    var storedLoad = await cache.GetStringAsync(loadKey, ct);
+                    var capacity = Math.Clamp(settings.LauncherCapacity, 1, 20);
+                    var nowMs = clock.GetUtcNow().ToUnixTimeMilliseconds();
+                    var reloadMs = Math.Max(1, settings.LauncherReloadSeconds) * 1000L;
+                    var load = storedLoad is null
+                        ? new LauncherLoad(capacity, nowMs)
+                        : JsonSerializer.Deserialize<LauncherLoad>(storedLoad)!;
+                    var elapsed = Math.Max(0, nowMs - load.UpdatedAtUnixMs);
+                    var added = Math.Min(capacity - Math.Clamp(load.Count, 0, capacity), elapsed / reloadMs);
+                    var count = Math.Clamp(load.Count, 0, capacity) + (int)added;
+                    var updatedAt = count == capacity ? nowMs : load.UpdatedAtUnixMs + added * reloadMs;
+                    if (count == 0) return new("reloading", npc);
+                    // A volley is one target hit; each loaded rocket rolls independently.
+                    for (var i = 0; i < count; i++)
+                    {
+                        if (Random.Shared.NextDouble() < Math.Clamp(settings.RocketMissChance, 0, 1)) continue;
+                        var spread = Math.Clamp(settings.RocketDamageSpread, 0, 1);
+                        damage += Math.Max(1, (int)Math.Round(Math.Max(1, settings.LauncherRocketDamage) *
+                            (1 - spread + Random.Shared.NextDouble() * 2 * spread)));
+                    }
+                    missed = damage == 0;
+                    await cache.SetStringAsync(loadKey,
+                        JsonSerializer.Serialize(new LauncherLoad(0, updatedAt)), Expiry, ct);
+                }
                 else if (rocket)
                 {
                     var cooldownKey = $"world:rocket:{pilot.UserId}";
@@ -520,7 +552,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         {
             await rewards.CreditAsync(pilot.AccountId, ApplyReward(npc!, reward!), $"{key}:{savedGeneration}", ct);
         }
-        if (!resumePulse) await sessions.BroadcastNpcDamageAsync(pilot, target!, damage, dead, reward, ct, rocket);
+        if (!resumePulse) await sessions.BroadcastNpcDamageAsync(pilot, target!, damage, dead, reward, ct,
+            rocket || launcher);
         return new("hit", target, damage, dead, reward);
     }
 
