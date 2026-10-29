@@ -1155,8 +1155,25 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     {
         var entries = new List<RemoteEntry>();
         foreach (var presence in (await ReadPresenceAsync(mapId, CancellationToken.None)).Values)
-            entries.Add(new(presence, connections.ContainsKey(presence.Pilot.UserId) ? null
-                : await cache.GetStringAsync(Key(presence.Pilot.UserId))));
+        {
+            var userId = presence.Pilot.UserId;
+            var saved = connections.ContainsKey(userId) ? null
+                : await cache.GetStringAsync(Key(userId));
+            if (saved is null)
+            {
+                var runtime = await cache.GetStringAsync(RuntimeKey(userId));
+                if (runtime is not null)
+                {
+                    try
+                    {
+                        var snapshot = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(runtime);
+                        if (snapshot is not null && snapshot.MapId != mapId) continue;
+                    }
+                    catch (JsonException) { }
+                }
+            }
+            entries.Add(new(presence, saved));
+        }
         return new(DateTimeOffset.UtcNow, entries);
     }
 
