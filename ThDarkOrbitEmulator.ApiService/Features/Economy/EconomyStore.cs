@@ -1494,7 +1494,7 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
         await using var db = Connection();
         await db.OpenAsync(ct);
         await using var cmd = new NpgsqlCommand(
-            "INSERT INTO economy.world_deaths(account_id,death_id,pending) VALUES (@a,@d,true) ON CONFLICT (account_id) DO UPDATE SET death_id=EXCLUDED.death_id,pending=true", db);
+            "INSERT INTO economy.world_deaths(account_id,death_id,pending) VALUES (@a,@d,true) ON CONFLICT (account_id) DO UPDATE SET death_id=EXCLUDED.death_id,pending=true,repair_outcome=NULL", db);
         cmd.Parameters.AddWithValue("a", accountId);
         cmd.Parameters.AddWithValue("d", deathId);
         await cmd.ExecuteNonQueryAsync(ct);
@@ -1518,6 +1518,29 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
             "SELECT death_id FROM economy.world_deaths WHERE account_id=@a AND pending", db);
         cmd.Parameters.AddWithValue("a", accountId);
         return (string?)await cmd.ExecuteScalarAsync(ct);
+    }
+
+    public async Task<string?> FindPendingWorldRepairAsync(Guid accountId, CancellationToken ct)
+    {
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(
+            "SELECT repair_outcome FROM economy.world_deaths WHERE account_id=@a AND pending", db);
+        cmd.Parameters.AddWithValue("a", accountId);
+        return await cmd.ExecuteScalarAsync(ct) as string;
+    }
+
+    public async Task StageWorldRepairAsync(Guid accountId, string deathId, string outcome, CancellationToken ct)
+    {
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(
+            "UPDATE economy.world_deaths SET repair_outcome=@o WHERE account_id=@a AND death_id=@d AND pending", db);
+        cmd.Parameters.AddWithValue("a", accountId);
+        cmd.Parameters.AddWithValue("d", deathId);
+        cmd.Parameters.AddWithValue("o", outcome);
+        if (await cmd.ExecuteNonQueryAsync(ct) != 1)
+            throw new InvalidOperationException("The destroyed life changed before repair could be saved.");
     }
 
     public async Task CompleteWorldDeathAsync(Guid accountId, string deathId, CancellationToken ct)

@@ -1604,6 +1604,39 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(next.CurrentHitPoints(entered), Is.GreaterThan(0));
     }
 
+    [TestCase(WorldRespawnLocation.Base, 0)]
+    [TestCase(WorldRespawnLocation.DeathLocation, 300)]
+    [TestCase(WorldRespawnLocation.NearestPortal, 200)]
+    public async Task PilotDestruction_ReentryFinishesStagedRepairAfterCacheLoss(
+        WorldRespawnLocation location, int price)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var wallet = new TestRepairWallet { CanPay = true, ThrowAfterCompleteOnce = true };
+        var pilot = Pilot() with { UserId = 2500 + price, AccountId = Guid.NewGuid(),
+            MapId = 2, X = 5000, Y = 5000, Uridium = 1000,
+            Stats = new WorldShipStats(300, 1000, 100, 0, 100, []) };
+        var first = new WorldSessionStore(cache, repairWallet: wallet);
+        pilot = await first.EnterAsync(pilot, default);
+        await first.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0);
+        Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await first.RespawnAsync(pilot, location, default));
+        await cache.RemoveAsync($"world:runtime:{pilot.UserId}");
+        await cache.RemoveAsync($"world:death:{pilot.UserId}");
+        await cache.RemoveAsync($"world:position:{pilot.UserId}");
+
+        var replica = new WorldSessionStore(cache, repairWallet: wallet);
+        var restored = await replica.EnterAsync(pilot, default);
+        Assert.That(replica.CurrentHitPoints(restored), Is.GreaterThan(0));
+        Assert.That(restored.MapId, Is.EqualTo(location == WorldRespawnLocation.Base ? 1 : 2));
+        Assert.That(restored.Uridium, Is.EqualTo(1000 - price));
+        Assert.That(await wallet.FindPendingDeathAsync(pilot.AccountId, default), Is.Null);
+        Assert.That(wallet.Keys, Has.Count.EqualTo(price == 0 ? 0 : 1));
+        await cache.RemoveAsync($"world:runtime:{pilot.UserId}");
+        var next = new WorldSessionStore(cache, repairWallet: wallet);
+        Assert.That(next.CurrentHitPoints(await next.EnterAsync(restored, default)), Is.GreaterThan(0));
+    }
+
     [TestCase("0", 0)]
     [TestCase("1000000", 1000000)]
     [TestCase("-1", 150)]
@@ -2295,22 +2328,39 @@ public sealed class WorldAndSpacemapSpecificationTests
     {
         public bool CanPay { get; set; }
         public bool ThrowAfterChargeOnce { get; set; }
+        public bool ThrowAfterCompleteOnce { get; set; }
         public List<string> Keys { get; } = [];
         private readonly Dictionary<string, int> prices = [];
         private readonly Dictionary<Guid, string> deaths = [];
         private readonly HashSet<Guid> pendingDeaths = [];
+        private readonly Dictionary<Guid, WorldRepairOutcome> outcomes = [];
         public Task RecordDeathAsync(Guid accountId, string deathId, CancellationToken ct)
         {
             deaths[accountId] = deathId;
             pendingDeaths.Add(accountId);
+            outcomes.Remove(accountId);
             return Task.CompletedTask;
         }
         public Task<string?> FindDeathAsync(Guid accountId, CancellationToken ct) =>
             Task.FromResult(deaths.GetValueOrDefault(accountId));
         public Task<string?> FindPendingDeathAsync(Guid accountId, CancellationToken ct) =>
             Task.FromResult(pendingDeaths.Contains(accountId) ? deaths.GetValueOrDefault(accountId) : null);
+        public Task<WorldRepairOutcome?> FindPendingRepairAsync(Guid accountId, CancellationToken ct) =>
+            Task.FromResult(pendingDeaths.Contains(accountId) ? outcomes.GetValueOrDefault(accountId) : null);
+        public Task StageRepairAsync(Guid accountId, string deathId, WorldRepairOutcome outcome, CancellationToken ct)
+        {
+            if (!pendingDeaths.Contains(accountId) || deaths.GetValueOrDefault(accountId) != deathId)
+                throw new InvalidOperationException("The destroyed life changed.");
+            outcomes[accountId] = outcome;
+            return Task.CompletedTask;
+        }
         public Task CompleteDeathAsync(Guid accountId, string deathId, CancellationToken ct)
         {
+            if (ThrowAfterCompleteOnce)
+            {
+                ThrowAfterCompleteOnce = false;
+                throw new InvalidOperationException("Interrupted before durable repair completion.");
+            }
             if (deaths.GetValueOrDefault(accountId) == deathId) pendingDeaths.Remove(accountId);
             return Task.CompletedTask;
         }
