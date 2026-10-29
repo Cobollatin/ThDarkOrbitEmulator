@@ -333,10 +333,13 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 {
                     radiationWarnings[pilot.UserId] = false;
                     await PersistRuntimeAsync(pilot, ct);
+                    await SendRadiationWarningAsync(pilot.UserId, false, ct);
                     continue;
                 }
+                var startedRadiating = !RadiationWarning(pilot.UserId);
                 radiationWarnings[pilot.UserId] = true;
                 await ApplyBoundaryDamageAsync(pilot, combatClock.GetUtcNow(), ct);
+                if (startedRadiating) await SendRadiationWarningAsync(pilot.UserId, true, ct);
             }
             finally { gate.Release(); }
         }
@@ -1514,6 +1517,14 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             ? (moving.TargetX, moving.TargetY) : (pilot.X, pilot.Y);
 
     public bool RadiationWarning(long userId) => radiationWarnings.GetValueOrDefault(userId);
+
+    private async Task SendRadiationWarningAsync(long userId, bool warning, CancellationToken ct)
+    {
+        if (!connections.TryGetValue(userId, out var connection)) return;
+        try { await connection.SendAsync(WorldCommandId.RadiationWarningCommand,
+            new byte[] { (byte)(warning ? 1 : 0) }, ct); }
+        catch (IOException) { }
+    }
 
     public bool SetRadiationWarning(long userId, bool warning)
     {

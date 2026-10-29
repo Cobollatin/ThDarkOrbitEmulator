@@ -1195,6 +1195,43 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(replica.CurrentHitPoints(pilot), Is.EqualTo(980));
     }
 
+    [Test]
+    public async Task Radiation_TickSendsWarningTransitionsToConnectedPilot()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var clock = new AdvancingClock();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), clock: clock);
+        var pilot = await store.EnterAsync(Pilot() with
+        {
+            UserId = 911, X = 300, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        using var stream = new MemoryStream();
+        store.Attach(new WorldConnection(pilot, new WorldPacketWriter(stream)));
+
+        await store.MoveAsync(pilot, 0, 1300, null, default, clock.GetUtcNow());
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await store.TickRadiationAsync(pilot.MapId, default);
+        await store.TickRadiationAsync(pilot.MapId, default);
+        await store.MoveAsync(pilot, 300, 1300, null, default, clock.GetUtcNow());
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await store.TickRadiationAsync(pilot.MapId, default);
+        await store.TickRadiationAsync(pilot.MapId, default);
+
+        stream.Position = 0;
+        var reader = new WorldPacketReader(stream);
+        var started = await reader.ReadAsync();
+        var cleared = await reader.ReadAsync();
+        Assert.Multiple(() =>
+        {
+            Assert.That(started?.Command, Is.EqualTo(WorldCommandId.RadiationWarningCommand));
+            Assert.That(started?.Payload.ToArray(), Is.EqualTo(new byte[] { 1 }));
+            Assert.That(cleared?.Command, Is.EqualTo(WorldCommandId.RadiationWarningCommand));
+            Assert.That(cleared?.Payload.ToArray(), Is.EqualTo(new byte[] { 0 }));
+            Assert.That(stream.Position, Is.EqualTo(stream.Length));
+        });
+    }
+
     [TestCase(3000, true)]
     [TestCase(3001, false)]
     public async Task StationRepair_UsesInclusiveRadiusAndRequiresStoppedTravel(int x, bool inside)
