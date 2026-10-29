@@ -550,7 +550,7 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                             w.Write((byte)pilot.HangarSlot);
                             WorldPayload.WriteString(w, pilot.ShipId);
                             WorldPayload.WriteInt64(w, pilot.Credits);
-                            WorldPayload.WriteInt64(w, pilot.Uridium);
+                            WorldPayload.WriteInt64(w, connected.Uridium);
                         }), ct);
                         // Baselines are taken before the client can see the entry burst: a runtime
                         // variable change or another replica's move landing after the packets are

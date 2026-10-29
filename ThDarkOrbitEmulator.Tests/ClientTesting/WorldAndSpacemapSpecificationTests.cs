@@ -1468,6 +1468,8 @@ public sealed class WorldAndSpacemapSpecificationTests
             Stats = new WorldShipStats(300, 1000, 100, 0, 100, [])
         }, default);
         await store.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0);
+        var stillDead = await replica.EnterAsync(pilot, default);
+        Assert.That(replica.CurrentHitPoints(stillDead), Is.Zero);
 
         Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await store.RespawnAsync(pilot, paidLocation, default));
@@ -1475,6 +1477,38 @@ public sealed class WorldAndSpacemapSpecificationTests
 
         Assert.That(restored, Is.Not.Null);
         Assert.That(restored!.MapId, Is.EqualTo(2));
+        Assert.That(restored.Uridium, Is.EqualTo(1000 - price));
+        Assert.That(wallet.Keys, Has.Count.EqualTo(1));
+        if (paidLocation is WorldRespawnLocation.DeathLocation)
+            Assert.That((restored.X, restored.Y), Is.EqualTo((5000, 5000)));
+        else
+            Assert.That((restored.X, restored.Y), Is.Not.EqualTo((5000, 5000)));
+    }
+
+    [TestCase(WorldRespawnLocation.DeathLocation, 300)]
+    [TestCase(WorldRespawnLocation.NearestPortal, 200)]
+    public async Task PilotDestruction_ReentryCompletesInterruptedPaidRepair(
+        WorldRespawnLocation paidLocation, int price)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var wallet = new TestRepairWallet { CanPay = true, ThrowAfterChargeOnce = true };
+        var store = new WorldSessionStore(cache, repairWallet: wallet);
+        var replica = new WorldSessionStore(cache, repairWallet: wallet);
+        var pilot = await store.EnterAsync(Pilot() with
+        {
+            UserId = 1500 + price, AccountId = Guid.NewGuid(), MapId = 2,
+            FactionId = 1, X = 5000, Y = 5000, Uridium = 1000,
+            Stats = new WorldShipStats(300, 1000, 100, 0, 100, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0);
+
+        Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await store.RespawnAsync(pilot, paidLocation, default));
+        var restored = await replica.EnterAsync(pilot, default);
+
+        Assert.That(replica.CurrentHitPoints(restored), Is.GreaterThan(0));
+        Assert.That(restored.MapId, Is.EqualTo(2));
         Assert.That(restored.Uridium, Is.EqualTo(1000 - price));
         Assert.That(wallet.Keys, Has.Count.EqualTo(1));
         if (paidLocation is WorldRespawnLocation.DeathLocation)

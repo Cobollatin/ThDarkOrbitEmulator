@@ -524,6 +524,23 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     public async Task<WorldPilot> EnterAsync(WorldPilot pilot, CancellationToken ct)
     {
         pilot = await RefreshAsync(pilot, ct);
+        if (CurrentHitPoints(pilot) == 0 && repairWallet is not null && pilot.AccountId != Guid.Empty)
+        {
+            var deathId = await cache.GetStringAsync(DeathKey(pilot.UserId), ct);
+            if (deathId is not null)
+            {
+                foreach (var paidLocation in new[]
+                         { WorldRespawnLocation.DeathLocation, WorldRespawnLocation.NearestPortal })
+                {
+                    if (await repairWallet.FindChargeAsync(pilot.AccountId, paidLocation, deathId, ct)
+                        is not null)
+                    {
+                        pilot = await RespawnAsync(pilot, paidLocation, ct) ?? pilot;
+                        break;
+                    }
+                }
+            }
+        }
         if (!travel.ContainsKey(pilot.UserId)) await PersistAsync(pilot, ct);
         await using var held = meshMutex is null ? null : await meshMutex.AcquireAsync(ct);
         foreach (var map in connected.Values)
