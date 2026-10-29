@@ -544,7 +544,6 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     {
         pilot = await RefreshAsync(pilot, ct);
         if (repairWallet is not null && pilot.AccountId != Guid.Empty
-            && await cache.GetStringAsync(Key(pilot.UserId), ct) is null
             && await repairWallet.FindPendingDeathPositionAsync(pilot.AccountId, ct) is { } deathPosition
             && WorldMapInstance.Starter(deathPosition.MapId) is { } deathMap
             && deathPosition.X >= 0 && deathPosition.X <= deathMap.Width
@@ -576,13 +575,14 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 await repairWallet.CompleteDeathAsync(pilot.AccountId, deathId, ct);
             }
         }
-        // The durable pending death preserves zero hull when both cache entries are lost.
+        // The durable death also wins when the process stopped before writing zero hull to cache.
         if (CurrentHitPoints(pilot) > 0 && repairWallet is not null && pilot.AccountId != Guid.Empty
-            && (await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct) is null
-                || await cache.GetStringAsync(Key(pilot.UserId), ct) is null))
+            && await repairWallet.FindPendingDeathAsync(pilot.AccountId, ct) is not null)
         {
-            if (await repairWallet.FindPendingDeathAsync(pilot.AccountId, ct) is not null)
-                hitPoints[pilot.UserId] = 0;
+            hitPoints[pilot.UserId] = 0;
+            shields[pilot.UserId] = 0;
+            await ClearRepairRuntimeAsync(pilot.UserId, ct);
+            await PersistRuntimeAsync(pilot, ct);
         }
         if (CurrentHitPoints(pilot) == 0 && repairWallet is not null && pilot.AccountId != Guid.Empty)
         {

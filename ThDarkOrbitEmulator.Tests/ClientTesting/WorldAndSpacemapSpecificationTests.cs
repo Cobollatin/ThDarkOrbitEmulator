@@ -1659,6 +1659,31 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(next.CurrentHitPoints(entered), Is.GreaterThan(0));
     }
 
+    [Test]
+    public async Task PilotDestruction_DurableDeathOverridesLiveCacheAfterInterruptedDamage()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var wallet = new TestRepairWallet { ThrowAfterRecordOnce = true };
+        var pilot = Pilot() with { UserId = 2411, AccountId = Guid.NewGuid(),
+            Stats = new WorldShipStats(300, 1000, 100, 0, 100, []) };
+        var first = new WorldSessionStore(cache, repairWallet: wallet);
+        pilot = await first.EnterAsync(pilot, default);
+        first.SetCurrentShield(pilot, 0);
+        Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await first.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0));
+        Assert.That(await cache.GetStringAsync($"world:runtime:{pilot.UserId}"), Is.Not.Null);
+
+        var replica = new WorldSessionStore(cache, repairWallet: wallet);
+        var dead = await replica.EnterAsync(pilot, default);
+        Assert.That(replica.CurrentHitPoints(dead), Is.Zero);
+        Assert.That(replica.CurrentShield(dead), Is.Zero);
+        var next = new WorldSessionStore(cache, repairWallet: wallet);
+        var reentered = await next.EnterAsync(pilot, default);
+        Assert.That(next.CurrentHitPoints(reentered), Is.Zero);
+        Assert.That(await next.RespawnAtBaseAsync(reentered, default), Is.Not.Null);
+    }
+
     [TestCase(WorldRespawnLocation.DeathLocation, 300)]
     [TestCase(WorldRespawnLocation.NearestPortal, 200)]
     public async Task PilotDestruction_PaidRepairUsesDurableDeathPositionAfterCacheLoss(
@@ -2428,6 +2453,7 @@ public sealed class WorldAndSpacemapSpecificationTests
         public bool ThrowAfterChargeOnce { get; set; }
         public bool ThrowAfterStageOnce { get; set; }
         public bool ThrowAfterCompleteOnce { get; set; }
+        public bool ThrowAfterRecordOnce { get; set; }
         public List<string> Keys { get; } = [];
         private readonly Dictionary<string, int> prices = [];
         private readonly Dictionary<Guid, string> deaths = [];
@@ -2441,6 +2467,11 @@ public sealed class WorldAndSpacemapSpecificationTests
             deathPositions[accountId] = position;
             pendingDeaths.Add(accountId);
             outcomes.Remove(accountId);
+            if (ThrowAfterRecordOnce)
+            {
+                ThrowAfterRecordOnce = false;
+                throw new InvalidOperationException("Interrupted after durable death recording.");
+            }
             return Task.CompletedTask;
         }
         public Task<string?> FindDeathAsync(Guid accountId, CancellationToken ct) =>
