@@ -251,18 +251,13 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         var pulseActionId = actionId.GetValueOrDefault();
         if (pulseActionId == Guid.Empty) pulseActionId = Guid.NewGuid();
         PulseTarget[] targets;
+        var resumePulse = false;
         await using (var held = await mutex.AcquireAsync(ct))
         {
             await WorldSessionStore.CheckLeaseAsync(pilot.MapId, fence, ct);
             pilot = await sessions.RestoreAsync(pilot, ct);
             if (expectedMapId is not null && pilot.MapId != expectedMapId)
                 throw new WorldMapChangedException();
-            if (sessions.CurrentHitPoints(pilot) <= 0) return new("destroyed_pilot", []);
-            var position = sessions.CurrentPosition(pilot, clock.GetUtcNow());
-            var map = WorldMapInstance.Starter(pilot.MapId);
-            if (InsidePeaceZone(pilot.MapId, position) || map.Portals.Any(portal =>
-                DistanceSquared(position.X, position.Y, portal.X, portal.Y) <= 300L * 300))
-                return new("restricted", []);
             var actionKey = $"world:npc:pulse:action:{pilot.UserId}:{pulseActionId:N}";
             var plan = pulseInventory is null ? null
                 : await pulseInventory.PlanAsync(pilot.AccountId, pulseActionId, ct);
@@ -273,10 +268,17 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                         ? "refunded" : "duplicate", []);
                 if (plan.Status != "started" || plan.MapId != pilot.MapId)
                     return new("duplicate", []);
+                resumePulse = true;
                 targets = plan.Targets;
             }
             else
             {
+                if (sessions.CurrentHitPoints(pilot) <= 0) return new("destroyed_pilot", []);
+                var position = sessions.CurrentPosition(pilot, clock.GetUtcNow());
+                var map = WorldMapInstance.Starter(pilot.MapId);
+                if (InsidePeaceZone(pilot.MapId, position) || map.Portals.Any(portal =>
+                    DistanceSquared(position.X, position.Y, portal.X, portal.Y) <= 300L * 300))
+                    return new("restricted", []);
                 if (await cache.GetStringAsync(actionKey, ct) is not null)
                     return new("duplicate", []);
                 var key = $"world:npc:pulse:{pilot.UserId}";
@@ -318,7 +320,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         foreach (var target in targets)
         {
             var hit = await AttackAsync(pilot, target.Id, sessions, ct, fence, pilot.MapId,
-                pulse: true, pulseActionId: pulseActionId, expectedGeneration: target.Generation);
+                pulse: true, pulseActionId: pulseActionId, expectedGeneration: target.Generation,
+                resumePulse: resumePulse);
             if (hit.Status == "hit") hits.Add(hit);
         }
         if (pulseInventory is not null)
@@ -368,7 +371,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
     public async Task<WorldNpcAttack> AttackAsync(WorldPilot pilot, int npcId,
         WorldSessionStore sessions, CancellationToken ct, WorldLeaseFence? fence = null,
         int? expectedMapId = null, bool rocket = false, bool pulse = false,
-        Guid? pulseActionId = null, long? expectedGeneration = null)
+        Guid? pulseActionId = null, long? expectedGeneration = null, bool resumePulse = false)
     {
         if (pilot.AccountId == Guid.Empty) return new("invalid");
         WorldNpc? npc;
@@ -387,7 +390,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             if (expectedMapId is not null && pilot.MapId != expectedMapId)
                 throw new WorldMapChangedException();
             if (fence is not null && pilot.MapId != mapId) throw new WorldLeaseLostException();
-            if (sessions.CurrentHitPoints(pilot) <= 0) return new("destroyed_pilot");
+            if (!resumePulse && sessions.CurrentHitPoints(pilot) <= 0) return new("destroyed_pilot");
             key = Key(pilot.MapId, npcId);
             var stored = await cache.GetStringAsync(key, ct);
             var saved = stored is null ? null : JsonSerializer.Deserialize<Vital>(stored);
@@ -410,13 +413,13 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             else
             {
                 var (x, y) = sessions.CurrentPosition(pilot, clock.GetUtcNow());
-                if (pulse && (InsidePeaceZone(pilot.MapId, (x, y)) ||
+                if (pulse && !resumePulse && (InsidePeaceZone(pilot.MapId, (x, y)) ||
                     WorldMapInstance.Starter(pilot.MapId).Portals.Any(portal =>
                         DistanceSquared(x, y, portal.X, portal.Y) <= 300L * 300)))
                     return new("restricted", npc);
                 var fireRange = pulse ? settings.PulseRange : rocket ? settings.RocketRange : variables is null ? settings.LaserRange
                     : await variables.NumberAsync("world.combat.fire_range", ct);
-                if ((long)(x - npc.X) * (x - npc.X) + (long)(y - npc.Y) * (y - npc.Y) >
+                if (!resumePulse && (long)(x - npc.X) * (x - npc.X) + (long)(y - npc.Y) * (y - npc.Y) >
                     (long)fireRange * fireRange) return new("distant", npc);
                 if (pulse) damage = Math.Max(1, vital.Hp / 5);
                 else if (rocket)

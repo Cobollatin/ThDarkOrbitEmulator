@@ -1703,6 +1703,46 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task NpcPulse_StartedRewardRetryCompletesAfterPilotIsDestroyed()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var clock = new AdvancingClock();
+        var options = Options.Create(new WorldNpcOptions
+        {
+            PulseRange = 10000,
+            Templates = [new("Scout", "npc_scout", 2, 1, 0, 5, 0, 0, 0, 0)]
+        });
+        var rewards = new TestRewards { FailFirstCredit = true };
+        var inventory = new TestPulseInventory(1);
+        var first = new WorldNpcs(cache, mutex, rewards, options, clock, pulseInventory: inventory);
+        var second = new WorldNpcs(cache, mutex, rewards, options, clock, pulseInventory: inventory);
+        var spawn = first.Spawn(1, clock.GetUtcNow())[0];
+        var sessions = new WorldSessionStore(cache, mutex);
+        var pilot = await sessions.EnterAsync(Pilot() with
+        {
+            AccountId = Guid.NewGuid(), X = spawn.X, Y = spawn.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+        var actionId = Guid.NewGuid();
+        Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await first.PulseAsync(pilot, sessions, default, actionId: actionId));
+
+        await sessions.ApplyNpcDamageAsync(pilot, spawn.Id, 1000, default, shieldAbsorption: 0);
+        Assert.That(sessions.CurrentHitPoints(pilot), Is.Zero);
+        Assert.That((await second.PulseAsync(pilot, sessions, default)).Status,
+            Is.EqualTo("destroyed_pilot"));
+
+        await second.ReconcileStartedPulsesAsync(pilot.MapId, sessions, default);
+        Assert.That(inventory.Completed, Is.EqualTo(1));
+        Assert.That(inventory.Remaining, Is.Zero);
+        Assert.That(rewards.Calls, Is.EqualTo(3));
+        Assert.That(await cache.GetStringAsync($"world:npc:v2:1:{spawn.Id}"),
+            Does.Not.Contain(actionId.ToString()));
+    }
+
+    [Test]
     public async Task NpcPulse_RetrySkipsTargetThatRespawnedAfterPlanWasStored()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
