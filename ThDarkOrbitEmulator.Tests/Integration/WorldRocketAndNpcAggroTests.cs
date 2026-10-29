@@ -642,6 +642,34 @@ public sealed class WorldRocketAndNpcAggroTests
         Assert.That(sessions.CurrentHitPoints(bystander), Is.EqualTo(1000));
     }
 
+    [Test]
+    public async Task AutonomousNpc_DefaultFireCooldown_IsSharedAcrossMapOwners()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var options = new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 0)],
+            NpcDamage = 10, NpcMissChance = 0
+        };
+        var first = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var second = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var npc = (await first.VisibleAsync(1, default)).Single();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var pilot = await sessions.EnterAsync(Pilot(npc.X + 400, npc.Y), default);
+
+        await first.TickAggroAsync(1, sessions, default);
+        clock.Advance(TimeSpan.FromMilliseconds(999));
+        await second.TickAggroAsync(1, sessions, default);
+        Assert.That(sessions.CurrentHitPoints(pilot), Is.EqualTo(990));
+
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+        await second.TickAggroAsync(1, sessions, default);
+        Assert.That(sessions.CurrentHitPoints(pilot), Is.EqualTo(980));
+    }
+
     private static WorldNpcs CreateNpcs(IDistributedCache cache, Mutex mutex, Rewards rewards,
         Clock clock, WorldNpcOptions options) => new(cache, mutex, rewards, Options.Create(options), clock);
 

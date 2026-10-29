@@ -44,7 +44,7 @@ public sealed class WorldNpcOptions
     public double NpcMissChance { get; set; } = 0.1;
     public double NpcDamageSpread { get; set; }
     public double PilotShieldAbsorption { get; set; } = 0.8;
-    public int NpcFireCooldownSeconds { get; set; } = 2;
+    public int NpcFireCooldownSeconds { get; set; } = 1;
     public int NpcShieldRepairDelaySeconds { get; set; } = 10;
     public int NpcShieldRepairIntervalSeconds { get; set; } = 1;
     public List<WorldNpcTemplate> Templates { get; set; } =
