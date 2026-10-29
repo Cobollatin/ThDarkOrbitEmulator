@@ -77,6 +77,7 @@ public sealed class WorldSpacemapPageSpecificationTests
     [TestCase("jump")]
     [TestCase("target")]
     [TestCase("fire")]
+    [TestCase("launcher")]
     [TestCase("pulse")]
     [TestCase("announcement")]
     [TestCase("status")]
@@ -143,6 +144,7 @@ public sealed class WorldSpacemapPageSpecificationTests
     [TestCase("request('collect','POST',{boxId:box.id,mapId:state.map.id})")]
     [TestCase("request('target','POST',{npcId:command.id,mapId:command.mapId})")]
     [TestCase("request('fire','POST',{npcId,mapId})")]
+    [TestCase("request('fire','POST',{npcId,mapId,weapon:'launcher'})")]
     [TestCase("request('pulse','POST',{mapId,actionId})")]
     [TestCase("request('config','POST',{configuration:command.configuration,mapId:command.mapId})")]
     public void Page_UsesDocumentedWorldBridgeCommandShapes(string call)
@@ -161,6 +163,18 @@ public sealed class WorldSpacemapPageSpecificationTests
             Assert.That(Html, Does.Contain("e.status==='cooldown'?'Pulse is recharging.'"));
             Assert.That(Html, Does.Contain("e.status==='out_of_ammo'?'Buy pulse charges in the shop.'"));
             Assert.That(Html, Does.Contain("sessionStorage.getItem('pulseActionId')||crypto.randomUUID()"));
+        });
+    }
+
+    [Test]
+    public void Page_LauncherRequiresAnEligibleTarget_AndReportsReloading()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(Html, Does.Contain("document.getElementById('launcher').disabled=p.hp<=0||state.map.id>=101||!selected||launcherPending"));
+            Assert.That(Html, Does.Contain("if(!state||document.getElementById('launcher').disabled)return"));
+            Assert.That(Html, Does.Contain("e.status==='reloading'?'Launcher is reloading.'"));
+            Assert.That(Html, Does.Contain("epoch!==mapEpoch||sequence!==moveSequence||targetId!==npcId"));
         });
     }
 
