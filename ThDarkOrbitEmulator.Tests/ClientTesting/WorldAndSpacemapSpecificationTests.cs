@@ -2791,6 +2791,50 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task LaserWithoutEquippedDamage_DoesNotHitOrTriggerAutomaticWeapons()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var clock = new AdvancingClock();
+        var options = Options.Create(new WorldNpcOptions
+        {
+            AutoRocketOnLaser = true, AutoLauncherOnLaser = true,
+            LauncherCapacity = 1, LauncherReloadSeconds = 1, RocketDamage = 50,
+            LaserCooldownMilliseconds = 1000,
+            Templates = [new("Scout", "npc_scout", 1, 1000, 0, 0, 0, 0, 0, 0)]
+        });
+        var first = new WorldNpcs(cache, mutex, new TestRewards(), options, clock);
+        var second = new WorldNpcs(cache, mutex, new TestRewards(), options, clock);
+        var spawn = first.Spawn(1, clock.GetUtcNow()).Single();
+        var sessions = new WorldSessionStore(cache, mutex);
+        var pilot = await sessions.EnterAsync(Pilot() with
+        {
+            AccountId = Guid.NewGuid(), X = spawn.X, Y = spawn.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 0, [])
+        }, default);
+        await first.SelectAsync(pilot, spawn.Id, default);
+        var direct = await first.AttackAsync(pilot, spawn.Id, sessions, default);
+        await first.StartLaserAsync(pilot, spawn.Id, default);
+        clock.Advance(TimeSpan.FromSeconds(2));
+        await second.TickLasersAsync(pilot.MapId, sessions, default);
+        var afterTick = (await second.VisibleAsync(pilot.MapId, default)).Single(n => n.Id == spawn.Id);
+        clock.Advance(TimeSpan.FromSeconds(2));
+        await first.TickLasersAsync(pilot.MapId, sessions, default);
+        var afterStop = (await first.VisibleAsync(pilot.MapId, default)).Single(n => n.Id == spawn.Id);
+        var rocket = await second.AttackAsync(pilot, spawn.Id, sessions, default, rocket: true);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(direct.Status, Is.EqualTo("no_lasers"));
+            Assert.That(afterTick.Hp, Is.EqualTo(1000));
+            Assert.That(afterStop.Hp, Is.EqualTo(1000));
+            Assert.That(rocket.Status, Is.EqualTo("hit"));
+            Assert.That(rocket.Damage, Is.EqualTo(50));
+        });
+    }
+
+    [Test]
     public async Task AutoRocket_PilotToggleIsSharedAndOverridesServerDefault()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

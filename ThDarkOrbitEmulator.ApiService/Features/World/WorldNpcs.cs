@@ -530,6 +530,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                     : await variables.NumberAsync("world.combat.fire_range", ct);
                 if (!resumePulse && (long)(x - npc.X) * (x - npc.X) + (long)(y - npc.Y) * (y - npc.Y) >
                     (long)fireRange * fireRange) return new("distant", npc);
+                if (!pulse && !rocket && !launcher && sessions.ActiveStats(pilot).LaserDamage <= 0)
+                    return new("no_lasers", npc);
                 if (pulse) damage = Math.Max(1, vital.Hp / 5);
                 else if (launcher)
                 {
