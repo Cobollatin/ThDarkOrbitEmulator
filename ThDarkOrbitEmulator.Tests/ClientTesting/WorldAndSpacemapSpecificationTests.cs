@@ -2706,6 +2706,38 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task PilotRocket_DefaultRangeRejectsDistantTargetAtBoundary()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var clock = new TestClock();
+        var options = new WorldNpcOptions
+        {
+            RocketDamage = 10,
+            Templates = [new("Scout", "npc_scout", 1, 100, 0, 0, 0, 0, 0, 0)]
+        };
+        var npcs = new WorldNpcs(cache, mutex, new TestRewards(), Options.Create(options), clock);
+        var spawn = npcs.Spawn(1, clock.GetUtcNow()).Single();
+        var sessions = new WorldSessionStore(cache, mutex);
+        var distant = await sessions.EnterAsync(Pilot() with
+        {
+            UserId = 71, AccountId = Guid.NewGuid(), X = spawn.X + 801, Y = spawn.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+        var boundary = await sessions.EnterAsync(Pilot() with
+        {
+            UserId = 72, AccountId = Guid.NewGuid(), X = spawn.X + 800, Y = spawn.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+
+        Assert.That((await npcs.AttackAsync(distant, spawn.Id, sessions, default, rocket: true)).Status,
+            Is.EqualTo("distant"));
+        var hit = await npcs.AttackAsync(boundary, spawn.Id, sessions, default, rocket: true);
+        Assert.That((hit.Status, hit.Damage, hit.Target!.Hp), Is.EqualTo(("hit", 10, 90)));
+    }
+
+    [Test]
     public async Task PilotRocket_MissConsumesCooldownWithoutChangingTargetVitality()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

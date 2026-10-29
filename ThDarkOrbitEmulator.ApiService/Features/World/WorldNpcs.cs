@@ -22,7 +22,8 @@ public sealed class WorldNpcOptions
     public const string SectionName = "WorldNpcs";
     public int RespawnSeconds { get; set; } = 300;
     public int LaserRange { get; set; } = 1000;
-    public int RocketRange { get; set; } = 1500;
+    public int RocketRange { get; set; } = 800;
+    public int LauncherRange { get; set; } = 1500;
     public int RocketDamage { get; set; } = 250;
     public double RocketMissChance { get; set; }
     public double RocketDamageSpread { get; set; }
@@ -527,7 +528,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                     WorldMapInstance.Starter(pilot.MapId).Portals.Any(portal =>
                         DistanceSquared(x, y, portal.X, portal.Y) <= 300L * 300)))
                     return new("restricted", npc);
-                var fireRange = pulse ? settings.PulseRange : rocket || launcher ? settings.RocketRange : variables is null ? settings.LaserRange
+                var fireRange = pulse ? settings.PulseRange : rocket ? settings.RocketRange
+                    : launcher ? settings.LauncherRange : variables is null ? settings.LaserRange
                     : await variables.NumberAsync("world.combat.fire_range", ct);
                 if (!resumePulse && (long)(x - npc.X) * (x - npc.X) + (long)(y - npc.Y) * (y - npc.Y) >
                     (long)fireRange * fireRange) return new("distant", npc);
