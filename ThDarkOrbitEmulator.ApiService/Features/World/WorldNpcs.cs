@@ -273,8 +273,12 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             if (pulseInventory is not null)
             {
                 var charge = await pulseInventory.ConsumeAsync(pilot.AccountId, pulseActionId, ct);
-                if (charge == PulseChargeResult.Duplicate) return new("duplicate", []);
+                if (charge == PulseChargeResult.Duplicate)
+                    return new(await pulseInventory.RefundUnstartedAsync(pilot.AccountId, pulseActionId, ct)
+                        ? "refunded" : "duplicate", []);
                 if (charge == PulseChargeResult.Unavailable) return new("out_of_ammo", []);
+                if (!await pulseInventory.StartAsync(pilot.AccountId, pulseActionId, ct))
+                    return new("duplicate", []);
             }
             await cache.SetStringAsync(key, now.ToString(), new DistributedCacheEntryOptions
             { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(Math.Max(1, settings.PulseCooldownSeconds)) }, ct);
@@ -292,6 +296,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 pulse: true);
             if (hit.Status == "hit") hits.Add(hit);
         }
+        if (pulseInventory is not null)
+            await pulseInventory.CompleteAsync(pilot.AccountId, pulseActionId, ct);
         return new("hit", hits);
     }
 

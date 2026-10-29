@@ -1635,6 +1635,8 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(first.Status, Is.EqualTo("hit"));
         Assert.That(first.Hits.Select(hit => hit.Damage), Is.EqualTo(new[] { 20 }));
         Assert.That(first.Hits.Single().Target!.Hp, Is.EqualTo(80));
+        Assert.That(inventory.Started, Is.EqualTo(1));
+        Assert.That(inventory.Completed, Is.EqualTo(1));
         Assert.That((await npcs.VisibleAsync(1, default)).Single(other => other.Id != npc.Id).Hp, Is.EqualTo(100));
         Assert.That((await replica.PulseAsync(pilot, sessions, default)).Status, Is.EqualTo("cooldown"));
         Assert.That(inventory.Remaining, Is.EqualTo(1));
@@ -1782,15 +1784,35 @@ public sealed class WorldAndSpacemapSpecificationTests
     private sealed class TestPulseInventory(int remaining) : IWorldPulseInventory
     {
         public int Remaining { get; private set; } = remaining;
+        public int Started { get; private set; }
+        public int Completed { get; private set; }
+        private readonly HashSet<Guid> actions = [];
 
         public void Refill(int amount) => Remaining += amount;
 
         public Task<PulseChargeResult> ConsumeAsync(Guid accountId, Guid actionId, CancellationToken ct)
         {
+            if (actions.Contains(actionId)) return Task.FromResult(PulseChargeResult.Duplicate);
             if (Remaining == 0) return Task.FromResult(PulseChargeResult.Unavailable);
             Remaining--;
+            actions.Add(actionId);
             return Task.FromResult(PulseChargeResult.Consumed);
         }
+
+        public Task<bool> StartAsync(Guid accountId, Guid actionId, CancellationToken ct)
+        {
+            Started++;
+            return Task.FromResult(actions.Contains(actionId));
+        }
+
+        public Task CompleteAsync(Guid accountId, Guid actionId, CancellationToken ct)
+        {
+            Completed++;
+            return Task.CompletedTask;
+        }
+
+        public Task<bool> RefundUnstartedAsync(Guid accountId, Guid actionId, CancellationToken ct) =>
+            Task.FromResult(false);
     }
 
     private sealed class TestRewards : IWorldNpcRewards

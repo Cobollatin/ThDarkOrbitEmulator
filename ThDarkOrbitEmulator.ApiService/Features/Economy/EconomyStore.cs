@@ -941,6 +941,60 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
         return PulseChargeResult.Consumed;
     }
 
+    public async Task<bool> StartPulseActionAsync(Guid accountId, Guid actionId, CancellationToken ct)
+    {
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand("""
+            UPDATE economy.pulse_actions SET status='started'
+            WHERE account_id=@a AND action_id=@k AND status='charged'
+            """, db);
+        cmd.Parameters.AddWithValue("a", accountId);
+        cmd.Parameters.AddWithValue("k", actionId);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task CompletePulseActionAsync(Guid accountId, Guid actionId, CancellationToken ct)
+    {
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand("""
+            UPDATE economy.pulse_actions SET status='completed'
+            WHERE account_id=@a AND action_id=@k AND status='started'
+            """, db);
+        cmd.Parameters.AddWithValue("a", accountId);
+        cmd.Parameters.AddWithValue("k", actionId);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    // Locking the action row makes this refund race safely with StartPulseActionAsync.
+    // Once started, an effect may have reached the world cache and is never refunded here.
+    public async Task<bool> RefundUnstartedPulseActionAsync(Guid accountId, Guid actionId, CancellationToken ct)
+    {
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var tx = await db.BeginTransactionAsync(ct);
+        await using var refund = new NpgsqlCommand("""
+            UPDATE economy.pulse_actions SET status='refunded'
+            WHERE account_id=@a AND action_id=@k AND status='charged'
+            RETURNING item_id
+            """, db, tx);
+        refund.Parameters.AddWithValue("a", accountId);
+        refund.Parameters.AddWithValue("k", actionId);
+        var itemId = (string?)await refund.ExecuteScalarAsync(ct);
+        if (itemId is null) return false;
+        await using var restore = new NpgsqlCommand("""
+            UPDATE economy.inventory SET quantity=quantity+1
+            WHERE account_id=@a AND item_id=@i
+            """, db, tx);
+        restore.Parameters.AddWithValue("a", accountId);
+        restore.Parameters.AddWithValue("i", itemId);
+        if (await restore.ExecuteNonQueryAsync(ct) != 1)
+            throw new InvalidOperationException("Pulse inventory row disappeared before refund.");
+        await tx.CommitAsync(ct);
+        return true;
+    }
+
     public async Task<IReadOnlyList<EconomyRecipe>> RecipesAsync(CancellationToken ct)
     {
         await using var db = Connection(); await db.OpenAsync(ct);

@@ -5,10 +5,10 @@
 - `ThDarkOrbitEmulator.Tests/ClientTesting/`: focused Unity contract and world protocol tests; `Integration/` holds database and HTTP integration tests.
 - `docs/cockpit-catalog.md`: cockpit evidence, unresolved native contracts, and public catalog routes.
 - `docs/client-endpoint-map.md` and `docs/world-protocol.md`: observed client endpoints and provisional local world protocol.
-- `docs/reference-parity.md`: ranked gameplay gaps from ignored third-party reference clones; iterations 1–19 cover NPC pursuit, combat, loot, recovery, destruction, repair choices, cooldowns, and premium charges. Iterations 20–23 add a local NPC proximity pulse, map control, durable charge inventory, and action-ID charge deduplication.
+- `docs/reference-parity.md`: ranked gameplay gaps from ignored third-party reference clones; iterations 1–19 cover NPC pursuit, combat, loot, recovery, destruction, repair choices, cooldowns, and premium charges. Iterations 20–24 add a local NPC proximity pulse, map control, durable charge inventory, action-ID charge deduplication, and pre-effect charge recovery.
 - `ApiService/Features/World/WorldNpcs.cs`: `PulseAsync` owns the local NPC proximity action, shared cooldown and zone checks; `WorldHttpBridge.cs` exposes `/spacemap/world/pulse`.
 - `ApiService/Features/World/WorldRepairWallet.cs`: paid repair prices and economy adapter; `EconomyStore.ChargeRepairAsync` performs the ledger debit, and `WorldSessionStore.RespawnAsync` applies the repaired world state.
-- `ApiService/Features/World/WorldPulseInventory.cs`: pulse charge adapter; `EconomyStore.ConsumeItemOnceAsync` atomically records each action and decrements inventory, migration `034_pulse_charge` adds the local shop item, and `035_pulse_actions` adds the action record.
+- `ApiService/Features/World/WorldPulseInventory.cs`: pulse charge adapter; `EconomyStore.ConsumeItemOnceAsync` atomically records each action and decrements inventory. Migration `034_pulse_charge` adds the local shop item, `035_pulse_actions` adds the action record, and `036_pulse_action_lifecycle` supports safe pre-effect refund and completion tracking.
 - `ApiService/Features/World/WorldCollectibleVisibility.cs`: computes map-owner box removals and creations across pickup and respawn cycles for TCP broadcasts.
 - `_reversing/`: local analysis artifacts and captured sessions; `scripts/client-testing/` contains capture helpers.
 - `_reversing/Analysis/trace_il2cpp.py`: bounded native disassembly using the ignored `il2cpp-dump/` method map; findings are recorded in `docs/cockpit-catalog.md`.

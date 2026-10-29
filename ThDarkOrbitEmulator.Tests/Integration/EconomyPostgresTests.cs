@@ -87,6 +87,58 @@ public class EconomyPostgresTests
 
     [Test]
     [Category("Integration")]
+    public async Task PulseCharge_RefundsOnlyBeforeWorldEffectStarts()
+    {
+        var ct = TestContext.CurrentContext.CancellationToken;
+        await using var postgres = new PostgreSqlBuilder("postgres:16-alpine")
+            .WithDatabase("thdarkorbit").WithUsername("app").WithPassword("app").Build();
+        await postgres.StartAsync(ct);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["ConnectionStrings:identity-write"] = postgres.GetConnectionString() }).Build();
+        await new SqlMigrationHostedService(config, Options.Create(new IdentityDatabaseOptions
+        { AutoMigrate = true, BackupBeforeMigration = false, Schema = "identity" }),
+            NullLogger<SqlMigrationHostedService>.Instance).StartAsync(ct);
+        var account = Guid.NewGuid();
+        await using var db = new NpgsqlConnection(postgres.GetConnectionString());
+        await db.OpenAsync(ct);
+        await using (var create = new NpgsqlCommand(
+            "INSERT INTO identity.accounts(id,username,game_user_id) VALUES (@a,'pulse-recovery',4024)", db))
+        { create.Parameters.AddWithValue("a", account); await create.ExecuteNonQueryAsync(ct); }
+        var first = new EconomyStore(config);
+        var second = new EconomyStore(config);
+        Assert.That(await first.GrantItemAsync(account, "pulse_charge", 2, "pulse-recovery", 0,
+            "test", ct), Is.True);
+
+        var unstarted = Guid.NewGuid();
+        Assert.That(await first.ConsumeItemOnceAsync(account, "pulse_charge", unstarted, ct),
+            Is.EqualTo(PulseChargeResult.Consumed));
+        Assert.That(await second.RefundUnstartedPulseActionAsync(account, unstarted, ct), Is.True);
+        Assert.That(await first.StartPulseActionAsync(account, unstarted, ct), Is.False);
+        Assert.That(await first.RefundUnstartedPulseActionAsync(account, unstarted, ct), Is.False);
+        Assert.That((await second.InventoryAsync(account, ct))["pulse_charge"], Is.EqualTo(2));
+
+        var started = Guid.NewGuid();
+        Assert.That(await first.ConsumeItemOnceAsync(account, "pulse_charge", started, ct),
+            Is.EqualTo(PulseChargeResult.Consumed));
+        Assert.That(await second.StartPulseActionAsync(account, started, ct), Is.True);
+        Assert.That(await first.RefundUnstartedPulseActionAsync(account, started, ct), Is.False);
+        await first.CompletePulseActionAsync(account, started, ct);
+        Assert.That(await second.RefundUnstartedPulseActionAsync(account, started, ct), Is.False);
+        Assert.That((await first.InventoryAsync(account, ct))["pulse_charge"], Is.EqualTo(1));
+
+        var racing = Guid.NewGuid();
+        Assert.That(await first.ConsumeItemOnceAsync(account, "pulse_charge", racing, ct),
+            Is.EqualTo(PulseChargeResult.Consumed));
+        var start = first.StartPulseActionAsync(account, racing, ct);
+        var refund = second.RefundUnstartedPulseActionAsync(account, racing, ct);
+        await Task.WhenAll(start, refund);
+        Assert.That(start.Result != refund.Result, Is.True);
+        Assert.That((await first.InventoryAsync(account, ct))["pulse_charge"],
+            Is.EqualTo(refund.Result ? 1 : 0));
+    }
+
+    [Test]
+    [Category("Integration")]
     public async Task LegacyEquipmentImport_CapsShipSlotsAndKeepsRemainderTransferable()
     {
         var ct = TestContext.CurrentContext.CancellationToken;
