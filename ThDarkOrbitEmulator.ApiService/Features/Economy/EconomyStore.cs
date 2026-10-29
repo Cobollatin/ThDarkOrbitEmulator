@@ -1489,14 +1489,15 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
         return applied;
     }
 
-    public async Task RecordWorldDeathAsync(Guid accountId, string deathId, CancellationToken ct)
+    public async Task RecordWorldDeathAsync(Guid accountId, string deathId, string position, CancellationToken ct)
     {
         await using var db = Connection();
         await db.OpenAsync(ct);
         await using var cmd = new NpgsqlCommand(
-            "INSERT INTO economy.world_deaths(account_id,death_id,pending) VALUES (@a,@d,true) ON CONFLICT (account_id) DO UPDATE SET death_id=EXCLUDED.death_id,pending=true,repair_outcome=NULL", db);
+            "INSERT INTO economy.world_deaths(account_id,death_id,pending,death_position) VALUES (@a,@d,true,@p) ON CONFLICT (account_id) DO UPDATE SET death_id=EXCLUDED.death_id,pending=true,repair_outcome=NULL,death_position=EXCLUDED.death_position", db);
         cmd.Parameters.AddWithValue("a", accountId);
         cmd.Parameters.AddWithValue("d", deathId);
+        cmd.Parameters.AddWithValue("p", position);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -1526,6 +1527,16 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
         await db.OpenAsync(ct);
         await using var cmd = new NpgsqlCommand(
             "SELECT repair_outcome FROM economy.world_deaths WHERE account_id=@a AND pending", db);
+        cmd.Parameters.AddWithValue("a", accountId);
+        return await cmd.ExecuteScalarAsync(ct) as string;
+    }
+
+    public async Task<string?> FindPendingWorldDeathPositionAsync(Guid accountId, CancellationToken ct)
+    {
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(
+            "SELECT death_position FROM economy.world_deaths WHERE account_id=@a AND pending", db);
         cmd.Parameters.AddWithValue("a", accountId);
         return await cmd.ExecuteScalarAsync(ct) as string;
     }

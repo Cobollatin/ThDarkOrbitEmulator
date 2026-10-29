@@ -8,9 +8,10 @@ public sealed record WorldRepairOutcome(int MapId, int X, int Y, long HitPoints,
 
 public interface IWorldRepairWallet
 {
-    Task RecordDeathAsync(Guid accountId, string deathId, CancellationToken ct);
+    Task RecordDeathAsync(Guid accountId, string deathId, WorldPosition position, CancellationToken ct);
     Task<string?> FindDeathAsync(Guid accountId, CancellationToken ct);
     Task<string?> FindPendingDeathAsync(Guid accountId, CancellationToken ct);
+    Task<WorldPosition?> FindPendingDeathPositionAsync(Guid accountId, CancellationToken ct);
     Task<WorldRepairOutcome?> FindPendingRepairAsync(Guid accountId, CancellationToken ct);
     Task StageRepairAsync(Guid accountId, string deathId, WorldRepairOutcome outcome, CancellationToken ct);
     Task CompleteDeathAsync(Guid accountId, string deathId, CancellationToken ct);
@@ -22,13 +23,18 @@ public interface IWorldRepairWallet
 
 public sealed class WorldRepairWallet(EconomyStore economy) : IWorldRepairWallet
 {
-    public Task RecordDeathAsync(Guid accountId, string deathId, CancellationToken ct) =>
-        economy.RecordWorldDeathAsync(accountId, deathId, ct);
+    public Task RecordDeathAsync(Guid accountId, string deathId, WorldPosition position, CancellationToken ct) =>
+        economy.RecordWorldDeathAsync(accountId, deathId, System.Text.Json.JsonSerializer.Serialize(position), ct);
 
     public Task<string?> FindDeathAsync(Guid accountId, CancellationToken ct) =>
         economy.FindWorldDeathAsync(accountId, ct);
     public Task<string?> FindPendingDeathAsync(Guid accountId, CancellationToken ct) =>
         economy.FindPendingWorldDeathAsync(accountId, ct);
+    public async Task<WorldPosition?> FindPendingDeathPositionAsync(Guid accountId, CancellationToken ct)
+    {
+        var json = await economy.FindPendingWorldDeathPositionAsync(accountId, ct);
+        return json is null ? null : System.Text.Json.JsonSerializer.Deserialize<WorldPosition>(json);
+    }
     public async Task<WorldRepairOutcome?> FindPendingRepairAsync(Guid accountId, CancellationToken ct)
     {
         var json = await economy.FindPendingWorldRepairAsync(accountId, ct);

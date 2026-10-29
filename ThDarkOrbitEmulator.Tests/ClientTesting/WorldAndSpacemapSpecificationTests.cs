@@ -1604,6 +1604,41 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(next.CurrentHitPoints(entered), Is.GreaterThan(0));
     }
 
+    [TestCase(WorldRespawnLocation.DeathLocation, 300)]
+    [TestCase(WorldRespawnLocation.NearestPortal, 200)]
+    public async Task PilotDestruction_PaidRepairUsesDurableDeathPositionAfterCacheLoss(
+        WorldRespawnLocation location, int price)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var wallet = new TestRepairWallet { CanPay = true, ThrowAfterChargeOnce = true };
+        var original = Pilot() with { UserId = 2600 + price, AccountId = Guid.NewGuid(),
+            MapId = 1, X = 1000, Y = 1000, Uridium = 1000,
+            Stats = new WorldShipStats(300, 1000, 100, 0, 100, []) };
+        var store = new WorldSessionStore(cache, repairWallet: wallet);
+        await store.EnterAsync(original, default);
+        await store.PersistAsync(original with { MapId = 2, X = 5000, Y = 5000 }, default);
+        var moved = original with { MapId = 2, X = 5000, Y = 5000 };
+        await store.ApplyNpcDamageAsync(moved, 1, 1200, default, shieldAbsorption: 0);
+        var dead = await store.RestoreAsync(moved, default);
+        Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await store.RespawnAsync(dead, location, default));
+        await cache.RemoveAsync($"world:position:{original.UserId}");
+        await cache.RemoveAsync($"world:runtime:{original.UserId}");
+        await cache.RemoveAsync($"world:death:{original.UserId}");
+
+        var replica = new WorldSessionStore(cache, repairWallet: wallet);
+        var restored = await replica.EnterAsync(original, default);
+        Assert.That(replica.CurrentHitPoints(restored), Is.GreaterThan(0));
+        Assert.That(restored.MapId, Is.EqualTo(2));
+        Assert.That(restored.Uridium, Is.EqualTo(1000 - price));
+        Assert.That(wallet.Keys, Has.Count.EqualTo(1));
+        if (location is WorldRespawnLocation.DeathLocation)
+            Assert.That((restored.X, restored.Y), Is.EqualTo((5000, 5000)));
+        else
+            Assert.That((restored.X, restored.Y), Is.Not.EqualTo((1000, 1000)));
+    }
+
     [TestCase(WorldRespawnLocation.Base, 0)]
     [TestCase(WorldRespawnLocation.DeathLocation, 300)]
     [TestCase(WorldRespawnLocation.NearestPortal, 200)]
@@ -2332,11 +2367,13 @@ public sealed class WorldAndSpacemapSpecificationTests
         public List<string> Keys { get; } = [];
         private readonly Dictionary<string, int> prices = [];
         private readonly Dictionary<Guid, string> deaths = [];
+        private readonly Dictionary<Guid, WorldPosition> deathPositions = [];
         private readonly HashSet<Guid> pendingDeaths = [];
         private readonly Dictionary<Guid, WorldRepairOutcome> outcomes = [];
-        public Task RecordDeathAsync(Guid accountId, string deathId, CancellationToken ct)
+        public Task RecordDeathAsync(Guid accountId, string deathId, WorldPosition position, CancellationToken ct)
         {
             deaths[accountId] = deathId;
+            deathPositions[accountId] = position;
             pendingDeaths.Add(accountId);
             outcomes.Remove(accountId);
             return Task.CompletedTask;
@@ -2345,6 +2382,8 @@ public sealed class WorldAndSpacemapSpecificationTests
             Task.FromResult(deaths.GetValueOrDefault(accountId));
         public Task<string?> FindPendingDeathAsync(Guid accountId, CancellationToken ct) =>
             Task.FromResult(pendingDeaths.Contains(accountId) ? deaths.GetValueOrDefault(accountId) : null);
+        public Task<WorldPosition?> FindPendingDeathPositionAsync(Guid accountId, CancellationToken ct) =>
+            Task.FromResult(pendingDeaths.Contains(accountId) ? deathPositions.GetValueOrDefault(accountId) : null);
         public Task<WorldRepairOutcome?> FindPendingRepairAsync(Guid accountId, CancellationToken ct) =>
             Task.FromResult(pendingDeaths.Contains(accountId) ? outcomes.GetValueOrDefault(accountId) : null);
         public Task StageRepairAsync(Guid accountId, string deathId, WorldRepairOutcome outcome, CancellationToken ct)

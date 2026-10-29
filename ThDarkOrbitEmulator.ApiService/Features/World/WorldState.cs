@@ -544,6 +544,13 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     {
         pilot = await RefreshAsync(pilot, ct);
         if (repairWallet is not null && pilot.AccountId != Guid.Empty
+            && await cache.GetStringAsync(Key(pilot.UserId), ct) is null
+            && await repairWallet.FindPendingDeathPositionAsync(pilot.AccountId, ct) is { } deathPosition
+            && WorldMapInstance.Starter(deathPosition.MapId) is { } deathMap
+            && deathPosition.X >= 0 && deathPosition.X <= deathMap.Width
+            && deathPosition.Y >= 0 && deathPosition.Y <= deathMap.Height)
+            pilot = pilot with { MapId = deathPosition.MapId, X = deathPosition.X, Y = deathPosition.Y };
+        if (repairWallet is not null && pilot.AccountId != Guid.Empty
             && await repairWallet.FindPendingRepairAsync(pilot.AccountId, ct) is { } repair)
         {
             var deathId = await repairWallet.FindPendingDeathAsync(pilot.AccountId, ct);
@@ -571,7 +578,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         }
         // The durable pending death preserves zero hull when both cache entries are lost.
         if (CurrentHitPoints(pilot) > 0 && repairWallet is not null && pilot.AccountId != Guid.Empty
-            && await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct) is null)
+            && (await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct) is null
+                || await cache.GetStringAsync(Key(pilot.UserId), ct) is null))
         {
             if (await repairWallet.FindPendingDeathAsync(pilot.AccountId, ct) is not null)
                 hitPoints[pilot.UserId] = 0;
@@ -1535,12 +1543,13 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         if (hitPoints[pilot.UserId] == 0)
         {
             var deathId = Guid.NewGuid().ToString("N");
-            if (repairWallet is not null && pilot.AccountId != Guid.Empty)
-                await repairWallet.RecordDeathAsync(pilot.AccountId, deathId, ct);
-            await cache.SetStringAsync(DeathKey(pilot.UserId), deathId,
-                new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
             var (x, y) = CurrentPosition(pilot);
             pilot = pilot with { X = x, Y = y };
+            if (repairWallet is not null && pilot.AccountId != Guid.Empty)
+                await repairWallet.RecordDeathAsync(pilot.AccountId, deathId,
+                    new WorldPosition(pilot.MapId, x, y), ct);
+            await cache.SetStringAsync(DeathKey(pilot.UserId), deathId,
+                new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
             travel.TryRemove(pilot.UserId, out _);
             await PersistAsync(pilot, ct);
             if (connected.TryGetValue(pilot.MapId, out var occupants))
