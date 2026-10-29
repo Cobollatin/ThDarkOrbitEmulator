@@ -74,7 +74,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         WorldNpcReward? Reward = null, WorldNpc? Snapshot = null,
         int? X = null, int? Y = null, long TargetUserId = 0, long LastFireUnixMs = 0,
         long LastStepUnixMs = 0, long LastHitUnixMs = 0, long LastShieldRepairUnixMs = 0,
-        long RespawnAtUnixMs = 0, long Generation = 0, Guid[]? PulseActions = null);
+        long RespawnAtUnixMs = 0, long Generation = 0, Guid[]? PulseActions = null,
+        bool Retaliating = false);
     private long Cycle => clock.GetUtcNow().ToUnixTimeSeconds() / Math.Max(30, settings.RespawnSeconds);
     public long CurrentCycle => Cycle;
     private static string Key(int map, int id) => $"world:npc:v2:{map}:{id}";
@@ -470,6 +471,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                     RespawnAtUnixMs = dead ? clock.GetUtcNow().ToUnixTimeMilliseconds() +
                         Math.Max(1, settings.RespawnSeconds) * 1000L : 0,
                     LastHitUnixMs = clock.GetUtcNow().ToUnixTimeMilliseconds(),
+                    TargetUserId = !resumePulse && !dead ? pilot.UserId : vital.TargetUserId,
+                    Retaliating = !resumePulse && !dead || vital.Retaliating,
                     PulseActions = pulseActionId is { } appliedId
                         ? [.. (vital.PulseActions ?? []), appliedId] : vital.PulseActions }), Expiry, ct);
                 observerSnapshots.TryRemove(pilot.MapId, out _);
@@ -560,6 +563,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                         X = reached ? null : npc.X + (int)Math.Round(patrolDx * patrolStep / patrolDistance),
                         Y = reached ? null : npc.Y + (int)Math.Round(patrolDy * patrolStep / patrolDistance),
                         TargetUserId = 0,
+                        Retaliating = false,
                         LastStepUnixMs = nowMs
                     };
                     await cache.SetStringAsync(key, JsonSerializer.Serialize(vital), Expiry, ct);
@@ -586,12 +590,14 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             x = Math.Clamp(x, 0, map.Width);
             y = Math.Clamp(y, 0, map.Height);
             npc = npc with { X = x, Y = y };
-            var fire = template?.Aggressive != false &&
+            var fire = (template?.Aggressive != false ||
+                vital.Retaliating && vital.TargetUserId == target.Pilot.UserId) &&
                 DistanceSquared(x, y, target.Position.X, target.Position.Y) <=
                 (long)settings.NpcFireRange * settings.NpcFireRange &&
                 now.ToUnixTimeMilliseconds() - vital.LastFireUnixMs >=
                 Math.Max(1, settings.NpcFireCooldownSeconds) * 1000L;
             vital = vital with { X = x, Y = y, TargetUserId = target.Pilot.UserId,
+                Retaliating = vital.Retaliating && vital.TargetUserId == target.Pilot.UserId,
                 LastStepUnixMs = now.ToUnixTimeMilliseconds(),
                 LastFireUnixMs = fire ? now.ToUnixTimeMilliseconds() : vital.LastFireUnixMs };
             await cache.SetStringAsync(key, JsonSerializer.Serialize(vital), Expiry, ct);

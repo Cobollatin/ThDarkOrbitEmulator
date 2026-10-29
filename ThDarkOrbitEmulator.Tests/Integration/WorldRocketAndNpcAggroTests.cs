@@ -427,6 +427,45 @@ public sealed class WorldRocketAndNpcAggroTests
         Assert.That(sessions.CurrentHitPoints(pilot), Is.EqualTo(1000));
     }
 
+    [Test]
+    public async Task PassiveNpc_RetaliatesAgainstAttackerThenStopsAfterTargetLeaves()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var options = new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 0,
+                Aggressive: false)],
+            AggroRange = 1000, NpcFireRange = 1000, NpcDamage = 10,
+            NpcFireCooldownSeconds = 1
+        };
+        var firstNode = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var npc = (await firstNode.VisibleAsync(1, default)).Single();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var attacker = await sessions.EnterAsync(Pilot(npc.X + 400, npc.Y), default);
+        var bystander = await sessions.EnterAsync(Pilot(npc.X + 600, npc.Y) with { UserId = 8 }, default);
+
+        await firstNode.TickAggroAsync(1, sessions, default);
+        Assert.That(sessions.CurrentHitPoints(attacker), Is.EqualTo(1000));
+        await sessions.TeleportAsync(bystander.UserId, 1, npc.X + 100, npc.Y, false, default);
+        Assert.That((await firstNode.AttackAsync(attacker, npc.Id, sessions, default)).Status, Is.EqualTo("hit"));
+
+        var secondNode = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        await secondNode.TickAggroAsync(1, sessions, default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(sessions.CurrentHitPoints(attacker), Is.EqualTo(990));
+            Assert.That(sessions.CurrentHitPoints(bystander), Is.EqualTo(1000));
+        });
+
+        await sessions.TeleportAsync(attacker.UserId, 2, 5000, 5000, false, default);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await firstNode.TickAggroAsync(1, sessions, default);
+        Assert.That(sessions.CurrentHitPoints(bystander), Is.EqualTo(1000));
+    }
+
     private static WorldNpcs CreateNpcs(IDistributedCache cache, Mutex mutex, Rewards rewards,
         Clock clock, WorldNpcOptions options) => new(cache, mutex, rewards, Options.Create(options), clock);
 
