@@ -1054,6 +1054,8 @@ public sealed class WorldAndSpacemapSpecificationTests
             { Stats = new WorldShipStats(300, 100, 0, 0, 0, []) };
         await store.EnterAsync(pilot, default);
         var now = DateTimeOffset.FromUnixTimeMilliseconds(100_000);
+        await store.MoveAsync(pilot, 0, 1300, null, default, now);
+        now = now.AddSeconds(10);
 
         await store.MoveAsync(pilot, -1, 1300, null, default, now);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(99));
@@ -1193,6 +1195,29 @@ public sealed class WorldAndSpacemapSpecificationTests
         clock.Advance(TimeSpan.FromSeconds(1));
         await replica.TickRadiationAsync(pilot.MapId, default);
         Assert.That(replica.CurrentHitPoints(pilot), Is.EqualTo(980));
+    }
+
+    [Test]
+    public async Task Radiation_OutboundTravelDoesNotDamagePilotBeforeBoundaryArrival()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var clock = new AdvancingClock();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), clock: clock);
+        var pilot = await store.EnterAsync(Pilot() with
+        {
+            UserId = 911, X = 300, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+
+        var move = await store.MoveAsync(pilot, -1, 1300, null, default, clock.GetUtcNow());
+        Assert.That(move.RadiationWarning, Is.True);
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(1000));
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        await store.TickRadiationAsync(pilot.MapId, default);
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(1000));
+        clock.Advance(TimeSpan.FromMilliseconds(500));
+        await store.TickRadiationAsync(pilot.MapId, default);
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(990));
     }
 
     [Test]

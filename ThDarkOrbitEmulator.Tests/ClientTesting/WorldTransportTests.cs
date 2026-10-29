@@ -1356,6 +1356,8 @@ public class WorldTransportTests
             { Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
         await store.EnterAsync(pilot, default);
         var now = DateTimeOffset.UtcNow;
+        await store.MoveAsync(pilot, 0, 1300, null, default, now);
+        now = now.AddSeconds(10);
         await store.MoveAsync(pilot, -1, 1300, null, default, now);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(990));
         await store.MoveAsync(pilot, -1, 1300, null, default, now.AddSeconds(2));
@@ -1648,8 +1650,6 @@ public class WorldTransportTests
                 WorldPayload.WriteInt32(w, 22000); // target X
                 WorldPayload.WriteInt32(w, 9999); // untrusted reported Y
             }));
-            Assert.That((await input.ReadAsync())!.Value.Command,
-                Is.EqualTo(WorldCommandId.RadiationDamageCommand));
             var move = (await input.ReadAsync())!.Value;
             Assert.That(move.Command, Is.EqualTo(WorldCommandId.MoveCommand));
             var values = WorldPayload.Decode(move.Payload, r => (WorldPayload.ReadInt64(r),
