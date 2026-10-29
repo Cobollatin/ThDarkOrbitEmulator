@@ -1742,6 +1742,21 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         }
     }
 
+    public async Task BroadcastPortalOperationAsync(int mapId, int portalId, bool working, CancellationToken ct)
+    {
+        var payload = WorldPayload.Encode(w =>
+        {
+            WorldPayload.WriteInt32(w, mapId);
+            WorldPayload.WriteInt32(w, portalId);
+            w.Write(working);
+        });
+        foreach (var observer in connections.Values.Where(c => c.Pilot.MapId == mapId).ToArray())
+        {
+            try { await observer.SendAsync(WorldCommandId.PortalOperationCommand, payload, ct); }
+            catch (IOException) { }
+        }
+    }
+
     public async Task BroadcastAnnouncementAsync(string message, CancellationToken ct)
     {
         var payload = WorldPayload.Encode(w => WorldPayload.WriteString(w, message));

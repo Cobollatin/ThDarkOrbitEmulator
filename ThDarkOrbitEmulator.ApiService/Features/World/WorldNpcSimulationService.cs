@@ -9,10 +9,12 @@ namespace ThDarkOrbitEmulator.ApiService.Features.World;
 public sealed class WorldNpcSimulationService(WorldNpcs npcs, WorldSessionStore sessions,
     IServerMeshRegistry registry, IOptions<ClusterOptions> cluster,
     IRuntimeVariableRegistry? variables = null, WorldCollectibles? collectibles = null,
-    WorldAdminEvents? adminEvents = null, ILogger<WorldNpcSimulationService>? logger = null) : BackgroundService
+    WorldAdminEvents? adminEvents = null, ILogger<WorldNpcSimulationService>? logger = null,
+    WorldPortalOperations? portalOperations = null) : BackgroundService
 {
     private readonly Dictionary<int, HashSet<int>> known = [];
     private readonly Dictionary<int, HashSet<int>> knownBoxes = [];
+    private readonly WorldPortalOperationAnnouncer portalAnnouncer = new();
     private DateTimeOffset lastAnnouncement;
     private DateTimeOffset lastPulseReconciliation;
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -37,7 +39,7 @@ public sealed class WorldNpcSimulationService(WorldNpcs npcs, WorldSessionStore 
                 .Select(l => l.MapId).ToHashSet();
             var reconcilePulses = DateTimeOffset.UtcNow - lastPulseReconciliation >= TimeSpan.FromSeconds(30);
             foreach (var mapId in known.Keys.Where(id => !owned.Contains(id)).ToArray())
-            { known.Remove(mapId); knownBoxes.Remove(mapId); }
+            { known.Remove(mapId); knownBoxes.Remove(mapId); portalAnnouncer.Forget(mapId); }
             foreach (var lease in snapshot.Leases.Where(l => l.NodeId == nodeId && l.ExpiresAtUtc > DateTimeOffset.UtcNow))
             {
                 try
@@ -61,6 +63,8 @@ public sealed class WorldNpcSimulationService(WorldNpcs npcs, WorldSessionStore 
                     await sessions.TickRadiationAsync(lease.MapId, stoppingToken, fence);
                     await sessions.RecoverShieldsAsync(lease.MapId, stoppingToken, fence);
                     await sessions.RecoverHullAsync(lease.MapId, stoppingToken, fence);
+                    if (portalOperations is not null)
+                        await portalAnnouncer.RefreshAsync(lease.MapId, portalOperations, sessions, stoppingToken);
                 }
                 catch (WorldLeaseLostException) { continue; }
                 var visible = await npcs.VisibleAsync(lease.MapId, stoppingToken);

@@ -1639,6 +1639,71 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task PortalOperation_AnnouncesInitialAndChangedStateOnlyToMapPilots()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var operations = new WorldPortalOperations(cache);
+        var sessions = new WorldSessionStore(cache);
+        using var mapStream = new MemoryStream();
+        using var otherStream = new MemoryStream();
+        sessions.Attach(new WorldConnection(Pilot() with { UserId = 966, MapId = 2 },
+            new WorldPacketWriter(mapStream)));
+        sessions.Attach(new WorldConnection(Pilot() with { UserId = 967, MapId = 1 },
+            new WorldPacketWriter(otherStream)));
+        var announcer = new WorldPortalOperationAnnouncer();
+
+        await announcer.RefreshAsync(2, operations, sessions, default);
+        await announcer.RefreshAsync(2, operations, sessions, default);
+        Assert.That(otherStream.Length, Is.Zero);
+        var initialLength = mapStream.Length;
+        await operations.SetWorkingAsync(2, 201, false, default);
+        await announcer.RefreshAsync(2, operations, sessions, default);
+        await announcer.RefreshAsync(2, operations, sessions, default);
+        var changedLength = mapStream.Length;
+        Assert.That(changedLength, Is.GreaterThan(initialLength));
+        announcer.Forget(2);
+        await announcer.RefreshAsync(2, operations, sessions, default);
+
+        using var frames = new MemoryStream(mapStream.ToArray());
+        var reader = new WorldPacketReader(frames);
+        var packets = new List<WorldPacket>();
+        while (await reader.ReadAsync() is { } packet) packets.Add(packet);
+        Assert.That(packets.Select(p => p.Command),
+            Is.All.EqualTo(WorldCommandId.PortalOperationCommand));
+        Assert.That(packets.Select(p => WorldPayload.Decode(p.Payload, r =>
+            (WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r), r.ReadBoolean()))),
+            Is.EqualTo(new[] { (2, 201, true), (2, 201, false), (2, 201, false) }));
+        Assert.That(otherStream.Length, Is.Zero);
+    }
+
+    [Test]
+    public async Task PortalOperation_LateEntryCarriesCurrentWorkingState()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var operations = new WorldPortalOperations(services.GetRequiredService<IDistributedCache>());
+        await operations.SetWorkingAsync(2, 201, false, default);
+        var map = await operations.MapAsync(2, default);
+        using var stream = new MemoryStream();
+        await WorldEntryPackets.SendAsync(new WorldPacketWriter(stream),
+            Pilot() with { MapId = 2 }, default, runtimeMap: map);
+        using var frames = new MemoryStream(stream.ToArray());
+        var reader = new WorldPacketReader(frames);
+        WorldPacket? portal = null;
+        while (await reader.ReadAsync() is { } packet)
+            if (packet.Command == WorldCommandId.JumpgateCreateCommand) portal = packet;
+        Assert.That(portal, Is.Not.Null);
+        Assert.That(WorldPayload.Decode(portal!.Value.Payload, r =>
+        {
+            var id = WorldPayload.ReadInt32(r);
+            WorldPayload.ReadInt32(r);
+            WorldPayload.ReadInt32(r);
+            WorldPayload.ReadInt32(r);
+            return (id, r.ReadBoolean());
+        }), Is.EqualTo((201, false)));
+    }
+
+    [Test]
     public async Task PilotDestruction_RepairProtectsFromNpcAndBoundaryDamageForFiveSecondsAcrossReplicas()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

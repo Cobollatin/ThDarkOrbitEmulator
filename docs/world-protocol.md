@@ -406,6 +406,8 @@ The local 21000 × 13100 map catalog now serves faction starter maps 1/5/9/13 an
 
 Local `JumpRequest` (18) carries an int32 portal ID. The server checks the interpolated position is within 500 units, persists destination map and arrival, and sends `MapChangeCommand` (19): int32 map ID, string destination node ID, string destination TCP host:port. A jump on the local owner follows with map initialization, station, portals, safe zone and `HeroInit`. A jump to another owner closes the source socket after the map change; reconnect resolves the shared arrival state on the destination. Invalid or distant gate requests receive the local malformed error. Native Unity command compatibility remains unverified.
 
+Local `JumpgateCreateCommand` (8) now appends a `working:bool` after its four int32 fields. The map lease owner sends `PortalOperationCommand` (43) with `mapId:i32, portalId:i32, working:bool` for the current state and later changes. These local packet shapes have no captured Unity equivalent.
+
 Out-of-bounds movement is clamped and sends the existing radiation warning. A boundary attempt removes 1% of maximum hull, to a minimum of 1 HP, at most once per second. A stationary ship within its station peace radius repairs 2% of maximum hull per state poll. Hull and hazard time are stored in the distributed runtime snapshot.
 
 # Mesh-4 admin world controls (2026-10-24)

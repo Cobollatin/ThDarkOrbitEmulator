@@ -31,6 +31,27 @@ public sealed class WorldPortalOperations(IDistributedCache cache)
 
 public sealed record PortalOperationOverride(bool Working);
 
+// The lease owner announces current operation state and later changes to its connected pilots.
+public sealed class WorldPortalOperationAnnouncer
+{
+    private readonly Dictionary<int, Dictionary<int, bool>> known = [];
+
+    public void Forget(int mapId) => known.Remove(mapId);
+
+    public async Task RefreshAsync(int mapId, WorldPortalOperations operations, WorldSessionStore sessions,
+        CancellationToken ct)
+    {
+        var map = await operations.MapAsync(mapId, ct);
+        if (!known.TryGetValue(mapId, out var previous)) known[mapId] = previous = [];
+        foreach (var portal in map.Portals)
+        {
+            if (previous.TryGetValue(portal.Id, out var working) && working == portal.Working) continue;
+            await sessions.BroadcastPortalOperationAsync(mapId, portal.Id, portal.Working, ct);
+            previous[portal.Id] = portal.Working;
+        }
+    }
+}
+
 public static class WorldPortalOperationEndpoints
 {
     public static void MapWorldPortalOperations(this WebApplication app)

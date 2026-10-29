@@ -32,6 +32,7 @@ public static class WorldEntryPackets
                 WorldPayload.WriteInt32(w, portal.X);
                 WorldPayload.WriteInt32(w, portal.Y);
                 WorldPayload.WriteInt32(w, portal.DestinationMapId);
+                w.Write(portal.Working);
             }), ct);
         var dx = (Int128)pilotX - map.HomeStation.X;
         var dy = (Int128)pilotY - map.HomeStation.Y;
