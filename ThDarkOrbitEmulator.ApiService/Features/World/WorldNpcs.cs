@@ -717,8 +717,10 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 if (patrolSpeed > 0 || vital.TargetUserId != 0)
                 {
                     var patrolMap = WorldMapInstance.Starter(mapId);
-                    var originX = vital.PatrolOriginX ?? npc.X;
-                    var originY = vital.PatrolOriginY ?? npc.Y;
+                    // Losing a pilot starts a new roaming leg from the NPC's
+                    // current position, rather than retracing its pursuit path.
+                    var originX = vital.TargetUserId != 0 ? npc.X : vital.PatrolOriginX ?? npc.X;
+                    var originY = vital.TargetUserId != 0 ? npc.Y : vital.PatrolOriginY ?? npc.Y;
                     var leg = Math.Max(0, vital.PatrolLeg);
                     var endX = Math.Clamp(originX + (leg % 2 == 0 ? 1 : -1) *
                         (npc.Id % 2 == 0 ? -1 : 1) * patrolMap.Width / (8 + leg % 3),
@@ -726,7 +728,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                     var endY = Math.Clamp(originY + (leg % 3 == 0 ? 1 : -1) *
                         (npc.Id % 3 == 0 ? -1 : 1) * patrolMap.Height / (8 + leg % 2),
                         0, patrolMap.Height);
-                    var outbound = vital.TargetUserId == 0 && vital.PatrolOutbound;
+                    var outbound = vital.TargetUserId != 0 || vital.PatrolOutbound;
                     var goalX = outbound ? endX : originX;
                     var goalY = outbound ? endY : originY;
                     var patrolElapsed = vital.LastStepUnixMs == 0 ? 1d : Math.Clamp(
