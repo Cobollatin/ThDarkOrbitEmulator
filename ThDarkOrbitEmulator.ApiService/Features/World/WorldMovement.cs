@@ -18,6 +18,9 @@ public sealed record WorldMoveResult(long UserId, int X, int Y, int TimeToTarget
 
 public static class WorldMovement
 {
+    public static bool IsInsideBoundary((int X, int Y) position, WorldMapInstance map) =>
+        position.X > 0 && position.X < map.Width && position.Y > 0 && position.Y < map.Height;
+
     public static WorldMoveResult Begin(WorldPilot pilot, WorldTravel? previous, int targetX, int targetY,
         int speed, DateTimeOffset now)
     {

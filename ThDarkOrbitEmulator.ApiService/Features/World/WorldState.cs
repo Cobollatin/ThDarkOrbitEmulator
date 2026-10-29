@@ -325,6 +325,14 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 var pilot = await RefreshAsync(connectedPilot, ct);
                 if (pilot.MapId != mapId || CurrentHitPoints(pilot) <= 0 || !RadiationWarning(pilot.UserId))
                     continue;
+                var map = WorldMapInstance.Starter(mapId);
+                if (WorldMovement.IsInsideBoundary(Destination(pilot), map)
+                    && WorldMovement.IsInsideBoundary(CurrentPosition(pilot, combatClock.GetUtcNow()), map))
+                {
+                    radiationWarnings[pilot.UserId] = false;
+                    await PersistRuntimeAsync(pilot, ct);
+                    continue;
+                }
                 await ApplyBoundaryDamageAsync(pilot, combatClock.GetUtcNow(), ct);
             }
             finally { gate.Release(); }
@@ -1037,15 +1045,18 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             var result = WorldMovement.Begin(pilot, previous, targetX, targetY, speed, now);
             var next = WorldMovement.Travel(pilot, previous, result, speed, now);
             travel[pilot.UserId] = next;
-            radiationWarnings[pilot.UserId] = result.RadiationWarning;
-            if (result.RadiationWarning) repairBots[pilot.UserId] = false;
+            var warning = result.RadiationWarning || (RadiationWarning(pilot.UserId)
+                && !WorldMovement.IsInsideBoundary(CurrentPosition(pilot, now),
+                    WorldMapInstance.Starter(pilot.MapId)));
+            radiationWarnings[pilot.UserId] = warning;
+            if (warning) repairBots[pilot.UserId] = false;
             configurations[pilot.UserId] = selected;
             await cache.SetStringAsync(Key(pilot.UserId), JsonSerializer.Serialize(next),
                 new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
             await PersistRuntimeAsync(pilot, ct);
-            if (result.RadiationWarning) await ApplyBoundaryDamageAsync(pilot, now, ct);
+            if (warning) await ApplyBoundaryDamageAsync(pilot, now, ct);
             else await RepairAtBaseAsync(pilot, now, ct);
-            return result;
+            return result with { RadiationWarning = warning };
         }
         finally { gate.Release(); }
     }

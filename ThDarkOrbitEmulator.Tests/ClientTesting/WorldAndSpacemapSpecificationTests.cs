@@ -1137,6 +1137,33 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(replica.CurrentHitPoints(pilot), Is.EqualTo(970));
     }
 
+    [Test]
+    public async Task Radiation_SafeDestinationKeepsHazardUntilShipLeavesBoundary()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingClock();
+        var owner = new WorldSessionStore(cache, clock: clock);
+        var pilot = await owner.EnterAsync(Pilot() with
+        {
+            UserId = 909, X = 0, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+
+        await owner.MoveAsync(pilot, -1, 1300, null, default, clock.GetUtcNow());
+        var returnMove = await owner.MoveAsync(pilot, 100, 1300, null, default, clock.GetUtcNow());
+        Assert.That(returnMove.RadiationWarning, Is.True);
+        Assert.That(owner.RadiationWarning(pilot.UserId), Is.True);
+
+        var replica = new WorldSessionStore(cache, clock: clock);
+        pilot = await replica.EnterAsync(pilot, default);
+        Assert.That(replica.RadiationWarning(pilot.UserId), Is.True);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await replica.TickRadiationAsync(pilot.MapId, default);
+        Assert.That(replica.RadiationWarning(pilot.UserId), Is.False);
+        Assert.That(replica.CurrentHitPoints(pilot), Is.EqualTo(990));
+    }
+
     [TestCase(3000, true)]
     [TestCase(3001, false)]
     public async Task StationRepair_UsesInclusiveRadiusAndRequiresStoppedTravel(int x, bool inside)
