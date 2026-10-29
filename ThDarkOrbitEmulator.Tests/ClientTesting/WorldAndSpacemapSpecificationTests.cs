@@ -3983,6 +3983,35 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task CurrentMapOwner_OutranksStaleRuntimeWhenSavedPositionIsMissing()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var first = new WorldSessionStore(cache, mutex);
+        var second = new WorldSessionStore(cache, mutex);
+        var pilot = await first.EnterAsync(Pilot() with { AccountId = Guid.NewGuid() }, default);
+        var oldRoster = await cache.GetStringAsync("world:presence:map:1");
+
+        await second.TeleportAsync(pilot.UserId, 2, 3000, 1300, false, default);
+        await second.EnterAsync(pilot with { MapId = 2 }, default);
+        var runtimeKey = $"world:runtime:{pilot.UserId}";
+        var runtime = await cache.GetStringAsync(runtimeKey);
+        Assert.That(runtime, Is.Not.Null);
+        await cache.SetStringAsync(runtimeKey, runtime!.Replace("\"MapId\":2", "\"MapId\":1"));
+        await cache.RemoveAsync($"world:position:{pilot.UserId}");
+        await cache.SetStringAsync("world:presence:map:1", oldRoster!);
+
+        Assert.That(await first.SavedMapAsync(pilot.UserId, default), Is.EqualTo(2));
+        Assert.That(await first.ConnectedAsync(1, default), Is.Empty);
+        Assert.That(await first.VisiblePilotsAsync(1, default), Is.Empty);
+        Assert.That((await first.ConnectedAsync(2, default)).Single().UserId, Is.EqualTo(pilot.UserId));
+        Assert.That((await first.VisiblePilotsAsync(2, default)).Single().UserId, Is.EqualTo(pilot.UserId));
+        await second.RefreshLocalPresenceAsync(default);
+        Assert.That(second.ActivePilotCount, Is.EqualTo(1));
+    }
+
+    [Test]
     public async Task CloakCooldown_SurvivesCooldownKeyEvictionAcrossWorldInstances()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

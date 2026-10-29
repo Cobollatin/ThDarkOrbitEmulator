@@ -469,16 +469,15 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 }
                 catch (JsonException) { saved = null; }
             }
-            var hasSavedPosition = false;
             if (saved is not null)
             {
                 try
                 {
                     // Presence can outlive a transfer if its old roster write is interrupted.
-                    // The saved position is authoritative for map membership.
+                    // Use a matching saved position for coordinates; the map owner
+                    // remains authoritative when an older position is restored.
                     var location = JsonSerializer.Deserialize<WorldPosition>(saved);
                     if (location is not null && location.MapId != mapId) continue;
-                    hasSavedPosition = location is not null;
                     var moving = JsonSerializer.Deserialize<WorldTravel>(saved);
                     if (moving?.MapId == mapId && moving.Speed > 0)
                     {
@@ -504,7 +503,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                     hasRuntimeMap = snapshot is not null && IsValidWorldMap(snapshot.MapId);
                     // The runtime map also identifies a completed transfer when the
                     // position key has been evicted but an old roster entry survives.
-                    if ((!hasSavedPosition || !hasMapOwner) && hasRuntimeMap
+                    if (!hasMapOwner && hasRuntimeMap
                         && snapshot!.MapId != mapId) continue;
                     if (hasRuntimeMap && snapshot!.MapId == mapId)
                         pilot = pilot with { IsInvisible = snapshot.IsInvisible };
@@ -1232,7 +1231,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 catch (JsonException) { saved = null; }
             }
             var hasRuntimeMap = false;
-            if (saved is null || !hasMapOwner)
+            if (!hasMapOwner)
             {
                 var runtime = await cache.GetStringAsync(RuntimeKey(userId));
                 if (runtime is not null)
