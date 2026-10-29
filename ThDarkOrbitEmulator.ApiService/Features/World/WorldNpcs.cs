@@ -97,11 +97,17 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
 
     public async Task<WorldLauncherStatus> LauncherStatusAsync(long userId, CancellationToken ct)
     {
+        await using var held = await mutex.AcquireAsync(ct);
         var capacity = Math.Clamp(settings.LauncherCapacity, 1, 20);
-        var stored = await cache.GetStringAsync($"world:launcher:{userId}", ct);
-        if (stored is null) return new(capacity, capacity, 0);
-        var load = JsonSerializer.Deserialize<LauncherLoad>(stored)!;
+        var key = $"world:launcher:{userId}";
+        var stored = await cache.GetStringAsync(key, ct);
         var nowMs = clock.GetUtcNow().ToUnixTimeMilliseconds();
+        if (stored is null)
+        {
+            stored = JsonSerializer.Serialize(new LauncherLoad(0, nowMs));
+            await cache.SetStringAsync(key, stored, Expiry, ct);
+        }
+        var load = JsonSerializer.Deserialize<LauncherLoad>(stored)!;
         var reloadMs = Math.Max(1, settings.LauncherReloadSeconds) * 1000L;
         var elapsed = Math.Max(0, nowMs - load.UpdatedAtUnixMs);
         var loaded = Math.Clamp(load.Count, 0, capacity);
@@ -473,8 +479,10 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                     var nowMs = clock.GetUtcNow().ToUnixTimeMilliseconds();
                     var reloadMs = Math.Max(1, settings.LauncherReloadSeconds) * 1000L;
                     var load = storedLoad is null
-                        ? new LauncherLoad(capacity, nowMs)
+                        ? new LauncherLoad(0, nowMs)
                         : JsonSerializer.Deserialize<LauncherLoad>(storedLoad)!;
+                    if (storedLoad is null)
+                        await cache.SetStringAsync(loadKey, JsonSerializer.Serialize(load), Expiry, ct);
                     var elapsed = Math.Max(0, nowMs - load.UpdatedAtUnixMs);
                     var added = Math.Min(capacity - Math.Clamp(load.Count, 0, capacity), elapsed / reloadMs);
                     var count = Math.Clamp(load.Count, 0, capacity) + (int)added;

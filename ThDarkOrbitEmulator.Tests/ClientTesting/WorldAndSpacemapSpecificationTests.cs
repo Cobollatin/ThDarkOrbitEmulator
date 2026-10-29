@@ -2706,6 +2706,42 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task Launcher_FirstFireStartsSharedReloadWithoutSpendingAHit()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var clock = new AdvancingClock();
+        var options = Options.Create(new WorldNpcOptions
+        {
+            LauncherCapacity = 2, LauncherReloadSeconds = 2, LauncherRocketDamage = 10,
+            Templates = [new("Scout", "npc_scout", 1, 100, 0, 0, 0, 0, 0, 0)]
+        });
+        var first = new WorldNpcs(cache, mutex, new TestRewards(), options, clock);
+        var second = new WorldNpcs(cache, mutex, new TestRewards(), options, clock);
+        var spawn = first.Spawn(1, clock.GetUtcNow()).Single();
+        var sessions = new WorldSessionStore(cache, mutex);
+        var pilot = await sessions.EnterAsync(Pilot() with
+        {
+            AccountId = Guid.NewGuid(), X = spawn.X, Y = spawn.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+
+        var empty = await first.AttackAsync(pilot, spawn.Id, sessions, default, launcher: true);
+        clock.Advance(TimeSpan.FromSeconds(2));
+        var loaded = await second.LauncherStatusAsync(pilot.UserId, default);
+        var shot = await second.AttackAsync(pilot, spawn.Id, sessions, default, launcher: true);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(empty.Status, Is.EqualTo("reloading"));
+            Assert.That(loaded, Is.EqualTo(new WorldLauncherStatus(1, 2, 2000)));
+            Assert.That(shot.Damage, Is.EqualTo(10));
+            Assert.That(shot.Target!.Hp, Is.EqualTo(90));
+        });
+    }
+
+    [Test]
     public async Task LauncherVolley_ConsumesSharedLoadAndReloadsOneRocketAtATime()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
@@ -2728,6 +2764,8 @@ public sealed class WorldAndSpacemapSpecificationTests
         }, default);
 
         var initialLoad = await replica.LauncherStatusAsync(pilot.UserId, default);
+        var initialAttempt = await npcs.AttackAsync(pilot, spawn.Id, sessions, default, launcher: true);
+        clock.Advance(TimeSpan.FromSeconds(6));
         var full = await npcs.AttackAsync(pilot, spawn.Id, sessions, default, launcher: true);
         var spentLoad = await replica.LauncherStatusAsync(pilot.UserId, default);
         var empty = await replica.AttackAsync(pilot, spawn.Id, sessions, default, launcher: true);
@@ -2747,7 +2785,8 @@ public sealed class WorldAndSpacemapSpecificationTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(initialLoad, Is.EqualTo(new WorldLauncherStatus(3, 3, 0)));
+            Assert.That(initialLoad, Is.EqualTo(new WorldLauncherStatus(0, 3, 2000)));
+            Assert.That(initialAttempt.Status, Is.EqualTo("reloading"));
             Assert.That(spentLoad, Is.EqualTo(new WorldLauncherStatus(0, 3, 2000)));
             Assert.That(oneLoaded, Is.EqualTo(new WorldLauncherStatus(1, 3, 2000)));
             Assert.That(beforeVolley, Is.EqualTo(new WorldLauncherStatus(1, 3, 1000)));

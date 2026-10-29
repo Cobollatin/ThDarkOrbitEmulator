@@ -434,11 +434,12 @@ public sealed class WorldHttpBridgeTests
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
         var cache = services.GetRequiredService<IDistributedCache>();
         var mutex = new NpcMutex();
+        var clock = new ManualClock();
         var npcs = new WorldNpcs(cache, mutex, new NpcRewards(), Options.Create(new WorldNpcOptions
         {
             LauncherCapacity = 2, LauncherRocketDamage = 10, LauncherReloadSeconds = 30,
             Templates = [new("Scout", "npc_scout", 1, 100, 0, 0, 0, 0, 0, 0)]
-        }), TimeProvider.System);
+        }), clock);
         using var appServices = new ServiceCollection().AddSingleton(npcs).BuildServiceProvider();
         var a = new WorldSessionStore(cache, mutex);
         var b = new WorldSessionStore(cache, mutex);
@@ -453,17 +454,23 @@ public sealed class WorldHttpBridgeTests
 
         var before = await SendAsync("GET", "state", null, auth, resolver, a, services: appServices);
         var request = $"{{\"npcId\":{npc.Id},\"weapon\":\"launcher\"}}";
+        var initialFire = await SendAsync("POST", "fire", request, auth, resolver, a, services: appServices);
+        clock.Now += TimeSpan.FromSeconds(60);
+        await SendAsync("POST", "target", $"{{\"npcId\":{npc.Id}}}", auth, resolver, a, services: appServices);
         var first = await SendAsync("POST", "fire", request, auth, resolver, a, services: appServices);
         var after = await SendAsync("GET", "state", null, auth, resolver, b, services: appServices);
         var second = await SendAsync("POST", "fire", request, auth, resolver, b, services: appServices);
         using var initial = JsonDocument.Parse(Body(before));
+        using var waiting = JsonDocument.Parse(Body(initialFire));
         using var spent = JsonDocument.Parse(Body(after));
         using var hit = JsonDocument.Parse(Body(first));
         using var empty = JsonDocument.Parse(Body(second));
         Assert.Multiple(() =>
         {
             Assert.That(first.Response.StatusCode, Is.EqualTo(200));
-            Assert.That(initial.RootElement.GetProperty("launcher").GetProperty("loaded").GetInt32(), Is.EqualTo(2));
+            Assert.That(initial.RootElement.GetProperty("launcher").GetProperty("loaded").GetInt32(), Is.Zero);
+            Assert.That(initialFire.Response.StatusCode, Is.EqualTo(409));
+            Assert.That(waiting.RootElement.GetProperty("status").GetString(), Is.EqualTo("reloading"));
             Assert.That(spent.RootElement.GetProperty("launcher").GetProperty("loaded").GetInt32(), Is.Zero);
             Assert.That(spent.RootElement.GetProperty("launcher").GetProperty("reloadRemainingMs").GetInt32(), Is.InRange(1, 30_000));
             Assert.That(hit.RootElement.GetProperty("damage").GetInt32(), Is.EqualTo(20));
