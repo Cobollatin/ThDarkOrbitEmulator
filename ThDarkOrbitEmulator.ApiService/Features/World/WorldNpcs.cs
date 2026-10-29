@@ -250,7 +250,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             return new("invalid", []);
         var pulseActionId = actionId.GetValueOrDefault();
         if (pulseActionId == Guid.Empty) pulseActionId = Guid.NewGuid();
-        int[] targetIds;
+        PulseTarget[] targets;
         await using (var held = await mutex.AcquireAsync(ct))
         {
             await WorldSessionStore.CheckLeaseAsync(pilot.MapId, fence, ct);
@@ -273,7 +273,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                         ? "refunded" : "duplicate", []);
                 if (plan.Status != "started" || plan.MapId != pilot.MapId)
                     return new("duplicate", []);
-                targetIds = plan.Targets;
+                targets = plan.Targets;
             }
             else
             {
@@ -285,10 +285,18 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 if (long.TryParse(saved, out var last) &&
                     now - last < Math.Max(1, settings.PulseCooldownSeconds) * 1000L)
                     return new("cooldown", []);
-                targetIds = (await VisibleAsync(pilot.MapId, ct))
+                var targetIds = (await VisibleAsync(pilot.MapId, ct))
                     .Where(npc => DistanceSquared(position.X, position.Y, npc.X, npc.Y) <=
                         (long)settings.PulseRange * settings.PulseRange)
                     .Select(npc => npc.Id).ToArray();
+                targets = new PulseTarget[targetIds.Length];
+                for (var i = 0; i < targetIds.Length; i++)
+                {
+                    var storedVital = await cache.GetStringAsync(Key(pilot.MapId, targetIds[i]), ct);
+                    var generation = storedVital is null ? 0
+                        : JsonSerializer.Deserialize<Vital>(storedVital)!.Generation;
+                    targets[i] = new PulseTarget(targetIds[i], generation);
+                }
                 if (pulseInventory is not null)
                 {
                     var charge = await pulseInventory.ConsumeAsync(pilot.AccountId, pulseActionId, ct);
@@ -297,7 +305,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                             ? "refunded" : "duplicate", []);
                     if (charge == PulseChargeResult.Unavailable) return new("out_of_ammo", []);
                     if (!await pulseInventory.StartAsync(pilot.AccountId, pulseActionId,
-                            pilot.MapId, targetIds, ct))
+                            pilot.MapId, targets, ct))
                         return new("duplicate", []);
                 }
                 await cache.SetStringAsync(key, now.ToString(), new DistributedCacheEntryOptions
@@ -306,11 +314,11 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 { AbsoluteExpirationRelativeToNow = TimeSpan.FromDays(1) }, ct);
             }
         }
-        var hits = new List<WorldNpcAttack>(targetIds.Length);
-        foreach (var npcId in targetIds)
+        var hits = new List<WorldNpcAttack>(targets.Length);
+        foreach (var target in targets)
         {
-            var hit = await AttackAsync(pilot, npcId, sessions, ct, fence, pilot.MapId,
-                pulse: true, pulseActionId: pulseActionId);
+            var hit = await AttackAsync(pilot, target.Id, sessions, ct, fence, pilot.MapId,
+                pulse: true, pulseActionId: pulseActionId, expectedGeneration: target.Generation);
             if (hit.Status == "hit") hits.Add(hit);
         }
         if (pulseInventory is not null)
@@ -321,7 +329,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
     public async Task<WorldNpcAttack> AttackAsync(WorldPilot pilot, int npcId,
         WorldSessionStore sessions, CancellationToken ct, WorldLeaseFence? fence = null,
         int? expectedMapId = null, bool rocket = false, bool pulse = false,
-        Guid? pulseActionId = null)
+        Guid? pulseActionId = null, long? expectedGeneration = null)
     {
         if (pilot.AccountId == Guid.Empty) return new("invalid");
         WorldNpc? npc;
@@ -348,6 +356,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 ?? (saved?.Destroyed == true ? saved.Snapshot : null);
             if (npc is null) return new("missing");
             var vital = saved ?? new Vital(npc.Hp, npc.Shield, false, Guid.Empty);
+            if (expectedGeneration is not null && vital.Generation != expectedGeneration)
+                return new("stale_target", npc);
             if (pulseActionId is { } pulseId && vital.PulseActions?.Contains(pulseId) == true &&
                 !(vital.Destroyed && vital.Killer == pilot.AccountId))
                 return new("duplicate", npc);
