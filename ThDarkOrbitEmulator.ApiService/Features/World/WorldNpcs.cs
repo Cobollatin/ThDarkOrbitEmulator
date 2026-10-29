@@ -760,11 +760,13 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             var maxStep = Math.Max(0, speed) * elapsed;
             var step = Math.Clamp(distance - Math.Max(0, settings.NpcStandoffRange),
                 -maxStep, maxStep);
-            // At overlap there is no direction to retreat along; choose a stable axis.
-            var x = distance == 0 ? npc.X + (int)Math.Round(step)
+            var map = WorldMapInstance.Starter(mapId);
+            // At overlap there is no direction to retreat along; choose the
+            // horizontal direction with room inside this map.
+            var x = distance == 0
+                ? npc.X + (npc.X < map.Width / 2 ? -1 : 1) * (int)Math.Round(step)
                 : npc.X + (int)Math.Round(dx * step / distance);
             var y = distance == 0 ? npc.Y : npc.Y + (int)Math.Round(dy * step / distance);
-            var map = WorldMapInstance.Starter(mapId);
             x = Math.Clamp(x, 0, map.Width);
             y = Math.Clamp(y, 0, map.Height);
             npc = npc with { X = x, Y = y };
