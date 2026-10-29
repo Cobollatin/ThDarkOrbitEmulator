@@ -29,6 +29,7 @@ public sealed class WorldNpcOptions
     public int PulseCooldownSeconds { get; set; } = 30;
     public int LaserCooldownMilliseconds { get; set; } = 1000;
     public double LaserMissChance { get; set; }
+    public double LaserDamageSpread { get; set; }
     public int AggroRange { get; set; } = 1200;
     public int NpcStandoffRange { get; set; } = 300;
     public int NpcFireRange { get; set; } = 650;
@@ -460,6 +461,12 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                     damage = Math.Max(1, (int)Math.Round(sessions.ActiveStats(pilot).LaserDamage * multiplier));
                     missed = Random.Shared.NextDouble() < Math.Clamp(settings.LaserMissChance, 0, 1);
                     if (missed) damage = 0;
+                    else
+                    {
+                        var spread = Math.Clamp(settings.LaserDamageSpread, 0, 1);
+                        damage = Math.Max(1, (int)Math.Round(damage *
+                            (1 - spread + Random.Shared.NextDouble() * 2 * spread)));
+                    }
                 }
                 if (!resumePulse) await sessions.MarkCombatAsync(pilot, ct);
                 if (missed)
