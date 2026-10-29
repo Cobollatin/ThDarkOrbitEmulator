@@ -616,6 +616,11 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 hitPoints[pilot.UserId] = Math.Clamp(repair.HitPoints, 1, ActiveStats(pilot).MaxHitPoints);
                 shields[pilot.UserId] = Math.Clamp(repair.Shield, 0, ActiveStats(pilot).MaxShield);
                 await ClearRepairRuntimeAsync(pilot.UserId, ct);
+                if (repair.RepairedAt is { } repairedAt
+                    && combatClock.GetUtcNow() - repairedAt < RepairProtectionWindow)
+                    await cache.SetStringAsync(RepairProtectionKey(pilot.UserId),
+                        repairedAt.ToUnixTimeMilliseconds().ToString(),
+                        new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);
                 var paid = false;
                 foreach (var paidLocation in new[]
                          { WorldRespawnLocation.DeathLocation, WorldRespawnLocation.NearestPortal })
@@ -1413,15 +1418,16 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             hitPoints[pilot.UserId] = Math.Max(1, ActiveStats(pilot).MaxHitPoints / 10);
             shields[pilot.UserId] = 0;
             await ClearRepairRuntimeAsync(pilot.UserId, ct);
+            var repairedAt = combatClock.GetUtcNow();
             await cache.SetStringAsync(RepairProtectionKey(pilot.UserId),
-                combatClock.GetUtcNow().ToUnixTimeMilliseconds().ToString(),
+                repairedAt.ToUnixTimeMilliseconds().ToString(),
                 new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);
             var repairedDeathId = repairWallet is not null && pilot.AccountId != Guid.Empty
                 ? await DeathIdAsync(pilot.UserId, ct, pilot.AccountId) : null;
             if (repairedDeathId is not null)
                 await repairWallet!.StageRepairAsync(pilot.AccountId, repairedDeathId,
                     new WorldRepairOutcome(respawned.MapId, respawned.X, respawned.Y,
-                        CurrentHitPoints(pilot), CurrentShield(pilot)), location, combatClock.GetUtcNow(), ct);
+                        CurrentHitPoints(pilot), CurrentShield(pilot), repairedAt), location, repairedAt, ct);
             await PersistAsync(respawned, ct);
             if (location is WorldRespawnLocation.Base)
                 await cache.RemoveAsync(DeathKey(pilot.UserId), ct);

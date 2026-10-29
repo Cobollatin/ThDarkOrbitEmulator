@@ -1596,6 +1596,34 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(replica.CurrentHitPoints(repaired), Is.EqualTo(70));
     }
 
+    [TestCase(2, 100)]
+    [TestCase(5, 80)]
+    public async Task PilotDestruction_StagedRepairRetainsRemainingProtectionAfterCacheLoss(
+        int elapsedSeconds, int expectedHitPoints)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingClock();
+        var wallet = new TestRepairWallet { ThrowAfterStageOnce = true };
+        var first = new WorldSessionStore(cache, clock: clock, repairWallet: wallet);
+        var pilot = await first.EnterAsync(Pilot() with
+        {
+            UserId = 914 + elapsedSeconds, AccountId = Guid.NewGuid(), MapId = 2,
+            X = 5000, Y = 5000, Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await first.ApplyNpcDamageAsync(pilot, 1, 1200, default);
+        Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await first.RespawnAsync(pilot, WorldRespawnLocation.Base, default));
+        await cache.RemoveAsync($"world:repair-protection:{pilot.UserId}");
+        await cache.RemoveAsync($"world:runtime:{pilot.UserId}");
+        clock.Advance(TimeSpan.FromSeconds(elapsedSeconds));
+
+        var replica = new WorldSessionStore(cache, clock: clock, repairWallet: wallet);
+        var repaired = await replica.EnterAsync(pilot, default);
+        await replica.ApplyNpcDamageAsync(repaired, 1, 20, default);
+        Assert.That(replica.CurrentHitPoints(repaired), Is.EqualTo(expectedHitPoints));
+    }
+
     [Test]
     public async Task PilotDestruction_RepairsAtNearestPortalOnceAcrossReplicas()
     {

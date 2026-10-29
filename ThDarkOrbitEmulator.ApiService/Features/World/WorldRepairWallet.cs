@@ -4,7 +4,8 @@ namespace ThDarkOrbitEmulator.ApiService.Features.World;
 
 public enum WorldRepairCharge { Applied, AlreadyCharged, InsufficientFunds }
 public sealed record WorldRepairPayment(WorldRepairCharge Charge, long Balance);
-public sealed record WorldRepairOutcome(int MapId, int X, int Y, long HitPoints, long Shield);
+public sealed record WorldRepairOutcome(int MapId, int X, int Y, long HitPoints, long Shield,
+    DateTimeOffset? RepairedAt = null);
 
 public interface IWorldRepairWallet
 {
