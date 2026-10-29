@@ -1629,7 +1629,7 @@ public class WorldTransportTests
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
         var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
         var pilot = new WorldPilot(89, "mmo", 1, 1, "ship", 0, 0)
-            { Stats = new WorldShipStats(100, 1, 0, 0, 0, []), ConfigurationTwoSpeed = 200 };
+            { Stats = new WorldShipStats(100, 1000, 0, 0, 0, []), ConfigurationTwoSpeed = 200 };
         var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), store);
         using (client)
         using (server)
@@ -1648,6 +1648,8 @@ public class WorldTransportTests
                 WorldPayload.WriteInt32(w, 22000); // target X
                 WorldPayload.WriteInt32(w, 9999); // untrusted reported Y
             }));
+            Assert.That((await input.ReadAsync())!.Value.Command,
+                Is.EqualTo(WorldCommandId.RadiationDamageCommand));
             var move = (await input.ReadAsync())!.Value;
             Assert.That(move.Command, Is.EqualTo(WorldCommandId.MoveCommand));
             var values = WorldPayload.Decode(move.Payload, r => (WorldPayload.ReadInt64(r),
@@ -1655,6 +1657,12 @@ public class WorldTransportTests
             Assert.That(values, Is.EqualTo((89L, 21000, 1300, 190000)));
             Assert.That((await input.ReadAsync())!.Value.Command,
                 Is.EqualTo(WorldCommandId.RadiationWarningCommand));
+            await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt32(w, 0); WorldPayload.WriteInt32(w, 1300);
+                WorldPayload.WriteInt32(w, 22000); WorldPayload.WriteInt32(w, 0);
+            }));
+            Assert.That((await input.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.MoveCommand));
             await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
             {
                 WorldPayload.WriteInt32(w, 0); WorldPayload.WriteInt32(w, 1300);

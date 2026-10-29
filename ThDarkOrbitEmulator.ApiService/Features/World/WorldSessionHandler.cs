@@ -329,7 +329,7 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                         var move = await sessions.MoveAsync(connected, request.TargetX, request.TargetY, null, ct,
                             fence: fence);
                         await sessions.BroadcastMoveAsync(connected, move, ct);
-                        if (wasRadiating != move.RadiationWarning || move.RadiationWarning)
+                        if (wasRadiating != move.RadiationWarning)
                             await connection!.SendAsync(WorldCommandId.RadiationWarningCommand,
                                 new byte[] { (byte)(move.RadiationWarning ? 1 : 0) }, ct);
                         continue;
