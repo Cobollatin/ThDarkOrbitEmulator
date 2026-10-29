@@ -202,7 +202,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 try
                 {
                     var position = JsonSerializer.Deserialize<WorldPosition>(saved);
-                    positionOnAnotherMap = position is not null && position.MapId != pilot.MapId;
+                    positionOnAnotherMap = position is not null && IsValidWorldMap(position.MapId)
+                        && position.MapId != pilot.MapId;
                 }
                 catch (JsonException) { }
             }
@@ -461,8 +462,9 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 try
                 {
                     var position = JsonSerializer.Deserialize<WorldPosition>(saved);
-                    positionOnAnotherMap = position is not null && position.MapId != mapId;
-                    if (position is null || positionOnAnotherMap)
+                    var hasValidPosition = position is not null && IsValidWorldMap(position.MapId);
+                    positionOnAnotherMap = hasValidPosition && position!.MapId != mapId;
+                    if (!hasValidPosition || positionOnAnotherMap)
                         saved = null;
                 }
                 catch (JsonException) { saved = null; }
@@ -1222,8 +1224,9 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 try
                 {
                     var position = JsonSerializer.Deserialize<WorldPosition>(saved);
-                    positionOnAnotherMap = position is not null && position.MapId != mapId;
-                    if (position is null || positionOnAnotherMap)
+                    var hasValidPosition = position is not null && IsValidWorldMap(position.MapId);
+                    positionOnAnotherMap = hasValidPosition && position!.MapId != mapId;
+                    if (!hasValidPosition || positionOnAnotherMap)
                         saved = null;
                 }
                 catch (JsonException) { saved = null; }

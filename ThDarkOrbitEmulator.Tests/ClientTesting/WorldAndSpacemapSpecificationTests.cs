@@ -3959,6 +3959,30 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task InvalidSavedPositionMap_DoesNotRemoveCurrentMapPresence()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var first = new WorldSessionStore(cache, mutex);
+        var second = new WorldSessionStore(cache, mutex);
+        var pilot = await first.EnterAsync(Pilot() with { AccountId = Guid.NewGuid() }, default);
+        var positionKey = $"world:position:{pilot.UserId}";
+        var position = await cache.GetStringAsync(positionKey);
+        Assert.That(position, Is.Not.Null);
+        await cache.SetStringAsync(positionKey, position!.Replace("\"MapId\":1", "\"MapId\":999"));
+        await cache.RemoveAsync($"world:map:{pilot.UserId}");
+        await cache.RemoveAsync($"world:runtime:{pilot.UserId}");
+
+        Assert.That(await second.SavedMapAsync(pilot.UserId, default), Is.Null);
+        Assert.That((await second.ConnectedAsync(1, default)).Single().UserId, Is.EqualTo(pilot.UserId));
+        Assert.That((await second.VisiblePilotsAsync(1, default)).Single().UserId, Is.EqualTo(pilot.UserId));
+        await first.RefreshLocalPresenceAsync(default);
+        Assert.That(first.ActivePilotCount, Is.EqualTo(1));
+        Assert.That((await second.ConnectedAsync(1, default)).Single().UserId, Is.EqualTo(pilot.UserId));
+    }
+
+    [Test]
     public async Task CloakCooldown_SurvivesCooldownKeyEvictionAcrossWorldInstances()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
