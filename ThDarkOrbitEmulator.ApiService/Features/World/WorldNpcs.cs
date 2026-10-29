@@ -328,6 +328,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         {
             await pulseInventory.CompleteAsync(pilot.AccountId, pulseActionId, ct);
             await ClearCompletedPulseActionAsync(pilot.MapId, targets, pulseActionId, ct);
+            await pulseInventory.SettleAsync(pilot.AccountId, pulseActionId, ct);
         }
         return new("hit", hits);
     }
@@ -344,6 +345,20 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             var actor = new WorldPilot(0, string.Empty, mapId, 0, string.Empty, 0, 0)
                 { AccountId = action.AccountId };
             await PulseAsync(actor, sessions, ct, fence, mapId, action.ActionId);
+        }
+    }
+
+    public async Task ReconcileCompletedPulsesAsync(int mapId, CancellationToken ct,
+        WorldLeaseFence? fence = null)
+    {
+        if (pulseInventory is null || WorldMapInstance.IsGate(mapId)) return;
+        foreach (var action in await pulseInventory.CompletedOnMapAsync(mapId, ct))
+        {
+            await WorldSessionStore.CheckLeaseAsync(mapId, fence, ct);
+            var plan = await pulseInventory.PlanAsync(action.AccountId, action.ActionId, ct);
+            if (plan is not { Status: "completed" } || plan.MapId != mapId) continue;
+            await ClearCompletedPulseActionAsync(mapId, plan.Targets, action.ActionId, ct);
+            await pulseInventory.SettleAsync(action.AccountId, action.ActionId, ct);
         }
     }
 

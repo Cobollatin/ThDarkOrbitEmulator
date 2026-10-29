@@ -136,6 +136,12 @@ public class EconomyPostgresTests
         await first.CompletePulseActionAsync(account, started, ct);
         Assert.That(await first.StartedPulseActionsAsync(account, 3, ct), Is.Empty);
         Assert.That(await first.StartedPulseActionsOnMapAsync(3, ct), Is.Empty);
+        Assert.That(await second.CompletedPulseActionsOnMapAsync(3, ct),
+            Is.EqualTo(new[] { new StartedPulseAction(account, started) }));
+        await second.SettlePulseActionAsync(account, started, ct);
+        Assert.That(await first.CompletedPulseActionsOnMapAsync(3, ct), Is.Empty);
+        Assert.That((await first.PulseActionPlanAsync(account, started, ct))?.Status,
+            Is.EqualTo("settled"));
         Assert.That(await second.RefundUnstartedPulseActionAsync(account, started, ct), Is.False);
         Assert.That((await first.InventoryAsync(account, ct))["pulse_charge"], Is.EqualTo(1));
 

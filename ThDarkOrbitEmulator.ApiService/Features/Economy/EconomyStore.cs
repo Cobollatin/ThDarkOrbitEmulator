@@ -1029,6 +1029,36 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task<IReadOnlyList<StartedPulseAction>> CompletedPulseActionsOnMapAsync(int mapId,
+        CancellationToken ct)
+    {
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand("""
+            SELECT account_id,action_id FROM economy.pulse_actions
+            WHERE map_id=@m AND status='completed'
+            ORDER BY created_at LIMIT 16
+            """, db);
+        cmd.Parameters.AddWithValue("m", mapId);
+        var actions = new List<StartedPulseAction>();
+        await using var rows = await cmd.ExecuteReaderAsync(ct);
+        while (await rows.ReadAsync(ct)) actions.Add(new(rows.GetGuid(0), rows.GetGuid(1)));
+        return actions;
+    }
+
+    public async Task SettlePulseActionAsync(Guid accountId, Guid actionId, CancellationToken ct)
+    {
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand("""
+            UPDATE economy.pulse_actions SET status='settled'
+            WHERE account_id=@a AND action_id=@k AND status='completed'
+            """, db);
+        cmd.Parameters.AddWithValue("a", accountId);
+        cmd.Parameters.AddWithValue("k", actionId);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     // Locking the action row makes this refund race safely with StartPulseActionAsync.
     // Once started, an effect may have reached the world cache and is never refunded here.
     public async Task<bool> RefundUnstartedPulseActionAsync(Guid accountId, Guid actionId, CancellationToken ct)

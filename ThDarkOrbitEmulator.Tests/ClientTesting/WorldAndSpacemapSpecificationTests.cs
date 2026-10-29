@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Options;
@@ -1703,6 +1704,36 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task NpcPulse_ReconcilesCompletedActionWithUnclearedEffectId()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var clock = new AdvancingClock();
+        var options = Options.Create(new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 100, 0, 5, 0, 0, 0, 0)]
+        });
+        var inventory = new TestPulseInventory(0);
+        var npcs = new WorldNpcs(cache, mutex, new TestRewards(), options, clock,
+            pulseInventory: inventory);
+        var npc = npcs.Spawn(1, clock.GetUtcNow())[0];
+        var vitalKey = $"world:npc:v2:1:{npc.Id}";
+        var actionId = Guid.NewGuid();
+        await cache.SetStringAsync(vitalKey, JsonSerializer.Serialize(new
+        {
+            Hp = npc.Hp, Shield = npc.Shield, Destroyed = false, Killer = Guid.Empty,
+            Generation = 0L, PulseActions = new[] { actionId }
+        }));
+        inventory.SeedCompleted(Guid.NewGuid(), actionId, 1, [new PulseTarget(npc.Id, 0)]);
+
+        await npcs.ReconcileCompletedPulsesAsync(1, default);
+
+        Assert.That(await cache.GetStringAsync(vitalKey), Does.Not.Contain(actionId.ToString()));
+        Assert.That(await inventory.CompletedOnMapAsync(1, default), Is.Empty);
+    }
+
+    [Test]
     public async Task NpcPulse_StartedRewardRetryCompletesAfterPilotIsDestroyed()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
@@ -1949,6 +1980,12 @@ public sealed class WorldAndSpacemapSpecificationTests
 
         public void Refill(int amount) => Remaining += amount;
 
+        public void SeedCompleted(Guid accountId, Guid actionId, int mapId, PulseTarget[] targets)
+        {
+            owners[actionId] = accountId;
+            plans[actionId] = new("completed", mapId, targets);
+        }
+
         public Task<PulseChargeResult> ConsumeAsync(Guid accountId, Guid actionId, CancellationToken ct)
         {
             if (actions.Contains(actionId)) return Task.FromResult(PulseChargeResult.Duplicate);
@@ -1975,10 +2012,21 @@ public sealed class WorldAndSpacemapSpecificationTests
                 entry.Value.Status == "started" && entry.Value.MapId == mapId)
                 .Select(entry => new StartedPulseAction(owners[entry.Key], entry.Key)).ToArray());
 
+        public Task<IReadOnlyList<StartedPulseAction>> CompletedOnMapAsync(int mapId, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<StartedPulseAction>>(plans.Where(entry =>
+                entry.Value.Status == "completed" && entry.Value.MapId == mapId)
+                .Select(entry => new StartedPulseAction(owners[entry.Key], entry.Key)).ToArray());
+
         public Task CompleteAsync(Guid accountId, Guid actionId, CancellationToken ct)
         {
             Completed++;
             plans[actionId] = plans[actionId] with { Status = "completed" };
+            return Task.CompletedTask;
+        }
+
+        public Task SettleAsync(Guid accountId, Guid actionId, CancellationToken ct)
+        {
+            plans[actionId] = plans[actionId] with { Status = "settled" };
             return Task.CompletedTask;
         }
 

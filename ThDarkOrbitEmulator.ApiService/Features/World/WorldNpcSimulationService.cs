@@ -52,6 +52,11 @@ public sealed class WorldNpcSimulationService(WorldNpcs npcs, WorldSessionStore 
                         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { throw; }
                         catch (Exception ex)
                         { logger?.LogWarning(ex, "Pulse reconciliation failed for map {MapId}", lease.MapId); }
+                        try { await npcs.ReconcileCompletedPulsesAsync(lease.MapId, stoppingToken, fence); }
+                        catch (WorldLeaseLostException) { throw; }
+                        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { throw; }
+                        catch (Exception ex)
+                        { logger?.LogWarning(ex, "Pulse cleanup failed for map {MapId}", lease.MapId); }
                     }
                     await sessions.RecoverShieldsAsync(lease.MapId, stoppingToken, fence);
                     await sessions.RecoverHullAsync(lease.MapId, stoppingToken, fence);
