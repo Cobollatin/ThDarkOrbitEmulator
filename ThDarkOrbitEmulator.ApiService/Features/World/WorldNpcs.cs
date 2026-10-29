@@ -358,7 +358,16 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             var actionKey = $"world:npc:pulse:action:{pilot.UserId}:{pulseActionId:N}";
             var plan = pulseInventory is null ? null
                 : await pulseInventory.PlanAsync(pilot.AccountId, pulseActionId, ct);
-            if (plan is null) pilot = await sessions.RestoreAsync(pilot, ct);
+            if (plan is null)
+            {
+                var mapId = pilot.MapId;
+                pilot = await sessions.RestoreAsync(pilot, ct);
+                if (pilot.MapId != mapId)
+                {
+                    if (fence is not null) throw new WorldLeaseLostException();
+                    throw new WorldMapChangedException();
+                }
+            }
             if (expectedMapId is not null && pilot.MapId != expectedMapId)
                 throw new WorldMapChangedException();
             if (plan is not null)

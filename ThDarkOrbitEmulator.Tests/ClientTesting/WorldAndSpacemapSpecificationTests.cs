@@ -3565,6 +3565,39 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task NpcPulse_FromPreviousMap_DoesNotChargeOrDamageDestinationTargets()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var sessions = new WorldSessionStore(cache, mutex);
+        var destination = new WorldSessionStore(cache, mutex);
+        var inventory = new TestPulseInventory(1);
+        var npcs = new WorldNpcs(cache, mutex, new TestRewards(),
+            Options.Create(new WorldNpcOptions
+            {
+                PulseRange = 1000,
+                Templates = [new("Scout", "npc_scout", 1, 100, 0, 0, 0, 0, 0, 0)]
+            }), new TestClock(), pulseInventory: inventory);
+        var stale = await sessions.EnterAsync(Pilot() with
+        {
+            AccountId = Guid.NewGuid(),
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+        var target = npcs.Spawn(2, DateTimeOffset.UtcNow).Single();
+        var current = await destination.TeleportAsync(stale.UserId, 2,
+            target.X, target.Y, false, default);
+
+        Assert.ThrowsAsync<WorldMapChangedException>(
+            async () => await npcs.PulseAsync(stale, sessions, default));
+        Assert.That(inventory.Remaining, Is.EqualTo(1));
+        Assert.That(await cache.GetStringAsync($"world:npc:pulse:{stale.UserId}"), Is.Null);
+        Assert.That((await npcs.VisibleAsync(2, default)).Single().Hp, Is.EqualTo(100));
+        Assert.That((await npcs.PulseAsync(current!, destination, default)).Status,
+            Is.EqualTo("hit"));
+    }
+
+    [Test]
     public async Task CloakState_IsSharedAcrossWorldInstances_AndSurvivesReentry()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
