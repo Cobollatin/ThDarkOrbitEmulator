@@ -34,6 +34,7 @@ public sealed class WorldNpcOptions
     public int NpcFireRange { get; set; } = 650;
     public int NpcDamage { get; set; } = 40;
     public double NpcMissChance { get; set; } = 0.1;
+    public double NpcDamageSpread { get; set; }
     public double PilotShieldAbsorption { get; set; } = 0.8;
     public int NpcFireCooldownSeconds { get; set; } = 2;
     public int NpcShieldRepairDelaySeconds { get; set; } = 10;
@@ -624,9 +625,16 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 LastFireUnixMs = fire ? now.ToUnixTimeMilliseconds() : vital.LastFireUnixMs };
             await cache.SetStringAsync(key, JsonSerializer.Serialize(vital), Expiry, ct);
             observerSnapshots.TryRemove(mapId, out _);
-            if (fire) await sessions.ApplyNpcDamageAsync(target.Pilot, npc.Id,
-                Random.Shared.NextDouble() < Math.Clamp(settings.NpcMissChance, 0, 1)
-                    ? 0 : Math.Max(1, settings.NpcDamage), ct, settings.PilotShieldAbsorption);
+            if (fire)
+            {
+                var missed = Random.Shared.NextDouble() < Math.Clamp(settings.NpcMissChance, 0, 1);
+                var spread = Math.Clamp(settings.NpcDamageSpread, 0, 1);
+                var multiplier = 1 - spread + Random.Shared.NextDouble() * 2 * spread;
+                var damage = missed ? 0 : Math.Max(1,
+                    (int)Math.Round(Math.Max(1, settings.NpcDamage) * multiplier));
+                await sessions.ApplyNpcDamageAsync(target.Pilot, npc.Id, damage, ct,
+                    settings.PilotShieldAbsorption);
+            }
         }
     }
 

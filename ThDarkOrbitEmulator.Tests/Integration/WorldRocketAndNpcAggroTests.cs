@@ -495,6 +495,37 @@ public sealed class WorldRocketAndNpcAggroTests
     }
 
     [Test]
+    public async Task AutonomousNpc_RollsBoundedDamageForEachShot()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var options = new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 0)],
+            AggroRange = 1000, NpcFireRange = 1000, NpcDamage = 40,
+            NpcDamageSpread = 0.5, NpcFireCooldownSeconds = 1, NpcMissChance = 0
+        };
+        var npcs = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var npc = (await npcs.VisibleAsync(1, default)).Single();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var pilot = await sessions.EnterAsync(Pilot(npc.X + 400, npc.Y), default);
+        var damages = new List<long>();
+
+        for (var shot = 0; shot < 10; shot++)
+        {
+            var before = sessions.CurrentHitPoints(pilot);
+            await npcs.TickAggroAsync(1, sessions, default);
+            damages.Add(before - sessions.CurrentHitPoints(pilot));
+            clock.Advance(TimeSpan.FromSeconds(1));
+        }
+
+        Assert.That(damages, Is.All.InRange(20, 60));
+        Assert.That(damages.Distinct().Count(), Is.GreaterThan(1));
+    }
+
+    [Test]
     public async Task PassiveNpc_RetaliatesAgainstAttackerThenStopsAfterTargetLeaves()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
