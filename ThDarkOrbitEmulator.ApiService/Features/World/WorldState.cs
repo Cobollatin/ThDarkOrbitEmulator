@@ -178,10 +178,18 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private static string Key(long userId) => $"world:position:{userId}";
     private static string RuntimeKey(long userId) => $"world:runtime:{userId}";
     private static string CombatKey(long userId) => $"world:combat:{userId}";
+    private static string RespawnCooldownKey(long userId, WorldRespawnLocation location) =>
+        $"world:respawn-cooldown:{userId}:{location}";
     private static string ShieldRecoveryKey(long userId) => $"world:shield-recovery:{userId}";
     private static string HullRecoveryKey(long userId) => $"world:hull-recovery:{userId}";
     private static string PresenceKey(int mapId) => $"world:presence:map:{mapId}";
     private static readonly TimeSpan PortalCombatWindow = TimeSpan.FromSeconds(10);
+    private static TimeSpan RespawnCooldown(WorldRespawnLocation location) => location switch
+    {
+        WorldRespawnLocation.DeathLocation => TimeSpan.FromSeconds(30),
+        WorldRespawnLocation.NearestPortal => TimeSpan.FromSeconds(15),
+        _ => TimeSpan.Zero
+    };
 
     public Task MarkCombatAsync(WorldPilot pilot, CancellationToken ct) =>
         cache.SetStringAsync(CombatKey(pilot.UserId), combatClock.GetUtcNow().ToUnixTimeMilliseconds().ToString(),
@@ -1123,6 +1131,14 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             if ((location is WorldRespawnLocation.DeathLocation or WorldRespawnLocation.NearestPortal)
                 && WorldMapInstance.IsGate(pilot.MapId))
                 return null;
+            var cooldown = RespawnCooldown(location);
+            if (cooldown > TimeSpan.Zero)
+            {
+                var saved = await cache.GetStringAsync(RespawnCooldownKey(pilot.UserId, location), ct);
+                if (long.TryParse(saved, out var milliseconds)
+                    && combatClock.GetUtcNow() - DateTimeOffset.FromUnixTimeMilliseconds(milliseconds) < cooldown)
+                    return null;
+            }
             var baseMapId = (Math.Clamp(pilot.FactionId, 1, 4) - 1) * 4 + 1;
             var station = WorldMapInstance.Starter(baseMapId).HomeStation;
             var respawned = location switch
@@ -1140,6 +1156,10 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             await cache.RemoveAsync(ShieldRecoveryKey(pilot.UserId), ct);
             await PersistAsync(respawned, ct);
             await PersistRuntimeAsync(respawned, ct);
+            if (cooldown > TimeSpan.Zero)
+                await cache.SetStringAsync(RespawnCooldownKey(pilot.UserId, location),
+                    combatClock.GetUtcNow().ToUnixTimeMilliseconds().ToString(),
+                    new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = cooldown }, ct);
             await WritePresenceAsync(pilot, false, ct);
             await WritePresenceAsync(respawned, true, ct);
             if (connected.TryGetValue(pilot.MapId, out var old)) old.TryRemove(pilot.UserId, out _);

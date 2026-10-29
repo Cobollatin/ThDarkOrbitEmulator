@@ -1306,6 +1306,35 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That((restored.X, restored.Y), Is.EqualTo((19500, 11800)));
     }
 
+    [TestCase(WorldRespawnLocation.DeathLocation, 30)]
+    [TestCase(WorldRespawnLocation.NearestPortal, 15)]
+    public async Task PilotDestruction_PremiumRepairCooldownSurvivesReplicaHandoff(
+        WorldRespawnLocation location, int cooldownSeconds)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingClock();
+        var store = new WorldSessionStore(cache, clock: clock);
+        var replica = new WorldSessionStore(cache, clock: clock);
+        var pilot = await store.EnterAsync(Pilot() with
+        {
+            UserId = 911 + cooldownSeconds, MapId = 2, FactionId = 1, X = 5000, Y = 5000,
+            Stats = new WorldShipStats(300, 1000, 100, 0, 100, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0);
+        var first = await replica.RespawnAsync(pilot, location, default);
+        Assert.That(first, Is.Not.Null);
+        await store.ApplyNpcDamageAsync(first!, 1, 1200, default, shieldAbsorption: 0);
+        Assert.That(await replica.RespawnAsync(first!, location, default), Is.Null);
+        Assert.That(store.CurrentHitPoints(first!), Is.Zero);
+        clock.Advance(TimeSpan.FromSeconds(cooldownSeconds - 1));
+        Assert.That(await store.RespawnAsync(first!, location, default), Is.Null);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var second = await replica.RespawnAsync(first!, location, default);
+        Assert.That(second, Is.Not.Null);
+        Assert.That(replica.CurrentHitPoints(second!), Is.EqualTo(100));
+    }
+
     [TestCase("0", 0)]
     [TestCase("1000000", 1000000)]
     [TestCase("-1", 150)]
