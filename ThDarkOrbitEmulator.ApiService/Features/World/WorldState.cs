@@ -842,7 +842,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         var distance = Math.Sqrt(Math.Pow(current.TargetX - position.X, 2)
             + Math.Pow(current.TargetY - position.Y, 2));
         return new WorldMoveResult(pilot.UserId, current.TargetX, current.TargetY,
-            (int)Math.Ceiling(distance * 1000d / current.Speed), false);
+            WorldMovement.DurationMilliseconds(distance, current.Speed), false);
     }
 
     private static (int X, int Y)? SavedStationaryPosition(string? saved, int mapId)
@@ -961,7 +961,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 + Math.Pow(current.TargetY - position.Y, 2));
             if (distance > 0)
                 moves.Add(new WorldMoveResult(remote.UserId, current.TargetX, current.TargetY,
-                    (int)Math.Ceiling(distance * 1000d / current.Speed), false));
+                    WorldMovement.DurationMilliseconds(distance, current.Speed), false));
         }
         return moves;
     }

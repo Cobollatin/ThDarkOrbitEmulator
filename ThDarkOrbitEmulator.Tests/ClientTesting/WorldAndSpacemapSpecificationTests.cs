@@ -747,7 +747,7 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
-    public void Movement_ClampsBoundary_ComputesCeilingDuration_AndUsesCurrentTravelOrigin()
+    public void Movement_ClampsBoundary_ComputesRoundedDuration_AndUsesCurrentTravelOrigin()
     {
         var now = DateTimeOffset.FromUnixTimeMilliseconds(10_000);
         var pilot = Pilot() with { X = 100, Y = 200 };
@@ -757,11 +757,27 @@ public sealed class WorldAndSpacemapSpecificationTests
         {
             Assert.That((move.X, move.Y), Is.EqualTo((21000, 0)));
             Assert.That(move.RadiationWarning, Is.True);
-            Assert.That(move.TimeToTargetMs, Is.EqualTo((int)Math.Ceiling(Math.Sqrt(20800d * 20800 + 200d * 200) * 1000 / 300)));
+            Assert.That(move.TimeToTargetMs, Is.EqualTo((int)Math.Round(Math.Sqrt(20800d * 20800 + 200d * 200) * 1000 / 300)));
         });
         var travel = WorldMovement.Travel(pilot, prior, move, 300, now);
         Assert.That((travel.StartX, travel.StartY), Is.EqualTo((200d, 200d)));
         Assert.That(travel.MoveId, Is.Not.EqualTo(Guid.Empty));
+    }
+
+    [Test]
+    public void Movement_DurationRoundsToNearestMillisecond()
+    {
+        var now = DateTimeOffset.FromUnixTimeMilliseconds(10_000);
+        var pilot = Pilot() with { X = 100, Y = 100 };
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(WorldMovement.Begin(pilot, null, 101, 100, 300, now).TimeToTargetMs,
+                Is.EqualTo(3));
+            Assert.That(WorldMovement.Begin(pilot, null, 102, 100, 300, now).TimeToTargetMs,
+                Is.EqualTo(7));
+            Assert.That(WorldMovement.DurationMilliseconds(1, 400), Is.EqualTo(2));
+        });
     }
 
     [Test]
@@ -778,7 +794,7 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.Multiple(() =>
         {
             Assert.That(fast.TimeToTargetMs,
-                Is.EqualTo((int)Math.Ceiling(distance * 1000d / int.MaxValue)));
+                Is.EqualTo((int)Math.Round(distance * 1000d / int.MaxValue)));
             Assert.That(fast.TimeToTargetMs, Is.GreaterThan(0));
             Assert.That(slow.TimeToTargetMs, Is.EqualTo(int.MaxValue));
             Assert.That(stopped.TimeToTargetMs, Is.Zero);
@@ -798,7 +814,7 @@ public sealed class WorldAndSpacemapSpecificationTests
             Math.Pow((double)13_100 - int.MinValue, 2));
 
         Assert.That(move.TimeToTargetMs,
-            Is.EqualTo((int)Math.Ceiling(distance * 1000d / int.MaxValue)));
+            Is.EqualTo((int)Math.Round(distance * 1000d / int.MaxValue)));
         Assert.That(move.RadiationWarning, Is.False);
     }
 

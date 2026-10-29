@@ -18,6 +18,9 @@ public sealed record WorldMoveResult(long UserId, int X, int Y, int TimeToTarget
 
 public static class WorldMovement
 {
+    public static int DurationMilliseconds(double distance, int speed) => speed <= 0 ? 0
+        : (int)Math.Min(Math.Round(distance * 1000d / speed), int.MaxValue);
+
     public static bool IsInsideBoundary((int X, int Y) position, WorldMapInstance map) =>
         position.X > 0 && position.X < map.Width && position.Y > 0 && position.Y < map.Height;
 
@@ -31,8 +34,7 @@ public static class WorldMovement
         targetY = Math.Clamp(targetY, 0, map.Height);
         var distance = Math.Sqrt(Math.Pow((double)targetX - start.Item1, 2) +
             Math.Pow((double)targetY - start.Item2, 2));
-        var durationMilliseconds = speed <= 0 ? 0 : Math.Ceiling(distance * 1000d / speed);
-        var duration = (int)Math.Min(durationMilliseconds, int.MaxValue);
+        var duration = DurationMilliseconds(distance, speed);
         return new WorldMoveResult(pilot.UserId, targetX, targetY, duration, warning);
     }
 
