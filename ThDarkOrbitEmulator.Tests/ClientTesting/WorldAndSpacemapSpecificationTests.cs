@@ -685,7 +685,11 @@ public sealed class WorldAndSpacemapSpecificationTests
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
         var sessions = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
-        var outside = await sessions.EnterAsync(Pilot() with { X = 20001, Y = 1300 }, default);
+        var outside = await sessions.EnterAsync(Pilot() with
+        {
+            X = 20001, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
         Assert.That(await sessions.JumpAsync(outside, 101, null, default), Is.Null);
         var inside = await sessions.TeleportAsync(outside.UserId, 1, 20000, 1300, false, default);
         Assert.That(inside, Is.Not.Null);
@@ -726,6 +730,37 @@ public sealed class WorldAndSpacemapSpecificationTests
         clock.Advance(TimeSpan.FromSeconds(10));
         var jump = await replica.JumpAsync(nearPortal!, 101, null, default);
         Assert.That(jump?.Pilot.MapId, Is.EqualTo(2));
+    }
+
+    [Test]
+    public async Task PortalJump_CombatLockAppliesOnlyOnConfiguredMapsAcrossReplicas()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var clock = new AdvancingClock();
+        var restricted = new HashSet<int> { 2 };
+        var first = new WorldSessionStore(cache, mutex, clock: clock,
+            combatRestrictedMaps: restricted);
+        var replica = new WorldSessionStore(cache, mutex, clock: clock,
+            combatRestrictedMaps: restricted);
+        var pilot = await first.EnterAsync(Pilot() with
+        {
+            X = 19500, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+        await first.ApplyNpcDamageAsync(pilot, 10001, 40, default);
+
+        var firstJump = await replica.JumpAsync(pilot, 101, null, default);
+        Assert.That(firstJump?.Pilot.MapId, Is.EqualTo(2));
+        var nearReturn = await first.TeleportAsync(pilot.UserId, 2, 1500, 1300, false, default);
+        Assert.That(nearReturn, Is.Not.Null);
+        Assert.That(await replica.JumpAsync(nearReturn!, 201, null, default), Is.Null);
+        Assert.That(await replica.SavedMapAsync(pilot.UserId, default), Is.EqualTo(2));
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        Assert.That((await first.JumpAsync(nearReturn!, 201, null, default))?.Pilot.MapId,
+            Is.EqualTo(1));
     }
 
     [Test]

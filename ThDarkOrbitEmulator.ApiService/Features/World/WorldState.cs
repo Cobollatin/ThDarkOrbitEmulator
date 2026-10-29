@@ -124,7 +124,8 @@ public sealed record WorldPresence(WorldPilot Pilot, DateTimeOffset SeenAtUtc);
 
 public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex? meshMutex = null,
     IRuntimeVariableRegistry? variables = null, TimeProvider? clock = null, EconomyStore? economy = null,
-    IWorldRepairWallet? repairWallet = null, WorldPortalOperations? portalOperations = null)
+    IWorldRepairWallet? repairWallet = null, WorldPortalOperations? portalOperations = null,
+    IReadOnlySet<int>? combatRestrictedMaps = null)
 {
     public Task<WorldMapInstance> MapAsync(int mapId, CancellationToken ct) => portalOperations is null
         ? Task.FromResult(WorldMapInstance.Starter(mapId)) : portalOperations.MapAsync(mapId, ct);
@@ -1301,7 +1302,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             var jumpRadius = variables is null ? portal.JumpRadius
                 : (int)await variables.NumberAsync("world.portal.jump_radius", ct);
             if (dx * dx + dy * dy > (long)jumpRadius * jumpRadius) return null;
-            if (!WorldMapInstance.IsGate(pilot.MapId) && await PortalCombatLockedAsync(pilot, ct)) return null;
+            if ((combatRestrictedMaps?.Contains(pilot.MapId) ?? !WorldMapInstance.IsGate(pilot.MapId))
+                && await PortalCombatLockedAsync(pilot, ct)) return null;
             var next = pilot with { MapId = portal.DestinationMapId,
                 X = portal.ArrivalX, Y = portal.ArrivalY };
             travel.TryRemove(pilot.UserId, out _);
