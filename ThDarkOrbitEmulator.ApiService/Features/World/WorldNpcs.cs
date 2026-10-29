@@ -763,18 +763,18 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             var map = WorldMapInstance.Starter(mapId);
             // At overlap there is no direction to retreat along; choose the
             // horizontal direction with room inside this map.
-            var x = distance == 0
+            var rawX = distance == 0
                 ? npc.X + (npc.X < map.Width / 2 ? -1 : 1) * (int)Math.Round(step)
                 : npc.X + (int)Math.Round(dx * step / distance);
-            var y = distance == 0 ? npc.Y : npc.Y + (int)Math.Round(dy * step / distance);
-            x = Math.Clamp(x, 0, map.Width);
-            y = Math.Clamp(y, 0, map.Height);
-            if (step < 0 && distance > 0 && x == npc.X && y == npc.Y)
+            var rawY = distance == 0 ? npc.Y : npc.Y + (int)Math.Round(dy * step / distance);
+            var x = Math.Clamp(rawX, 0, map.Width);
+            var y = Math.Clamp(rawY, 0, map.Height);
+            if (step < 0 && distance > 0 && (rawX != x || rawY != y))
             {
-                // A direct retreat can point outside the map. Follow an edge
-                // only when the step increases separation from the pilot.
+                // When the boundary clips a diagonal retreat, an edge step can
+                // use the remaining speed to create more separation.
                 var stride = (int)Math.Round(-step);
-                var bestDistance = target.Distance;
+                var bestDistance = DistanceSquared(x, y, target.Position.X, target.Position.Y);
                 foreach (var (offsetX, offsetY) in new[]
                     { (-stride, 0), (stride, 0), (0, -stride), (0, stride) })
                 {
