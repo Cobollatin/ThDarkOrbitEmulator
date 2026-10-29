@@ -107,7 +107,7 @@ public sealed record WorldPosition(int MapId, int X, int Y);
 public sealed record WorldRuntimeSnapshot(int MapId, int Configuration, long Shield,
     long LastSwitchUnixMilliseconds, WorldTravel? Travel, long? HitPoints = null,
     long LastHazardUnixMilliseconds = 0, bool RadiationWarning = false, bool RepairBotActive = false,
-    string? DeathId = null, bool IsInvisible = false);
+    string? DeathId = null, bool IsInvisible = false, long LastCloakActivationUnixMs = 0);
 public sealed record WorldJumpResult(WorldPilot Pilot, int PortalId, string? TargetNodeId,
     string? TargetTcpHostPort);
 public sealed record WorldSwitchResult(bool Changed, int CooldownRemainingMs, WorldMoveResult? Move);
@@ -644,7 +644,14 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     public async Task<int> CloakCooldownRemainingMsAsync(long userId, CancellationToken ct)
     {
         var saved = await cache.GetStringAsync(CloakCooldownKey(userId), ct);
-        if (!long.TryParse(saved, out var milliseconds)) return 0;
+        if (!long.TryParse(saved, out var milliseconds))
+        {
+            var runtimeJson = await cache.GetStringAsync(RuntimeKey(userId), ct);
+            if (runtimeJson is null) return 0;
+            try { milliseconds = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(runtimeJson)?.LastCloakActivationUnixMs ?? 0; }
+            catch (JsonException) { return 0; }
+            if (milliseconds <= 0) return 0;
+        }
         var remaining = CloakActivationCooldown -
             (combatClock.GetUtcNow() - DateTimeOffset.FromUnixTimeMilliseconds(milliseconds));
         return remaining > TimeSpan.Zero ? (int)Math.Ceiling(remaining.TotalMilliseconds) : 0;
@@ -664,7 +671,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             if (remaining > 0) throw new WorldCloakCooldownException(remaining);
         }
         pilot = pilot with { IsInvisible = active };
-        await PersistRuntimeAsync(pilot, ct, cloakOverride: active);
+        await PersistRuntimeAsync(pilot, ct, cloakOverride: active,
+            cloakActivatedAtUnixMs: active ? combatClock.GetUtcNow().ToUnixTimeMilliseconds() : null);
         if (active)
             await cache.SetStringAsync(CloakCooldownKey(pilot.UserId),
                 combatClock.GetUtcNow().ToUnixTimeMilliseconds().ToString(),
@@ -1286,7 +1294,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     }
 
     private async Task PersistRuntimeAsync(WorldPilot pilot, CancellationToken ct,
-        bool clearDeathId = false, bool? cloakOverride = null)
+        bool clearDeathId = false, bool? cloakOverride = null, long? cloakActivatedAtUnixMs = null)
     {
         var previousJson = await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct);
         WorldRuntimeSnapshot? previous = null;
@@ -1300,7 +1308,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             lastHazards.TryGetValue(pilot.UserId, out var hazard) ? hazard.ToUnixTimeMilliseconds() : 0,
             RadiationWarning(pilot.UserId), RepairBotActive(pilot.UserId),
             clearDeathId ? null : await DeathIdAsync(pilot.UserId, ct),
-            cloakOverride ?? previous?.IsInvisible ?? pilot.IsInvisible)),
+            cloakOverride ?? previous?.IsInvisible ?? pilot.IsInvisible,
+            cloakActivatedAtUnixMs ?? previous?.LastCloakActivationUnixMs ?? 0)),
             new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
     }
 

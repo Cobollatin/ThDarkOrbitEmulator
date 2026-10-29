@@ -3518,6 +3518,33 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task CloakCooldown_SurvivesCooldownKeyEvictionAcrossWorldInstances()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var clock = new AdvancingClock();
+        var first = new WorldSessionStore(cache, mutex, clock: clock);
+        var second = new WorldSessionStore(cache, mutex, clock: clock);
+        var pilot = await first.EnterAsync(Pilot() with
+        {
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+
+        pilot = await first.SetCloakAsync(pilot, true, default);
+        await cache.RemoveAsync($"world:cloak-cooldown:{pilot.UserId}");
+        await second.MarkCombatAsync(pilot, default);
+        await first.MoveAsync(pilot, 3000, 1300, null, default);
+        Assert.That(await second.CloakCooldownRemainingMsAsync(pilot.UserId, default), Is.EqualTo(20_000));
+        Assert.ThrowsAsync<WorldCloakCooldownException>(
+            async () => await second.SetCloakAsync(pilot, true, default));
+
+        clock.Advance(TimeSpan.FromSeconds(20));
+        Assert.That(await second.CloakCooldownRemainingMsAsync(pilot.UserId, default), Is.Zero);
+        Assert.That((await second.SetCloakAsync(pilot, true, default)).IsInvisible, Is.True);
+    }
+
+    [Test]
     public async Task CloakTransitions_NotifyConnectedPilotsOncePerChange()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
