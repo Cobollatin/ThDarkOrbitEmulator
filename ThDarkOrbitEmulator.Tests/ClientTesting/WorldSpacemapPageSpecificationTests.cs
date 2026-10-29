@@ -104,6 +104,18 @@ public sealed class WorldSpacemapPageSpecificationTests
     }
 
     [Test]
+    public void Page_OffersEverySupportedRepairChoiceOnlyWhenEligible()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(Html, Does.Contain("id=\"respawnPortal\" type=\"button\" hidden"));
+            Assert.That(Html, Does.Contain("['respawnPortal','portal','nearest gate']"));
+            Assert.That(Html, Does.Contain("document.getElementById('respawnPortal').hidden=p.hp>0||state.map.id>=101||!state.map.portals.length"));
+            Assert.That(Html, Does.Contain("request('respawn','POST',{location})"));
+        });
+    }
+
+    [Test]
     public void Page_WorldRequestsAreSameOriginNoStoreAndRootedAtWorldBridge()
     {
         Assert.Multiple(() =>
