@@ -1351,18 +1351,20 @@ public class WorldTransportTests
     public async Task RadiationDamagesHullAndStationRepairsWhenStopped()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
-        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var clock = new AdvancingWorldClock();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), clock: clock);
         var pilot = new WorldPilot(120, "mmo", 1, 1, "ship", 0, 0)
-            { Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
+            { X = 0, Y = 1300, Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
         await store.EnterAsync(pilot, default);
-        var now = DateTimeOffset.UtcNow;
-        await store.MoveAsync(pilot, 0, 1300, null, default, now);
-        now = now.AddSeconds(10);
+        var now = clock.GetUtcNow();
         await store.MoveAsync(pilot, -1, 1300, null, default, now);
+        await store.TickRadiationAsync(pilot.MapId, default);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(990));
-        await store.MoveAsync(pilot, -1, 1300, null, default, now.AddSeconds(2));
+        clock.Advance(TimeSpan.FromSeconds(2));
+        now = clock.GetUtcNow();
+        await store.TickRadiationAsync(pilot.MapId, default);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(980));
-        await store.MoveAsync(pilot, 2000, 1300, null, default, now.AddSeconds(3));
+        await store.MoveAsync(pilot, 2000, 1300, null, default, now);
         await store.RepairAtBaseAsync(pilot, now.AddHours(1), default);
         Assert.That(store.CurrentHitPoints(pilot), Is.GreaterThan(980));
     }
@@ -2033,7 +2035,7 @@ public class WorldTransportTests
     }
 
     [Test]
-    public async Task Loopback_NativeMove_ReportsChangedHullAndShieldWithClientRotations()
+    public async Task Loopback_NativeMove_KeepsHullAndReportsChangedShieldWithClientRotations()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
         var sessions = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
@@ -2081,18 +2083,12 @@ public class WorldTransportTests
             {
                 WorldPayload.WriteInt32(w, 2000);
                 WorldPayload.WriteInt32(w, 1300);
-                WorldPayload.WriteInt32(w, -1); // outside the map: one radiation tick
+                WorldPayload.WriteInt32(w, -1); // movement does not advance radiation damage
                 WorldPayload.WriteInt32(w, 1300);
             }));
             Assert.That((await ReadNativeAsync(stream).WaitAsync(TimeSpan.FromSeconds(2))).Module, Is.EqualTo(NativeWorldHandshake.HeroMoveCommand));
             Assert.That((await ReadNativeAsync(stream).WaitAsync(TimeSpan.FromSeconds(2))).Module, Is.EqualTo(NativeWorldHandshake.MoveCommand));
-            var hull = await ReadNativeAsync(stream).WaitAsync(TimeSpan.FromSeconds(2));
-            Assert.That(hull.Module, Is.EqualTo(NativeWorldHandshake.AttributeHitpointUpdate));
-            Assert.That(hull.Payload.Length, Is.EqualTo(8));
-            Assert.That(BitOperations.RotateLeft((uint)BinaryPrimitives.ReadInt32BigEndian(hull.Payload.Span), 7),
-                Is.EqualTo(990));
-            Assert.That(BitOperations.RotateLeft((uint)BinaryPrimitives.ReadInt32BigEndian(hull.Payload.Span[4..]), 10),
-                Is.EqualTo(1000));
+            Assert.That(sessions.CurrentHitPoints(pilot), Is.EqualTo(1000));
             var shield = await ReadNativeAsync(stream).WaitAsync(TimeSpan.FromSeconds(2));
             Assert.That(shield.Module, Is.EqualTo(NativeWorldHandshake.AttributeShieldUpdate));
             Assert.That(shield.Payload.Length, Is.EqualTo(8));
@@ -2766,5 +2762,12 @@ public class WorldTransportTests
     {
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
             base.ReadAsync(buffer[..Math.Min(buffer.Length, chunkSize)], cancellationToken);
+    }
+
+    private sealed class AdvancingWorldClock : TimeProvider
+    {
+        private DateTimeOffset now = DateTimeOffset.UtcNow;
+        public override DateTimeOffset GetUtcNow() => now;
+        public void Advance(TimeSpan duration) => now += duration;
     }
 }

@@ -1045,30 +1045,37 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
-    public async Task Radiation_ThrottlesWithinOneSecond_AndDestroysPilotAtZeroHull()
+    public async Task Radiation_MoveCommandsDoNotAccelerateOneSecondTicks_AndPilotDiesAtZeroHull()
     {
         using var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection()
             .AddDistributedMemoryCache().BuildServiceProvider();
-        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var clock = new AdvancingClock();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), clock: clock);
         var pilot = new WorldPilot(901, "mmo", 1, 1, "ship", 0, 0)
-            { Stats = new WorldShipStats(300, 100, 0, 0, 0, []) };
+            { X = 0, Y = 1300,
+              Stats = new WorldShipStats(300, 100, 0, 0, 0, []) };
         await store.EnterAsync(pilot, default);
-        var now = DateTimeOffset.FromUnixTimeMilliseconds(100_000);
-        await store.MoveAsync(pilot, 0, 1300, null, default, now);
-        now = now.AddSeconds(10);
-
-        await store.MoveAsync(pilot, -1, 1300, null, default, now);
+        await store.MoveAsync(pilot, -1, 1300, null, default, clock.GetUtcNow());
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(100));
+        await store.TickRadiationAsync(pilot.MapId, default);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(99));
-        await store.MoveAsync(pilot, -1, 1300, null, default, now.AddMilliseconds(999));
+        for (var repeat = 0; repeat < 3; repeat++)
+            await store.MoveAsync(pilot, -1, 1300, null, default, clock.GetUtcNow());
+        clock.Advance(TimeSpan.FromMilliseconds(999));
+        await store.TickRadiationAsync(pilot.MapId, default);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(99));
-        await store.MoveAsync(pilot, -1, 1300, null, default, now.AddSeconds(1));
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+        await store.TickRadiationAsync(pilot.MapId, default);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(98));
 
         for (var second = 2; second <= 99; second++)
-            await store.MoveAsync(pilot, -1, 1300, null, default, now.AddSeconds(second));
+        {
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await store.TickRadiationAsync(pilot.MapId, default);
+        }
         Assert.That(store.CurrentHitPoints(pilot), Is.Zero);
         Assert.ThrowsAsync<WorldPilotDestroyedException>(async () =>
-            await store.MoveAsync(pilot, 100, 1300, null, default, now.AddSeconds(100)));
+            await store.MoveAsync(pilot, 100, 1300, null, default, clock.GetUtcNow()));
     }
 
     [Test]
@@ -1087,6 +1094,7 @@ public sealed class WorldAndSpacemapSpecificationTests
         }, default);
 
         await owner.MoveAsync(pilot, -1, 1300, null, default, clock.GetUtcNow());
+        await owner.TickRadiationAsync(pilot.MapId, default);
         Assert.That(owner.CurrentHitPoints(pilot), Is.EqualTo(1));
         clock.Advance(TimeSpan.FromSeconds(1));
         await owner.TickRadiationAsync(pilot.MapId, default);
@@ -1116,6 +1124,7 @@ public sealed class WorldAndSpacemapSpecificationTests
         var owner = new WorldSessionStore(cache, clock: clock);
         pilot = await owner.EnterAsync(pilot, default);
         await owner.MoveAsync(pilot, -1, 1300, null, default, clock.GetUtcNow());
+        await owner.TickRadiationAsync(pilot.MapId, default);
         Assert.That(owner.CurrentHitPoints(pilot), Is.EqualTo(990));
 
         await owner.TickRadiationAsync(pilot.MapId, default);
@@ -1153,6 +1162,7 @@ public sealed class WorldAndSpacemapSpecificationTests
         }, default);
 
         await owner.MoveAsync(pilot, -1, 1300, null, default, clock.GetUtcNow());
+        await owner.TickRadiationAsync(pilot.MapId, default);
         var returnMove = await owner.MoveAsync(pilot, 100, 1300, null, default, clock.GetUtcNow());
         Assert.That(returnMove.RadiationWarning, Is.True);
         Assert.That(owner.RadiationWarning(pilot.UserId), Is.True);
@@ -1310,6 +1320,7 @@ public sealed class WorldAndSpacemapSpecificationTests
         await store.EnterAsync(pilot, default);
         var now = DateTimeOffset.FromUnixTimeMilliseconds(200_000);
         await store.MoveAsync(pilot, -1, 1300, null, default, now);
+        await store.ApplyNpcDamageAsync(pilot, 1, 10, default, shieldAbsorption: 0);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(990));
 
         await store.MoveAsync(pilot, x, 1300, null, default, now);
@@ -1329,6 +1340,7 @@ public sealed class WorldAndSpacemapSpecificationTests
         await store.EnterAsync(pilot, default);
         var now = DateTimeOffset.FromUnixTimeMilliseconds(300_000);
         await store.MoveAsync(pilot, -1, 1300, null, default, now);
+        await store.ApplyNpcDamageAsync(pilot, 1, 10, default, shieldAbsorption: 0);
         await store.MoveAsync(pilot, 2100, 1300, null, default, now);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(990));
         await store.RepairAtBaseAsync(pilot, now.AddMilliseconds(100), default);

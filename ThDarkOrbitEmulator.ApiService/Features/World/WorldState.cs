@@ -1061,9 +1061,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             await cache.SetStringAsync(Key(pilot.UserId), JsonSerializer.Serialize(next),
                 new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
             await PersistRuntimeAsync(pilot, ct);
-            if (warning && atBoundary)
-                await ApplyBoundaryDamageAsync(pilot, now, ct);
-            else await RepairAtBaseAsync(pilot, now, ct);
+            if (!warning)
+                await RepairAtBaseAsync(pilot, now, ct);
             return result with { RadiationWarning = warning };
         }
         finally { gate.Release(); }
