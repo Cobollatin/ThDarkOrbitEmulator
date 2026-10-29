@@ -675,7 +675,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 var respawnY = (int)(((long)(vital.Snapshot?.Y ?? vital.Y ?? spawn.Y) +
                     respawnMap.Height / 3 + 1) % (respawnMap.Height + 1L));
                 vital = new Vital(spawn.Hp, spawn.Shield, false, Guid.Empty,
-                    X: respawnX, Y: respawnY, Generation: vital.Generation + 1);
+                    X: respawnX, Y: respawnY, Generation: vital.Generation + 1,
+                    LastFireUnixMs: vital.LastFireUnixMs);
                 await cache.SetStringAsync(key, JsonSerializer.Serialize(vital), Expiry, ct);
                 observerSnapshots.TryRemove(mapId, out _);
             }

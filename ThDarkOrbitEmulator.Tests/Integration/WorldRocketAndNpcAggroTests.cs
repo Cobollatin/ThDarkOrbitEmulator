@@ -172,7 +172,10 @@ public sealed class WorldRocketAndNpcAggroTests
         var npcs = CreateNpcs(cache, mutex, rewards, clock, options);
         var spawns = await npcs.VisibleAsync(1, default);
         var sessions = new WorldSessionStore(cache, mutex, clock: clock);
-        var pilot = await sessions.EnterAsync(Pilot(spawns[0].X, spawns[0].Y), default);
+        var pilot = await sessions.EnterAsync(Pilot(spawns[0].X, spawns[0].Y) with
+        {
+            Stats = new WorldShipStats(300, 1000, 0, 100, 1, [])
+        }, default);
 
         Assert.That((await npcs.AttackAsync(pilot, spawns[0].Id, sessions, default, rocket: true)).Destroyed,
             Is.True);
@@ -203,6 +206,44 @@ public sealed class WorldRocketAndNpcAggroTests
         Assert.That((await npcs.AttackAsync(pilot, spawns[0].Id, sessions, default, rocket: true)).Destroyed,
             Is.True);
         Assert.That(rewards.LastKey, Is.Not.EqualTo(firstRewardKey));
+    }
+
+    [Test]
+    public async Task NpcRespawn_PreservesFireCooldownAcrossMapOwners()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var options = new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 250, 0, 0, 0, 0, 0, 0)],
+            AggroRange = 1000, NpcFireRange = 1000, NpcDamage = 10,
+            NpcMissChance = 0, NpcFireCooldownSeconds = 5,
+            RespawnSeconds = 1, RocketDamage = 250
+        };
+        var first = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var spawn = (await first.VisibleAsync(1, default)).Single();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var pilot = await sessions.EnterAsync(Pilot(spawn.X, spawn.Y), default);
+
+        await first.TickAggroAsync(1, sessions, default);
+        Assert.That(sessions.CurrentHitPoints(pilot), Is.EqualTo(990));
+        Assert.That((await first.AttackAsync(pilot, spawn.Id, sessions, default, rocket: true)).Destroyed,
+            Is.True);
+
+        var map = WorldMapInstance.Starter(1);
+        var respawnX = (spawn.X + map.Width / 3 + 1) % (map.Width + 1);
+        var respawnY = (spawn.Y + map.Height / 3 + 1) % (map.Height + 1);
+        await sessions.TeleportAsync(pilot.UserId, 1, respawnX, respawnY, false, default);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var second = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        await second.TickAggroAsync(1, sessions, default);
+        Assert.That(sessions.CurrentHitPoints(pilot), Is.EqualTo(990));
+
+        clock.Advance(TimeSpan.FromSeconds(4));
+        await first.TickAggroAsync(1, sessions, default);
+        Assert.That(sessions.CurrentHitPoints(pilot), Is.EqualTo(980));
     }
 
     [Test]
