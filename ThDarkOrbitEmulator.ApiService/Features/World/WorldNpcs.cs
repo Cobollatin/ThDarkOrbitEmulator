@@ -27,6 +27,7 @@ public sealed class WorldNpcOptions
     public int PulseRange { get; set; } = 700;
     public int PulseCooldownSeconds { get; set; } = 30;
     public int LaserCooldownMilliseconds { get; set; } = 1000;
+    public double LaserMissChance { get; set; }
     public int AggroRange { get; set; } = 1200;
     public int NpcStandoffRange { get; set; } = 300;
     public int NpcFireRange { get; set; } = 650;
@@ -393,6 +394,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         WorldNpc? target = null;
         string key;
         var damage = 0;
+        var missed = false;
         var dead = false;
         var retryReward = false;
         var savedGeneration = 0L;
@@ -452,32 +454,41 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 {
                     var multiplier = variables is null ? 1 : await variables.NumberAsync("world.combat.laser_damage_multiplier", ct);
                     damage = Math.Max(1, (int)Math.Round(sessions.ActiveStats(pilot).LaserDamage * multiplier));
+                    missed = Random.Shared.NextDouble() < Math.Clamp(settings.LaserMissChance, 0, 1);
+                    if (missed) damage = 0;
                 }
-                var absorption = variables is null ? 1 : Math.Clamp(
-                    await variables.NumberAsync("world.combat.shield_absorption_ratio", ct), 0, 1);
-                var absorbed = Math.Min(vital.Shield, (int)Math.Round(damage * absorption));
-                var shield = Math.Max(0, vital.Shield - absorbed);
-                var hp = Math.Max(0, vital.Hp - (damage - absorbed));
-                dead = hp == 0;
                 if (!resumePulse) await sessions.MarkCombatAsync(pilot, ct);
-                if (dead)
+                if (missed)
                 {
-                    var adjusted = await RewardAdjustedAsync(npc, ct);
-                    reward = new(adjusted.Credits, adjusted.Uridium,
-                        adjusted.Experience, adjusted.Honor);
+                    target = npc with { Hp = vital.Hp, Shield = vital.Shield };
                 }
-                await cache.SetStringAsync(key, JsonSerializer.Serialize(vital with { Hp = hp, Shield = shield,
-                    Destroyed = dead, Killer = dead ? pilot.AccountId : Guid.Empty,
-                    Reward = reward, Snapshot = dead ? npc : null,
-                    RespawnAtUnixMs = dead ? clock.GetUtcNow().ToUnixTimeMilliseconds() +
-                        Math.Max(1, settings.RespawnSeconds) * 1000L : 0,
-                    LastHitUnixMs = clock.GetUtcNow().ToUnixTimeMilliseconds(),
-                    TargetUserId = !resumePulse && !dead ? pilot.UserId : vital.TargetUserId,
-                    Retaliating = !resumePulse && !dead || vital.Retaliating,
-                    PulseActions = pulseActionId is { } appliedId
-                        ? [.. (vital.PulseActions ?? []), appliedId] : vital.PulseActions }), Expiry, ct);
-                observerSnapshots.TryRemove(pilot.MapId, out _);
-                target = npc with { Hp = hp, Shield = shield };
+                else
+                {
+                    var absorption = variables is null ? 1 : Math.Clamp(
+                        await variables.NumberAsync("world.combat.shield_absorption_ratio", ct), 0, 1);
+                    var absorbed = Math.Min(vital.Shield, (int)Math.Round(damage * absorption));
+                    var shield = Math.Max(0, vital.Shield - absorbed);
+                    var hp = Math.Max(0, vital.Hp - (damage - absorbed));
+                    dead = hp == 0;
+                    if (dead)
+                    {
+                        var adjusted = await RewardAdjustedAsync(npc, ct);
+                        reward = new(adjusted.Credits, adjusted.Uridium,
+                            adjusted.Experience, adjusted.Honor);
+                    }
+                    await cache.SetStringAsync(key, JsonSerializer.Serialize(vital with { Hp = hp, Shield = shield,
+                        Destroyed = dead, Killer = dead ? pilot.AccountId : Guid.Empty,
+                        Reward = reward, Snapshot = dead ? npc : null,
+                        RespawnAtUnixMs = dead ? clock.GetUtcNow().ToUnixTimeMilliseconds() +
+                            Math.Max(1, settings.RespawnSeconds) * 1000L : 0,
+                        LastHitUnixMs = clock.GetUtcNow().ToUnixTimeMilliseconds(),
+                        TargetUserId = !resumePulse && !dead ? pilot.UserId : vital.TargetUserId,
+                        Retaliating = !resumePulse && !dead || vital.Retaliating,
+                        PulseActions = pulseActionId is { } appliedId
+                            ? [.. (vital.PulseActions ?? []), appliedId] : vital.PulseActions }), Expiry, ct);
+                    observerSnapshots.TryRemove(pilot.MapId, out _);
+                    target = npc with { Hp = hp, Shield = shield };
+                }
             }
         }
         // Older cached kills have no reward snapshot; retain their retry behavior.

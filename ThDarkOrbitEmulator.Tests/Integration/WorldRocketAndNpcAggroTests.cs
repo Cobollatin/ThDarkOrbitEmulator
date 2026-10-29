@@ -40,6 +40,35 @@ public sealed class WorldRocketAndNpcAggroTests
     }
 
     [Test]
+    public async Task LaserMiss_DoesNotStopRepeatedFire()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var options = new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 0)],
+            LaserCooldownMilliseconds = 1000, AggroRange = 0, LaserMissChance = 1
+        };
+        var npcs = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var npc = (await npcs.VisibleAsync(1, default)).Single();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var pilot = await sessions.EnterAsync(Pilot(npc.X, npc.Y), default);
+        await npcs.SelectAsync(pilot, npc.Id, default);
+        await npcs.StartLaserAsync(pilot, npc.Id, default);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await npcs.TickLasersAsync(1, sessions, default);
+        Assert.That((await npcs.VisibleAsync(1, default)).Single().Hp, Is.EqualTo(300));
+
+        options.LaserMissChance = 0;
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await npcs.TickLasersAsync(1, sessions, default);
+        Assert.That((await npcs.VisibleAsync(1, default)).Single().Hp, Is.EqualTo(299));
+    }
+
+    [Test]
     public async Task LaserStopsWhenTargetLockChanges()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
