@@ -14,6 +14,7 @@ public sealed record WorldPilot(long UserId, string Company, int MapId, int Hang
 {
     public Guid AccountId { get; init; }
     public bool IsAdmin { get; init; }
+    public bool IsInvisible { get; init; }
     public int FactionId { get; init; }
     public string UserName { get; init; } = string.Empty;
     public WorldShipStats Stats { get; init; } = new(0, 0, 0, 0, 0, []);

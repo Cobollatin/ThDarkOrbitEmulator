@@ -699,7 +699,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             }
             var npc = spawn with { Hp = vital.Hp, Shield = vital.Shield,
                 X = vital.X ?? spawn.X, Y = vital.Y ?? spawn.Y };
-            var eligible = pilots.Where(p => sessions.CurrentHitPoints(p) > 0)
+            var eligible = pilots.Where(p => !p.IsInvisible && sessions.CurrentHitPoints(p) > 0)
                 .Select(p => (Pilot: p, Position: sessions.CurrentPosition(p, now)))
                 .Where(p => !InsidePeaceZone(mapId, p.Position))
                 .Select(p => (p.Pilot, p.Position, Distance: DistanceSquared(npc.X, npc.Y, p.Position.X, p.Position.Y)))

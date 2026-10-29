@@ -845,6 +845,39 @@ public sealed class WorldRocketAndNpcAggroTests
     }
 
     [Test]
+    public async Task AutonomousNpc_SkipsInvisiblePilotAcrossMapOwners()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var options = new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 0)],
+            AggroRange = 1000, NpcFireRange = 1000, NpcDamage = 10,
+            NpcFireCooldownSeconds = 1, NpcMissChance = 0
+        };
+        var first = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var second = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var npc = (await first.VisibleAsync(1, default)).Single();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var invisible = await sessions.EnterAsync(Pilot(npc.X + 50, npc.Y) with
+            { IsInvisible = true }, default);
+        var visible = await sessions.EnterAsync(Pilot(npc.X + 150, npc.Y) with
+            { UserId = 8 }, default);
+
+        await first.TickAggroAsync(1, sessions, default);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await second.TickAggroAsync(1, sessions, default);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sessions.CurrentHitPoints(invisible), Is.EqualTo(1000));
+            Assert.That(sessions.CurrentHitPoints(visible), Is.EqualTo(980));
+        });
+    }
+
+    [Test]
     public async Task AutonomousNpc_KeepsTargetUntilPeaceZoneThenRetargets()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
