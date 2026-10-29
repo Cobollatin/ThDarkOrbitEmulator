@@ -544,32 +544,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     {
         pilot = await RefreshAsync(pilot, ct);
         pilot = await RestorePendingDeathPositionAsync(pilot, ct);
-        if (repairWallet is not null && pilot.AccountId != Guid.Empty
-            && await repairWallet.FindPendingRepairAsync(pilot.AccountId, ct) is { } repair)
-        {
-            var deathId = await repairWallet.FindPendingDeathAsync(pilot.AccountId, ct);
-            if (deathId is not null)
-            {
-                pilot = pilot with { MapId = repair.MapId, X = repair.X, Y = repair.Y };
-                hitPoints[pilot.UserId] = Math.Clamp(repair.HitPoints, 1, ActiveStats(pilot).MaxHitPoints);
-                shields[pilot.UserId] = Math.Clamp(repair.Shield, 0, ActiveStats(pilot).MaxShield);
-                await ClearRepairRuntimeAsync(pilot.UserId, ct);
-                var paid = false;
-                foreach (var paidLocation in new[]
-                         { WorldRespawnLocation.DeathLocation, WorldRespawnLocation.NearestPortal })
-                    if (await repairWallet.FindChargeAsync(pilot.AccountId, paidLocation, deathId, ct)
-                        is { } charge)
-                    {
-                        pilot = pilot with { Uridium = charge.Balance };
-                        paid = true;
-                        break;
-                    }
-                await PersistAsync(pilot, ct);
-                if (!paid) await cache.RemoveAsync(DeathKey(pilot.UserId), ct);
-                await PersistRuntimeAsync(pilot, ct, clearDeathId: !paid);
-                await repairWallet.CompleteDeathAsync(pilot.AccountId, deathId, ct);
-            }
-        }
+        pilot = await CompleteStagedRepairAsync(pilot, ct);
         await ReconcilePendingDeathAsync(pilot, ct);
         if (CurrentHitPoints(pilot) == 0 && repairWallet is not null && pilot.AccountId != Guid.Empty)
         {
@@ -598,6 +573,37 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         return pilot;
     }
 
+    private async Task<WorldPilot> CompleteStagedRepairAsync(WorldPilot pilot, CancellationToken ct)
+    {
+        if (repairWallet is not null && pilot.AccountId != Guid.Empty
+            && await repairWallet.FindPendingRepairAsync(pilot.AccountId, ct) is { } repair)
+        {
+            var deathId = await repairWallet.FindPendingDeathAsync(pilot.AccountId, ct);
+            if (deathId is not null)
+            {
+                pilot = pilot with { MapId = repair.MapId, X = repair.X, Y = repair.Y };
+                hitPoints[pilot.UserId] = Math.Clamp(repair.HitPoints, 1, ActiveStats(pilot).MaxHitPoints);
+                shields[pilot.UserId] = Math.Clamp(repair.Shield, 0, ActiveStats(pilot).MaxShield);
+                await ClearRepairRuntimeAsync(pilot.UserId, ct);
+                var paid = false;
+                foreach (var paidLocation in new[]
+                         { WorldRespawnLocation.DeathLocation, WorldRespawnLocation.NearestPortal })
+                    if (await repairWallet.FindChargeAsync(pilot.AccountId, paidLocation, deathId, ct)
+                        is { } charge)
+                    {
+                        pilot = pilot with { Uridium = charge.Balance };
+                        paid = true;
+                        break;
+                    }
+                await PersistAsync(pilot, ct);
+                if (!paid) await cache.RemoveAsync(DeathKey(pilot.UserId), ct);
+                await PersistRuntimeAsync(pilot, ct, clearDeathId: !paid);
+                await repairWallet.CompleteDeathAsync(pilot.AccountId, deathId, ct);
+            }
+        }
+        return pilot;
+    }
+
     // Read persisted travel/map before a TCP node admits a socket. This does not create presence.
     public async Task<WorldPilot> RestoreAsync(WorldPilot pilot, CancellationToken ct)
     {
@@ -608,6 +614,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             pilot = deathPosition;
             await PersistAsync(pilot, ct);
         }
+        pilot = await CompleteStagedRepairAsync(pilot, ct);
         await ReconcilePendingDeathAsync(pilot, ct);
         return pilot;
     }
