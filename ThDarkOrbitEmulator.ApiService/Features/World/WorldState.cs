@@ -340,7 +340,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 var startedRadiating = !RadiationWarning(pilot.UserId);
                 radiationWarnings[pilot.UserId] = true;
                 await ApplyBoundaryDamageAsync(pilot, combatClock.GetUtcNow(), ct);
-                if (startedRadiating) await SendRadiationWarningAsync(pilot.UserId, true, ct);
+                if (startedRadiating && CurrentHitPoints(pilot) > 0)
+                    await SendRadiationWarningAsync(pilot.UserId, true, ct);
             }
             finally { gate.Release(); }
         }
@@ -1650,6 +1651,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         await cache.SetStringAsync(DeathKey(pilot.UserId), deathId,
             new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
         travel.TryRemove(pilot.UserId, out _);
+        radiationWarnings.TryRemove(pilot.UserId, out _);
         await PersistAsync(pilot, ct);
         if (connected.TryGetValue(pilot.MapId, out var occupants))
             occupants[pilot.UserId] = pilot;

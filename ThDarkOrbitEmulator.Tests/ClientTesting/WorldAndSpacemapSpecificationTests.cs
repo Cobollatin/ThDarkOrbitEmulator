@@ -1280,8 +1280,9 @@ public sealed class WorldAndSpacemapSpecificationTests
     public async Task Radiation_LethalTickReportsOnlyAppliedHullDamage()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
         var clock = new AdvancingClock();
-        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), clock: clock);
+        var store = new WorldSessionStore(cache, clock: clock);
         var pilot = await store.EnterAsync(Pilot() with
         {
             UserId = 912, X = 300, Y = 1300,
@@ -1305,7 +1306,13 @@ public sealed class WorldAndSpacemapSpecificationTests
                     WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r))),
                 Is.EqualTo((pilot.UserId, 5L, 0L, 0L)));
             Assert.That(store.CurrentHitPoints(pilot), Is.Zero);
+            Assert.That(store.RadiationWarning(pilot.UserId), Is.False);
         });
+        Assert.That(await new WorldPacketReader(stream).ReadAsync(), Is.Null);
+        var replica = new WorldSessionStore(cache, clock: clock);
+        var restored = await replica.EnterAsync(pilot, default);
+        Assert.That(replica.CurrentHitPoints(restored), Is.Zero);
+        Assert.That(replica.RadiationWarning(restored.UserId), Is.False);
     }
 
     [TestCase(3000, true)]
