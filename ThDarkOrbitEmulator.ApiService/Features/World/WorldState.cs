@@ -178,11 +178,13 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             var current = pilot;
             var runtimeJson = await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct);
             var runtimeOnAnotherMap = false;
+            var hasRuntimeMap = false;
             if (runtimeJson is not null)
             {
                 try
                 {
                     var runtime = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(runtimeJson);
+                    hasRuntimeMap = runtime is not null;
                     runtimeOnAnotherMap = runtime is not null && runtime.MapId != pilot.MapId;
                     if (runtime?.MapId == pilot.MapId && runtime.IsInvisible != pilot.IsInvisible)
                     {
@@ -195,21 +197,20 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             }
             var saved = await cache.GetStringAsync(Key(pilot.UserId), ct);
             var positionOnAnotherMap = false;
-            var hasSavedPosition = false;
             if (saved is not null)
             {
                 try
                 {
                     var position = JsonSerializer.Deserialize<WorldPosition>(saved);
-                    hasSavedPosition = position is not null;
                     positionOnAnotherMap = position is not null && position.MapId != pilot.MapId;
                 }
                 catch (JsonException) { }
             }
             var hasMapOwner = int.TryParse(await cache.GetStringAsync(MapKey(pilot.UserId), ct), out var ownerMap);
             var mapOnAnotherMap = hasMapOwner && ownerMap != pilot.MapId;
-            if (positionOnAnotherMap || ((!hasSavedPosition || !hasMapOwner) && runtimeOnAnotherMap)
-                || mapOnAnotherMap)
+            // Map ownership is written with transfers; the runtime map is the next
+            // best signal when a prior position is restored out of order.
+            if (hasMapOwner ? mapOnAnotherMap : hasRuntimeMap ? runtimeOnAnotherMap : positionOnAnotherMap)
             {
                 if (connected.TryGetValue(pilot.MapId, out var local))
                     local.TryRemove(pilot.UserId, out _);
@@ -452,12 +453,14 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             var hasMapOwner = int.TryParse(mapText, out var ownerMap);
             if (hasMapOwner && ownerMap != mapId) continue;
             var saved = await cache.GetStringAsync(Key(pilot.UserId), ct);
+            var positionOnAnotherMap = false;
             if (saved is not null)
             {
                 try
                 {
                     var position = JsonSerializer.Deserialize<WorldPosition>(saved);
-                    if (position is null || (hasMapOwner && position.MapId != mapId))
+                    positionOnAnotherMap = position is not null && position.MapId != mapId;
+                    if (position is null || positionOnAnotherMap)
                         saved = null;
                 }
                 catch (JsonException) { saved = null; }
@@ -488,11 +491,13 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 catch (JsonException) { }
             }
             var runtime = await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct);
+            var hasRuntimeMap = false;
             if (runtime is not null)
             {
                 try
                 {
                     var snapshot = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(runtime);
+                    hasRuntimeMap = snapshot is not null;
                     // The runtime map also identifies a completed transfer when the
                     // position key has been evicted but an old roster entry survives.
                     if ((!hasSavedPosition || !hasMapOwner) && snapshot is not null
@@ -502,6 +507,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 }
                 catch (JsonException) { }
             }
+            if (!hasMapOwner && !hasRuntimeMap && positionOnAnotherMap) continue;
             result.Add(pilot);
         }
         return result;
@@ -1209,16 +1215,19 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             // A local socket can lag a transfer performed on another node. Check the
             // shared position even for that socket before announcing map membership.
             var saved = await cache.GetStringAsync(Key(userId));
+            var positionOnAnotherMap = false;
             if (saved is not null)
             {
                 try
                 {
                     var position = JsonSerializer.Deserialize<WorldPosition>(saved);
-                    if (position is null || (hasMapOwner && position.MapId != mapId))
+                    positionOnAnotherMap = position is not null && position.MapId != mapId;
+                    if (position is null || positionOnAnotherMap)
                         saved = null;
                 }
                 catch (JsonException) { saved = null; }
             }
+            var hasRuntimeMap = false;
             if (saved is null || !hasMapOwner)
             {
                 var runtime = await cache.GetStringAsync(RuntimeKey(userId));
@@ -1227,11 +1236,13 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                     try
                     {
                         var snapshot = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(runtime);
+                        hasRuntimeMap = snapshot is not null;
                         if (snapshot is not null && snapshot.MapId != mapId) continue;
                     }
                     catch (JsonException) { }
                 }
             }
+            if (!hasMapOwner && !hasRuntimeMap && positionOnAnotherMap) continue;
             entries.Add(new(presence, saved));
         }
         return new(DateTimeOffset.UtcNow, entries);

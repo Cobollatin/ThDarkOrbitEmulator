@@ -3877,6 +3877,31 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(await cache.GetStringAsync("world:presence:map:1"), Is.EqualTo("{}"));
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task CurrentMapSocket_WithRestoredOldPosition_RemainsPresentOnHeartbeat(bool removeMapOwner)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var first = new WorldSessionStore(cache, mutex);
+        var second = new WorldSessionStore(cache, mutex);
+        var pilot = await first.EnterAsync(Pilot() with { AccountId = Guid.NewGuid() }, default);
+        var oldPosition = await cache.GetStringAsync($"world:position:{pilot.UserId}");
+
+        await second.TeleportAsync(pilot.UserId, 2, 3000, 1300, false, default);
+        var destination = await second.EnterAsync(pilot with { MapId = 2 }, default);
+        Assert.That(destination.MapId, Is.EqualTo(2));
+        await cache.SetStringAsync($"world:position:{pilot.UserId}", oldPosition!);
+        if (removeMapOwner) await cache.RemoveAsync($"world:map:{pilot.UserId}");
+
+        await second.RefreshLocalPresenceAsync(default);
+
+        Assert.That(second.ActivePilotCount, Is.EqualTo(1));
+        Assert.That((await second.ConnectedAsync(2, default)).Single().UserId, Is.EqualTo(pilot.UserId));
+        Assert.That((await second.VisiblePilotsAsync(2, default)).Single().UserId, Is.EqualTo(pilot.UserId));
+    }
+
     [Test]
     public async Task CloakCooldown_SurvivesCooldownKeyEvictionAcrossWorldInstances()
     {
