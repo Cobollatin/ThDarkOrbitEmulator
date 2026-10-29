@@ -7,6 +7,7 @@ public interface IWorldPulseInventory
     Task<PulseChargeResult> ConsumeAsync(Guid accountId, Guid actionId, CancellationToken ct);
     Task<bool> StartAsync(Guid accountId, Guid actionId, int mapId, PulseTarget[] targets, CancellationToken ct);
     Task<PulseActionPlan?> PlanAsync(Guid accountId, Guid actionId, CancellationToken ct);
+    Task<IReadOnlyList<Guid>> StartedAsync(Guid accountId, int mapId, CancellationToken ct);
     Task CompleteAsync(Guid accountId, Guid actionId, CancellationToken ct);
     Task<bool> RefundUnstartedAsync(Guid accountId, Guid actionId, CancellationToken ct);
 }
@@ -24,6 +25,9 @@ public sealed class WorldPulseInventory(EconomyStore economy) : IWorldPulseInven
 
     public Task<PulseActionPlan?> PlanAsync(Guid accountId, Guid actionId, CancellationToken ct) =>
         economy.PulseActionPlanAsync(accountId, actionId, ct);
+
+    public Task<IReadOnlyList<Guid>> StartedAsync(Guid accountId, int mapId, CancellationToken ct) =>
+        economy.StartedPulseActionsAsync(accountId, mapId, ct);
 
     public Task CompleteAsync(Guid accountId, Guid actionId, CancellationToken ct) =>
         economy.CompletePulseActionAsync(accountId, actionId, ct);

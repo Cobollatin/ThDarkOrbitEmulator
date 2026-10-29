@@ -9,11 +9,12 @@ namespace ThDarkOrbitEmulator.ApiService.Features.World;
 public sealed class WorldNpcSimulationService(WorldNpcs npcs, WorldSessionStore sessions,
     IServerMeshRegistry registry, IOptions<ClusterOptions> cluster,
     IRuntimeVariableRegistry? variables = null, WorldCollectibles? collectibles = null,
-    WorldAdminEvents? adminEvents = null) : BackgroundService
+    WorldAdminEvents? adminEvents = null, ILogger<WorldNpcSimulationService>? logger = null) : BackgroundService
 {
     private readonly Dictionary<int, HashSet<int>> known = [];
     private readonly Dictionary<int, HashSet<int>> knownBoxes = [];
     private DateTimeOffset lastAnnouncement;
+    private DateTimeOffset lastPulseReconciliation;
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -34,6 +35,7 @@ public sealed class WorldNpcSimulationService(WorldNpcs npcs, WorldSessionStore 
                 ? $"{Environment.MachineName}-{Environment.ProcessId}" : cluster.Value.NodeId;
             var owned = snapshot.Leases.Where(l => l.NodeId == nodeId && l.ExpiresAtUtc > DateTimeOffset.UtcNow)
                 .Select(l => l.MapId).ToHashSet();
+            var reconcilePulses = DateTimeOffset.UtcNow - lastPulseReconciliation >= TimeSpan.FromSeconds(30);
             foreach (var mapId in known.Keys.Where(id => !owned.Contains(id)).ToArray())
             { known.Remove(mapId); knownBoxes.Remove(mapId); }
             foreach (var lease in snapshot.Leases.Where(l => l.NodeId == nodeId && l.ExpiresAtUtc > DateTimeOffset.UtcNow))
@@ -43,6 +45,14 @@ public sealed class WorldNpcSimulationService(WorldNpcs npcs, WorldSessionStore 
                     var fence = new WorldLeaseFence(registry, nodeId, lease.Epoch);
                     await npcs.TickAggroAsync(lease.MapId, sessions, stoppingToken, fence);
                     await npcs.TickLasersAsync(lease.MapId, sessions, stoppingToken, fence);
+                    if (reconcilePulses)
+                    {
+                        try { await npcs.ReconcileStartedPulsesAsync(lease.MapId, sessions, stoppingToken, fence); }
+                        catch (WorldLeaseLostException) { throw; }
+                        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { throw; }
+                        catch (Exception ex)
+                        { logger?.LogWarning(ex, "Pulse reconciliation failed for map {MapId}", lease.MapId); }
+                    }
                     await sessions.RecoverShieldsAsync(lease.MapId, stoppingToken, fence);
                     await sessions.RecoverHullAsync(lease.MapId, stoppingToken, fence);
                 }
@@ -67,6 +77,7 @@ public sealed class WorldNpcSimulationService(WorldNpcs npcs, WorldSessionStore 
                         await sessions.BroadcastBoxSpawnAsync(lease.MapId, box, stoppingToken);
                 }
             }
+            if (reconcilePulses) lastPulseReconciliation = DateTimeOffset.UtcNow;
         }
     }
 }

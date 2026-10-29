@@ -1693,8 +1693,7 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(inventory.Remaining, Is.Zero);
         var vitalKey = $"world:npc:v2:1:{spawn[0].Id}";
         Assert.That(await cache.GetStringAsync(vitalKey), Does.Contain(actionId.ToString()));
-        var resumed = await second.PulseAsync(pilot, sessions, default, actionId: actionId);
-        Assert.That(resumed.Status, Is.EqualTo("hit"));
+        await second.ReconcileStartedPulsesAsync(pilot.MapId, sessions, default);
         Assert.That(inventory.Started, Is.EqualTo(1));
         Assert.That(inventory.Completed, Is.EqualTo(1));
         Assert.That(rewards.Calls, Is.EqualTo(3));
@@ -1891,6 +1890,10 @@ public sealed class WorldAndSpacemapSpecificationTests
 
         public Task<PulseActionPlan?> PlanAsync(Guid accountId, Guid actionId, CancellationToken ct) =>
             Task.FromResult(plans.GetValueOrDefault(actionId));
+
+        public Task<IReadOnlyList<Guid>> StartedAsync(Guid accountId, int mapId, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<Guid>>(plans.Where(entry => entry.Value.Status == "started" &&
+                entry.Value.MapId == mapId).Select(entry => entry.Key).ToArray());
 
         public Task CompleteAsync(Guid accountId, Guid actionId, CancellationToken ct)
         {

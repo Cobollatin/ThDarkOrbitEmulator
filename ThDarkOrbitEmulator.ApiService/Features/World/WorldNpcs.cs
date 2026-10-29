@@ -329,6 +329,23 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         return new("hit", hits);
     }
 
+    // The lease owner resumes durable actions for pilots still present on this map.
+    // PulseAsync reuses the saved target plan and never consumes another charge.
+    public async Task ReconcileStartedPulsesAsync(int mapId, WorldSessionStore sessions,
+        CancellationToken ct, WorldLeaseFence? fence = null)
+    {
+        if (pulseInventory is null || WorldMapInstance.IsGate(mapId)) return;
+        foreach (var pilot in await sessions.VisiblePilotsAsync(mapId, ct))
+        {
+            if (pilot.AccountId == Guid.Empty) continue;
+            foreach (var actionId in await pulseInventory.StartedAsync(pilot.AccountId, mapId, ct))
+            {
+                await WorldSessionStore.CheckLeaseAsync(mapId, fence, ct);
+                await PulseAsync(pilot, sessions, ct, fence, mapId, actionId);
+            }
+        }
+    }
+
     private async Task ClearCompletedPulseActionAsync(int mapId, PulseTarget[] targets,
         Guid actionId, CancellationToken ct)
     {

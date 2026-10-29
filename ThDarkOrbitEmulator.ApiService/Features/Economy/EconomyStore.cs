@@ -981,6 +981,24 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
         return new PulseActionPlan(row.GetString(0), row.GetInt32(1), targets);
     }
 
+    public async Task<IReadOnlyList<Guid>> StartedPulseActionsAsync(Guid accountId, int mapId,
+        CancellationToken ct)
+    {
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand("""
+            SELECT action_id FROM economy.pulse_actions
+            WHERE account_id=@a AND map_id=@m AND status='started'
+            ORDER BY created_at LIMIT 16
+            """, db);
+        cmd.Parameters.AddWithValue("a", accountId);
+        cmd.Parameters.AddWithValue("m", mapId);
+        var actions = new List<Guid>();
+        await using var rows = await cmd.ExecuteReaderAsync(ct);
+        while (await rows.ReadAsync(ct)) actions.Add(rows.GetGuid(0));
+        return actions;
+    }
+
     public async Task CompletePulseActionAsync(Guid accountId, Guid actionId, CancellationToken ct)
     {
         await using var db = Connection();
