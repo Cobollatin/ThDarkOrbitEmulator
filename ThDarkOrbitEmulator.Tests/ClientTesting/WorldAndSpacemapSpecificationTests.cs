@@ -1691,11 +1691,14 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await first.PulseAsync(pilot, sessions, default, actionId: actionId));
         Assert.That(inventory.Remaining, Is.Zero);
+        var vitalKey = $"world:npc:v2:1:{spawn[0].Id}";
+        Assert.That(await cache.GetStringAsync(vitalKey), Does.Contain(actionId.ToString()));
         var resumed = await second.PulseAsync(pilot, sessions, default, actionId: actionId);
         Assert.That(resumed.Status, Is.EqualTo("hit"));
         Assert.That(inventory.Started, Is.EqualTo(1));
         Assert.That(inventory.Completed, Is.EqualTo(1));
         Assert.That(rewards.Calls, Is.EqualTo(3));
+        Assert.That(await cache.GetStringAsync(vitalKey), Does.Not.Contain(actionId.ToString()));
         Assert.That((await second.PulseAsync(pilot, sessions, default, actionId: actionId)).Status,
             Is.EqualTo("duplicate"));
     }
@@ -1726,8 +1729,11 @@ public sealed class WorldAndSpacemapSpecificationTests
         var actionId = Guid.NewGuid();
         Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await first.PulseAsync(pilot, sessions, default, actionId: actionId));
+        var vitalKey = $"world:npc:v2:1:{spawn.Id}";
+        Assert.That(await cache.GetStringAsync(vitalKey), Does.Contain(actionId.ToString()));
         clock.Advance(TimeSpan.FromSeconds(1));
         await second.TickAggroAsync(1, sessions, default);
+        Assert.That(await cache.GetStringAsync(vitalKey), Does.Not.Contain(actionId.ToString()));
         var recovered = (await second.VisibleAsync(1, default)).Single(n => n.Id == spawn.Id);
         Assert.That(recovered.Hp, Is.EqualTo(spawn.Hp));
 

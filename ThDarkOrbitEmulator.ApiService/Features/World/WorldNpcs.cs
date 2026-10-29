@@ -322,8 +322,30 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             if (hit.Status == "hit") hits.Add(hit);
         }
         if (pulseInventory is not null)
+        {
             await pulseInventory.CompleteAsync(pilot.AccountId, pulseActionId, ct);
+            await ClearCompletedPulseActionAsync(pilot.MapId, targets, pulseActionId, ct);
+        }
         return new("hit", hits);
+    }
+
+    private async Task ClearCompletedPulseActionAsync(int mapId, PulseTarget[] targets,
+        Guid actionId, CancellationToken ct)
+    {
+        await using var held = await mutex.AcquireAsync(ct);
+        foreach (var target in targets)
+        {
+            var key = Key(mapId, target.Id);
+            var stored = await cache.GetStringAsync(key, ct);
+            if (stored is null) continue;
+            var vital = JsonSerializer.Deserialize<Vital>(stored)!;
+            if (vital.Generation != target.Generation ||
+                vital.PulseActions?.Contains(actionId) != true) continue;
+            await cache.SetStringAsync(key, JsonSerializer.Serialize(vital with
+            {
+                PulseActions = vital.PulseActions.Where(id => id != actionId).ToArray()
+            }), Expiry, ct);
+        }
     }
 
     public async Task<WorldNpcAttack> AttackAsync(WorldPilot pilot, int npcId,
@@ -457,7 +479,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 if (vital.RespawnAtUnixMs == 0 || now.ToUnixTimeMilliseconds() < vital.RespawnAtUnixMs)
                     continue;
                 vital = new Vital(spawn.Hp, spawn.Shield, false, Guid.Empty,
-                    Generation: vital.Generation + 1, PulseActions: vital.PulseActions);
+                    Generation: vital.Generation + 1);
                 await cache.SetStringAsync(key, JsonSerializer.Serialize(vital), Expiry, ct);
                 observerSnapshots.TryRemove(mapId, out _);
             }
