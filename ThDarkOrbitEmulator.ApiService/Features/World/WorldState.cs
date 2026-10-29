@@ -829,8 +829,23 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     }
 
     // A remote admin can teleport a pilot while this process still holds the old TCP socket.
+    // The independently written map key takes precedence if a stale position is restored.
     public async Task<int?> SavedMapAsync(long userId, CancellationToken ct)
     {
+        if (int.TryParse(await cache.GetStringAsync(MapKey(userId), ct), out var ownerMap)
+            && (ownerMap is >= 1 and <= 16 || WorldMapInstance.IsGate(ownerMap)))
+            return ownerMap;
+        var runtimeJson = await cache.GetStringAsync(RuntimeKey(userId), ct);
+        if (runtimeJson is not null)
+        {
+            try
+            {
+                var runtime = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(runtimeJson);
+                if (runtime is not null && (runtime.MapId is >= 1 and <= 16
+                    || WorldMapInstance.IsGate(runtime.MapId))) return runtime.MapId;
+            }
+            catch (JsonException) { }
+        }
         var saved = await cache.GetStringAsync(Key(userId), ct);
         if (saved is null) return null;
         try
