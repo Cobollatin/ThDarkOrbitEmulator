@@ -55,6 +55,7 @@ builder.Services.AddSingleton<LocalHangarStore>();
 builder.Services.AddSingleton<ThDarkOrbitEmulator.ApiService.Features.UnityApi.Login.CockpitCatalogStore>();
 builder.Services.AddSingleton<LocalHangarEquipmentStore>();
 builder.Services.AddSingleton<EconomyStore>();
+builder.Services.AddSingleton<IWorldRepairWallet, WorldRepairWallet>();
 builder.Services.AddSingleton<ThDarkOrbitEmulator.ApiService.Features.Backoffice.Progression.ProgressionBackofficeStore>();
 builder.Services.Configure<WorldServerOptions>(builder.Configuration.GetSection(WorldServerOptions.SectionName));
 builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<WorldServerOptions>>().Value);

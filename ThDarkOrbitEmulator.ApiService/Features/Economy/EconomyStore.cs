@@ -2,6 +2,7 @@ using System.Text.Json;
 using Npgsql;
 using ThDarkOrbitEmulator.ApiService.Features.IndexInternal.InternalStart;
 using ThDarkOrbitEmulator.ApiService.Features.World.Admin;
+using ThDarkOrbitEmulator.ApiService.Features.World;
 
 namespace ThDarkOrbitEmulator.ApiService.Features.Economy;
 
@@ -1261,6 +1262,46 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
         var applied = await ChangeBalanceAsync(db, tx, accountId, assetId, delta, reason, menuSource, key, ct, adminActorSubject);
         if (applied) await tx.CommitAsync(ct);
         return applied;
+    }
+
+    public async Task<WorldRepairPayment> ChargeRepairAsync(Guid accountId, int price, string key, CancellationToken ct)
+    {
+        if (accountId == Guid.Empty || price <= 0 || string.IsNullOrWhiteSpace(key))
+            return new(WorldRepairCharge.InsufficientFunds, 0);
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var tx = await db.BeginTransactionAsync(ct);
+        await LockAccountAsync(db, tx, accountId, ct);
+        await using (var existing = new NpgsqlCommand(
+            "SELECT delta,balance_after FROM economy.ledger WHERE account_id=@a AND idempotency_key=@k AND reason='world_repair' AND asset_id='uridium'", db, tx))
+        {
+            existing.Parameters.AddWithValue("a", accountId);
+            existing.Parameters.AddWithValue("k", key);
+            await using var reader = await existing.ExecuteReaderAsync(ct);
+            if (await reader.ReadAsync(ct))
+            {
+                var matches = reader.GetInt64(0) == -price;
+                await reader.DisposeAsync();
+                return matches ? new(WorldRepairCharge.AlreadyCharged,
+                    await CurrentBalanceAsync(db, tx, accountId, "uridium", ct))
+                    : new(WorldRepairCharge.InsufficientFunds, 0);
+            }
+        }
+        if (!await ChangeBalanceAsync(db, tx, accountId, "uridium", -price,
+            "world_repair", "world", key, ct)) return new(WorldRepairCharge.InsufficientFunds, 0);
+        var balance = await CurrentBalanceAsync(db, tx, accountId, "uridium", ct);
+        await tx.CommitAsync(ct);
+        return new(WorldRepairCharge.Applied, balance);
+    }
+
+    private static async Task<long> CurrentBalanceAsync(NpgsqlConnection db, NpgsqlTransaction tx,
+        Guid accountId, string assetId, CancellationToken ct)
+    {
+        await using var cmd = new NpgsqlCommand(
+            "SELECT amount FROM economy.balances WHERE account_id=@a AND asset_id=@s", db, tx);
+        cmd.Parameters.AddWithValue("a", accountId);
+        cmd.Parameters.AddWithValue("s", assetId);
+        return (long?)await cmd.ExecuteScalarAsync(ct) ?? 0;
     }
 
     public async Task<int> NpcKillsAsync(Guid accountId, CancellationToken ct, string? kind = null)

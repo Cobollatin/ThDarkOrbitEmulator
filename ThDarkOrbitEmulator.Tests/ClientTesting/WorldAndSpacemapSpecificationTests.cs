@@ -1335,6 +1335,42 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(replica.CurrentHitPoints(second!), Is.EqualTo(100));
     }
 
+    [TestCase(WorldRespawnLocation.DeathLocation, 30, 300)]
+    [TestCase(WorldRespawnLocation.NearestPortal, 15, 200)]
+    public async Task PilotDestruction_PaidRepairRequiresFundsAndChargesOncePerLife(
+        WorldRespawnLocation location, int cooldownSeconds, int price)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingClock();
+        var wallet = new TestRepairWallet { CanPay = false };
+        var store = new WorldSessionStore(cache, clock: clock, repairWallet: wallet);
+        var replica = new WorldSessionStore(cache, clock: clock, repairWallet: wallet);
+        var pilot = await store.EnterAsync(Pilot() with
+        {
+            UserId = 1000 + cooldownSeconds, AccountId = Guid.NewGuid(), MapId = 2,
+            FactionId = 1, X = 5000, Y = 5000, Uridium = 1000,
+            Stats = new WorldShipStats(300, 1000, 100, 0, 100, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0);
+        Assert.That(await replica.RespawnAsync(pilot, location, default), Is.Null);
+        Assert.That(wallet.Keys, Is.Empty);
+
+        wallet.CanPay = true;
+        var first = await replica.RespawnAsync(pilot, location, default);
+        Assert.That(first, Is.Not.Null);
+        Assert.That(first!.Uridium, Is.EqualTo(1000 - price));
+        Assert.That(await store.RespawnAsync(first, location, default), Is.Null);
+        Assert.That(wallet.Keys, Has.Count.EqualTo(1));
+
+        await store.ApplyNpcDamageAsync(first, 1, 1200, default, shieldAbsorption: 0);
+        clock.Advance(TimeSpan.FromSeconds(cooldownSeconds));
+        var second = await replica.RespawnAsync(first, location, default);
+        Assert.That(second, Is.Not.Null);
+        Assert.That(wallet.Keys, Has.Count.EqualTo(2));
+        Assert.That(wallet.Keys[1], Is.Not.EqualTo(wallet.Keys[0]));
+    }
+
     [TestCase("0", 0)]
     [TestCase("1000000", 1000000)]
     [TestCase("-1", 150)]
@@ -1710,6 +1746,20 @@ public sealed class WorldAndSpacemapSpecificationTests
         }
 
         public Task<long> CargoUsedAsync(Guid accountId, CancellationToken ct) => Task.FromResult(CargoUsed);
+    }
+
+    private sealed class TestRepairWallet : IWorldRepairWallet
+    {
+        public bool CanPay { get; set; }
+        public List<string> Keys { get; } = [];
+        public Task<WorldRepairPayment> ChargeAsync(Guid accountId, WorldRespawnLocation location,
+            string deathId, CancellationToken ct)
+        {
+            if (!CanPay) return Task.FromResult(new WorldRepairPayment(WorldRepairCharge.InsufficientFunds, 0));
+            if (Keys.Contains(deathId)) return Task.FromResult(new WorldRepairPayment(WorldRepairCharge.AlreadyCharged, 1000 - WorldRepairWallet.Price(location)));
+            Keys.Add(deathId);
+            return Task.FromResult(new WorldRepairPayment(WorldRepairCharge.Applied, 1000 - WorldRepairWallet.Price(location)));
+        }
     }
 
     private sealed class TestMutex : IServerMeshMutex

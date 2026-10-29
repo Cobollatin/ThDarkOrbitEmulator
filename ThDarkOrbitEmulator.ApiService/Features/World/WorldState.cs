@@ -117,7 +117,8 @@ public sealed class WorldConfigurationCooldownException(int remainingMs) : Excep
 public sealed record WorldPresence(WorldPilot Pilot, DateTimeOffset SeenAtUtc);
 
 public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex? meshMutex = null,
-    IRuntimeVariableRegistry? variables = null, TimeProvider? clock = null, EconomyStore? economy = null)
+    IRuntimeVariableRegistry? variables = null, TimeProvider? clock = null, EconomyStore? economy = null,
+    IWorldRepairWallet? repairWallet = null)
 {
     private readonly TimeProvider combatClock = clock ?? TimeProvider.System;
     private readonly ConcurrentDictionary<int, ConcurrentDictionary<long, WorldPilot>> connected = new();
@@ -178,6 +179,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private static string Key(long userId) => $"world:position:{userId}";
     private static string RuntimeKey(long userId) => $"world:runtime:{userId}";
     private static string CombatKey(long userId) => $"world:combat:{userId}";
+    private static string DeathKey(long userId) => $"world:death:{userId}";
     private static string RespawnCooldownKey(long userId, WorldRespawnLocation location) =>
         $"world:respawn-cooldown:{userId}:{location}";
     private static string ShieldRecoveryKey(long userId) => $"world:shield-recovery:{userId}";
@@ -1139,6 +1141,20 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                     && combatClock.GetUtcNow() - DateTimeOffset.FromUnixTimeMilliseconds(milliseconds) < cooldown)
                     return null;
             }
+            if (cooldown > TimeSpan.Zero && repairWallet is not null)
+            {
+                if (pilot.AccountId == Guid.Empty) return null;
+                var deathId = await cache.GetStringAsync(DeathKey(pilot.UserId), ct);
+                if (deathId is null)
+                {
+                    deathId = Guid.NewGuid().ToString("N");
+                    await cache.SetStringAsync(DeathKey(pilot.UserId), deathId,
+                        new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
+                }
+                var payment = await repairWallet.ChargeAsync(pilot.AccountId, location, deathId, ct);
+                if (payment.Charge == WorldRepairCharge.InsufficientFunds) return null;
+                pilot = pilot with { Uridium = payment.Balance };
+            }
             var baseMapId = (Math.Clamp(pilot.FactionId, 1, 4) - 1) * 4 + 1;
             var station = WorldMapInstance.Starter(baseMapId).HomeStation;
             var respawned = location switch
@@ -1160,6 +1176,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 await cache.SetStringAsync(RespawnCooldownKey(pilot.UserId, location),
                     combatClock.GetUtcNow().ToUnixTimeMilliseconds().ToString(),
                     new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = cooldown }, ct);
+            await cache.RemoveAsync(DeathKey(pilot.UserId), ct);
             await WritePresenceAsync(pilot, false, ct);
             await WritePresenceAsync(respawned, true, ct);
             if (connected.TryGetValue(pilot.MapId, out var old)) old.TryRemove(pilot.UserId, out _);
@@ -1362,6 +1379,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         hitPoints[pilot.UserId] = Math.Max(0, CurrentHitPoints(pilot) - (damage - absorbed));
         if (hitPoints[pilot.UserId] == 0)
         {
+            await cache.SetStringAsync(DeathKey(pilot.UserId), Guid.NewGuid().ToString("N"),
+                new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
             var (x, y) = CurrentPosition(pilot);
             pilot = pilot with { X = x, Y = y };
             travel.TryRemove(pilot.UserId, out _);
