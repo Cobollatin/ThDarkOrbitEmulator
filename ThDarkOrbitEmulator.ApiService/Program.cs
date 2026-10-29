@@ -146,6 +146,7 @@ app.MapEconomyAdmin();
 ThDarkOrbitEmulator.ApiService.Features.UnityApi.Login.CockpitCatalogEndpoints.MapCockpitCatalog(app);
 ThDarkOrbitEmulator.ApiService.Features.UnityApi.Login.UnityConfigRoutes.MapUnityConfigRoutes(app);
 ThDarkOrbitEmulator.ApiService.Features.Backoffice.Progression.ProgressionBackofficeEndpoints.MapProgressionBackoffice(app);
+ThDarkOrbitEmulator.ApiService.Features.World.WorldPortalOperationEndpoints.MapWorldPortalOperations(app);
 WorldHttpBridge.Map(app);
 
 app.Run();
