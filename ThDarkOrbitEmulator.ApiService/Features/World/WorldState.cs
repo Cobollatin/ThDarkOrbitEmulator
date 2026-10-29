@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Configuration;
 using ThDarkOrbitEmulator.ApiService.Features.World.Mesh;
 using ThDarkOrbitEmulator.ApiService.Features.Economy;
 using ThDarkOrbitEmulator.ApiService.Features.IndexInternal.InternalStart;
@@ -130,8 +131,12 @@ public sealed record WorldPresence(WorldPilot Pilot, DateTimeOffset SeenAtUtc);
 public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex? meshMutex = null,
     IRuntimeVariableRegistry? variables = null, TimeProvider? clock = null, EconomyStore? economy = null,
     IWorldRepairWallet? repairWallet = null, WorldPortalOperations? portalOperations = null,
-    IReadOnlySet<int>? combatRestrictedMaps = null, IReadOnlySet<int>? cloakBlockedMaps = null)
+    IReadOnlySet<int>? combatRestrictedMaps = null, IReadOnlySet<int>? cloakBlockedMaps = null,
+    IConfiguration? configuration = null)
 {
+    private readonly IReadOnlySet<int> configuredCloakBlockedMaps = cloakBlockedMaps
+        ?? configuration?.GetSection("World:CloakBlockedMaps").Get<int[]>()?.ToHashSet()
+        ?? new HashSet<int>();
     public Task<WorldMapInstance> MapAsync(int mapId, CancellationToken ct) => portalOperations is null
         ? Task.FromResult(WorldMapInstance.Starter(mapId)) : portalOperations.MapAsync(mapId, ct);
     private readonly TimeProvider combatClock = clock ?? TimeProvider.System;
@@ -642,7 +647,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         if (pilot.IsInvisible == active) return pilot;
         if (active)
         {
-            if (cloakBlockedMaps?.Contains(pilot.MapId) == true)
+            if (configuredCloakBlockedMaps.Contains(pilot.MapId))
                 throw new WorldCloakBlockedException();
             var saved = await cache.GetStringAsync(CloakCooldownKey(pilot.UserId), ct);
             if (long.TryParse(saved, out var milliseconds))

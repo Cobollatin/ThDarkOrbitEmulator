@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using ThDarkOrbitEmulator.ApiService.Features.Economy;
 using ThDarkOrbitEmulator.ApiService.Features.IndexInternal.InternalStart;
@@ -3429,6 +3430,28 @@ public sealed class WorldAndSpacemapSpecificationTests
             Assert.That(rewards.Calls, Is.EqualTo(2));
             Assert.That(rewards.LastCredited, Is.EqualTo(spawn));
         });
+    }
+
+    [Test]
+    public async Task CloakActivation_UsesConfiguredBlockedMaps()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["World:CloakBlockedMaps:0"] = "1" }).Build();
+        var sessions = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(),
+            new TestMutex(), configuration: configuration);
+        var pilot = await sessions.EnterAsync(Pilot() with
+        {
+            X = 10000, Y = 6000,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+
+        Assert.ThrowsAsync<WorldCloakBlockedException>(
+            async () => await sessions.SetCloakAsync(pilot, true, default));
+        Assert.That(await services.GetRequiredService<IDistributedCache>()
+            .GetStringAsync($"world:cloak-cooldown:{pilot.UserId}"), Is.Null);
+        var allowed = await sessions.EnterAsync(pilot with { UserId = pilot.UserId + 1, MapId = 2 }, default);
+        Assert.That((await sessions.SetCloakAsync(allowed, true, default)).IsInvisible, Is.True);
     }
 
     [Test]
