@@ -733,13 +733,16 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                     var patrolDistance = Math.Sqrt((double)patrolDx * patrolDx + (double)patrolDy * patrolDy);
                     var patrolStep = Math.Min(patrolDistance, Math.Max(0, patrolSpeed) * patrolElapsed);
                     var reached = patrolStep >= patrolDistance;
+                    var nextX = reached ? goalX : npc.X + (int)Math.Round(patrolDx * patrolStep / patrolDistance);
+                    var nextY = reached ? goalY : npc.Y + (int)Math.Round(patrolDy * patrolStep / patrolDistance);
+                    var subpixelPatrol = patrolStep > 0 && !reached && nextX == npc.X && nextY == npc.Y;
                     vital = vital with
                     {
-                        X = reached ? goalX : npc.X + (int)Math.Round(patrolDx * patrolStep / patrolDistance),
-                        Y = reached ? goalY : npc.Y + (int)Math.Round(patrolDy * patrolStep / patrolDistance),
+                        X = nextX,
+                        Y = nextY,
                         TargetUserId = 0,
                         Retaliating = false,
-                        LastStepUnixMs = nowMs,
+                        LastStepUnixMs = subpixelPatrol ? vital.LastStepUnixMs : nowMs,
                         PatrolOriginX = originX,
                         PatrolOriginY = originY,
                         PatrolOutbound = reached ? !outbound : outbound

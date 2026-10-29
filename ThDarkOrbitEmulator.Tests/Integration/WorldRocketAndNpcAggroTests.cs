@@ -246,6 +246,34 @@ public sealed class WorldRocketAndNpcAggroTests
     }
 
     [Test]
+    public async Task IdleNpc_AccumulatesSubpixelPatrolAcrossMapOwners()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var options = new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 1)],
+            AggroRange = 0
+        };
+        var first = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var second = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+
+        await first.TickAggroAsync(1, sessions, default);
+        var initial = (await first.VisibleAsync(1, default)).Single();
+        for (var tick = 0; tick < 20; tick++)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+            await (tick % 2 == 0 ? second : first).TickAggroAsync(1, sessions, default);
+        }
+
+        var advanced = (await second.VisibleAsync(1, default)).Single();
+        Assert.That((advanced.X, advanced.Y), Is.Not.EqualTo((initial.X, initial.Y)));
+    }
+
+    [Test]
     public async Task NpcRespawn_PreservesFireCooldownAcrossMapOwners()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
