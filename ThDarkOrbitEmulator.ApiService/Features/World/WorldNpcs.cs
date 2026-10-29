@@ -768,7 +768,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             var speed = template?.Speed ?? 0;
             // A newly acquired pilot starts a pursuit now; idle patrol time or
             // time spent following another pilot cannot fund its first step.
-            var elapsed = vital.TargetUserId != target.Pilot.UserId || vital.LastStepUnixMs == 0
+            var newlyAcquired = vital.TargetUserId != target.Pilot.UserId;
+            var elapsed = newlyAcquired || vital.LastStepUnixMs == 0
                 ? 1d : Math.Clamp((nowMs - vital.LastStepUnixMs) / 1000d, 0, 5);
             var maxStep = Math.Max(0, speed) * elapsed;
             var step = Math.Clamp(distance - Math.Max(0, settings.NpcStandoffRange),
@@ -815,7 +816,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 Math.Max(1, settings.NpcFireCooldownSeconds) * 1000L;
             vital = vital with { X = x, Y = y, TargetUserId = target.Pilot.UserId,
                 Retaliating = vital.Retaliating && vital.TargetUserId == target.Pilot.UserId,
-                LastStepUnixMs = subpixelStep ? vital.LastStepUnixMs : nowMs,
+                LastStepUnixMs = subpixelStep && !newlyAcquired ? vital.LastStepUnixMs : nowMs,
                 LastFireUnixMs = fire ? now.ToUnixTimeMilliseconds() : vital.LastFireUnixMs,
                 PatrolOriginX = vital.PatrolOriginX ?? spawn.X,
                 PatrolOriginY = vital.PatrolOriginY ?? spawn.Y };
