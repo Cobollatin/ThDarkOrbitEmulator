@@ -619,6 +619,7 @@ public static class WorldHttpBridge
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         { context.Response.StatusCode = 400; return; }
         try { pilot = await sessions.SetCloakAsync(pilot, active, ct); }
+        catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
         catch (WorldPilotDestroyedException)
         { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "destroyed_pilot" }, ct); return; }
         catch (WorldCloakBlockedException)

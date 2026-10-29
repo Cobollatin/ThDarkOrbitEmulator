@@ -3479,6 +3479,33 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task CloakActivation_FromPreviousMap_DoesNotChangeTransferredPilot()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var oldMap = new WorldSessionStore(cache, mutex);
+        var destination = new WorldSessionStore(cache, mutex);
+        var stale = await oldMap.EnterAsync(Pilot() with
+        {
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+
+        await destination.TeleportAsync(stale.UserId, 2, 3000, 1300, false, default);
+
+        Assert.ThrowsAsync<WorldMapChangedException>(
+            async () => await oldMap.SetCloakAsync(stale, true, default));
+        Assert.That(await oldMap.CloakCooldownRemainingMsAsync(stale.UserId, default), Is.Zero);
+        Assert.That(await destination.ConnectedAsync(1, default), Is.Empty);
+        var current = (await destination.ConnectedAsync(2, default)).Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That(current.IsInvisible, Is.False);
+            Assert.That((current.X, current.Y), Is.EqualTo((3000, 1300)));
+        });
+    }
+
+    [Test]
     public async Task CloakState_IsSharedAcrossWorldInstances_AndSurvivesReentry()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

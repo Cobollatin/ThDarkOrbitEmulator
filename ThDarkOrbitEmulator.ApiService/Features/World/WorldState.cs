@@ -719,7 +719,9 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     public async Task<WorldPilot> SetCloakAsync(WorldPilot pilot, bool active, CancellationToken ct)
     {
         await using var held = meshMutex is null ? null : await meshMutex.AcquireAsync(ct);
+        var requestedMap = pilot.MapId;
         pilot = await RefreshAsync(pilot, ct);
+        if (pilot.MapId != requestedMap) throw new WorldMapChangedException();
         if (CurrentHitPoints(pilot) <= 0) throw new WorldPilotDestroyedException();
         if (pilot.IsInvisible == active) return pilot;
         if (active)
