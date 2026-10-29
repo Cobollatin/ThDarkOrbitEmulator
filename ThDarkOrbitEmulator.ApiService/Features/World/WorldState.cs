@@ -206,7 +206,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 }
                 catch (JsonException) { }
             }
-            var hasMapOwner = int.TryParse(await cache.GetStringAsync(MapKey(pilot.UserId), ct), out var ownerMap);
+            var hasMapOwner = int.TryParse(await cache.GetStringAsync(MapKey(pilot.UserId), ct), out var ownerMap)
+                && IsValidWorldMap(ownerMap);
             var mapOnAnotherMap = hasMapOwner && ownerMap != pilot.MapId;
             // Map ownership is written with transfers; the runtime map is the next
             // best signal when a prior position is restored out of order.
@@ -226,6 +227,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     }
     private static string Key(long userId) => $"world:position:{userId}";
     private static string MapKey(long userId) => $"world:map:{userId}";
+    private static bool IsValidWorldMap(int mapId) => mapId is >= 1 and <= 16 || WorldMapInstance.IsGate(mapId);
     private static string RuntimeKey(long userId) => $"world:runtime:{userId}";
     private static string CombatKey(long userId) => $"world:combat:{userId}";
     private static string CloakCooldownKey(long userId) => $"world:cloak-cooldown:{userId}";
@@ -450,7 +452,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             // A restored position can predate a completed transfer. The independent
             // map entry is written with each position under the transfer lock.
             var mapText = await cache.GetStringAsync(MapKey(pilot.UserId), ct);
-            var hasMapOwner = int.TryParse(mapText, out var ownerMap);
+            var hasMapOwner = int.TryParse(mapText, out var ownerMap) && IsValidWorldMap(ownerMap);
             if (hasMapOwner && ownerMap != mapId) continue;
             var saved = await cache.GetStringAsync(Key(pilot.UserId), ct);
             var positionOnAnotherMap = false;
@@ -839,7 +841,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     public async Task<int?> SavedMapAsync(long userId, CancellationToken ct)
     {
         if (int.TryParse(await cache.GetStringAsync(MapKey(userId), ct), out var ownerMap)
-            && (ownerMap is >= 1 and <= 16 || WorldMapInstance.IsGate(ownerMap)))
+            && IsValidWorldMap(ownerMap))
             return ownerMap;
         var runtimeJson = await cache.GetStringAsync(RuntimeKey(userId), ct);
         if (runtimeJson is not null)
@@ -847,8 +849,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             try
             {
                 var runtime = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(runtimeJson);
-                if (runtime is not null && (runtime.MapId is >= 1 and <= 16
-                    || WorldMapInstance.IsGate(runtime.MapId))) return runtime.MapId;
+                if (runtime is not null && IsValidWorldMap(runtime.MapId)) return runtime.MapId;
             }
             catch (JsonException) { }
         }
@@ -857,7 +858,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         try
         {
             var position = JsonSerializer.Deserialize<WorldPosition>(saved);
-            return position is not null && (position.MapId is >= 1 and <= 16 || WorldMapInstance.IsGate(position.MapId))
+            return position is not null && IsValidWorldMap(position.MapId)
                 ? position.MapId : null;
         }
         catch (JsonException) { return null; }
@@ -1210,7 +1211,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         {
             var userId = presence.Pilot.UserId;
             var mapText = await cache.GetStringAsync(MapKey(userId));
-            var hasMapOwner = int.TryParse(mapText, out var ownerMap);
+            var hasMapOwner = int.TryParse(mapText, out var ownerMap) && IsValidWorldMap(ownerMap);
             if (hasMapOwner && ownerMap != mapId) continue;
             // A local socket can lag a transfer performed on another node. Check the
             // shared position even for that socket before announcing map membership.

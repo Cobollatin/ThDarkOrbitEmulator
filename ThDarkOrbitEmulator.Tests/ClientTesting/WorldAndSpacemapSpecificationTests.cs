@@ -3903,6 +3903,37 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task InvalidMapOwner_FallsBackToRuntimeForHeartbeatAndMapReaders()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var first = new WorldSessionStore(cache, mutex);
+        var second = new WorldSessionStore(cache, mutex);
+        var pilot = await first.EnterAsync(Pilot() with { AccountId = Guid.NewGuid() }, default);
+        var oldPosition = await cache.GetStringAsync($"world:position:{pilot.UserId}");
+        var oldRoster = await cache.GetStringAsync("world:presence:map:1");
+
+        await second.TeleportAsync(pilot.UserId, 2, 3000, 1300, false, default);
+        await second.EnterAsync(pilot with { MapId = 2 }, default);
+        await cache.SetStringAsync($"world:position:{pilot.UserId}", oldPosition!);
+        await cache.SetStringAsync("world:presence:map:1", oldRoster!);
+        await cache.SetStringAsync($"world:map:{pilot.UserId}", "999");
+
+        Assert.That(await second.SavedMapAsync(pilot.UserId, default), Is.EqualTo(2));
+        Assert.That(await first.ConnectedAsync(1, default), Is.Empty);
+        Assert.That(await first.VisiblePilotsAsync(1, default), Is.Empty);
+        Assert.That((await second.ConnectedAsync(2, default)).Single().UserId, Is.EqualTo(pilot.UserId));
+        Assert.That((await second.VisiblePilotsAsync(2, default)).Single().UserId, Is.EqualTo(pilot.UserId));
+
+        await first.RefreshLocalPresenceAsync(default);
+        await second.RefreshLocalPresenceAsync(default);
+        Assert.That(first.ActivePilotCount, Is.Zero);
+        Assert.That(second.ActivePilotCount, Is.EqualTo(1));
+        Assert.That(await cache.GetStringAsync("world:presence:map:1"), Is.EqualTo("{}"));
+    }
+
+    [Test]
     public async Task CloakCooldown_SurvivesCooldownKeyEvictionAcrossWorldInstances()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
