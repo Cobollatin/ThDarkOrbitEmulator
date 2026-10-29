@@ -639,6 +639,15 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     }
 
     // Local world ability state is shared with map owners through the runtime snapshot.
+    public async Task<int> CloakCooldownRemainingMsAsync(long userId, CancellationToken ct)
+    {
+        var saved = await cache.GetStringAsync(CloakCooldownKey(userId), ct);
+        if (!long.TryParse(saved, out var milliseconds)) return 0;
+        var remaining = CloakActivationCooldown -
+            (combatClock.GetUtcNow() - DateTimeOffset.FromUnixTimeMilliseconds(milliseconds));
+        return remaining > TimeSpan.Zero ? (int)Math.Ceiling(remaining.TotalMilliseconds) : 0;
+    }
+
     public async Task<WorldPilot> SetCloakAsync(WorldPilot pilot, bool active, CancellationToken ct)
     {
         await using var held = meshMutex is null ? null : await meshMutex.AcquireAsync(ct);
@@ -649,14 +658,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         {
             if (configuredCloakBlockedMaps.Contains(pilot.MapId))
                 throw new WorldCloakBlockedException();
-            var saved = await cache.GetStringAsync(CloakCooldownKey(pilot.UserId), ct);
-            if (long.TryParse(saved, out var milliseconds))
-            {
-                var remaining = CloakActivationCooldown -
-                    (combatClock.GetUtcNow() - DateTimeOffset.FromUnixTimeMilliseconds(milliseconds));
-                if (remaining > TimeSpan.Zero)
-                    throw new WorldCloakCooldownException((int)Math.Ceiling(remaining.TotalMilliseconds));
-            }
+            var remaining = await CloakCooldownRemainingMsAsync(pilot.UserId, ct);
+            if (remaining > 0) throw new WorldCloakCooldownException(remaining);
         }
         pilot = pilot with { IsInvisible = active };
         await PersistRuntimeAsync(pilot, ct, cloakOverride: active);

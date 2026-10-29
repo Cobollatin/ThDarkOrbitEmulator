@@ -574,9 +574,15 @@ public sealed class WorldHttpBridgeTests
         var state = await SendAsync("GET", "state", null, auth, resolver, b);
         using var stateBody = JsonDocument.Parse(Body(state));
         Assert.That(stateBody.RootElement.GetProperty("pilot").GetProperty("cloaked").GetBoolean(), Is.True);
+        Assert.That(stateBody.RootElement.GetProperty("pilot").GetProperty("cloakCooldownRemainingMs").GetInt32(),
+            Is.InRange(1, 20_000));
         var disabled = await SendAsync("POST", "cloak", "{\"active\":false}", auth, resolver, b);
         Assert.That(disabled.Response.StatusCode, Is.EqualTo(200));
         Assert.That((await a.ConnectedAsync(1, default)).Single().IsInvisible, Is.False);
+        var disabledState = await SendAsync("GET", "state", null, auth, resolver, a);
+        using var disabledBody = JsonDocument.Parse(Body(disabledState));
+        Assert.That(disabledBody.RootElement.GetProperty("pilot").GetProperty("cloakCooldownRemainingMs").GetInt32(),
+            Is.GreaterThan(0));
         var cooling = await SendAsync("POST", "cloak", "{\"active\":true}", auth, resolver, b);
         Assert.That(cooling.Response.StatusCode, Is.EqualTo(409));
         using var cooldownBody = JsonDocument.Parse(Body(cooling));

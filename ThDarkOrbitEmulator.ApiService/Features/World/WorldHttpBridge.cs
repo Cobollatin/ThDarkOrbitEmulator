@@ -743,6 +743,7 @@ public static class WorldHttpBridge
             announcement = announcement is null ? null : new { announcement.Message, announcement.AtUtc },
             pilot = new { id = pilot.UserId, name = pilot.UserName, company = pilot.Company,
                 isAdmin = pilot.IsAdmin, cloaked = pilot.IsInvisible,
+                cloakCooldownRemainingMs = await sessions.CloakCooldownRemainingMsAsync(pilot.UserId, ct),
                 factionId = pilot.FactionId, shipId = pilot.ShipId, pilot.HangarSlot,
                 x = position.X, y = position.Y, targetX = destination.X, targetY = destination.Y,
                 moveId = sessions.MoveId(pilot),

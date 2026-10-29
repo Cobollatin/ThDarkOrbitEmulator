@@ -177,6 +177,9 @@ public sealed class WorldSpacemapPageSpecificationTests
             Assert.That(Html, Does.Contain("String(p.cloaked===true)"));
             Assert.That(Html, Does.Contain("e.status==='blocked_map'?'Cloak is unavailable on this map.'"));
             Assert.That(Html, Does.Contain("e.status==='cooldown'?'Cloak is recharging.'"));
+            Assert.That(Html, Does.Contain("id=\"cloakCooldown\" role=\"status\""));
+            Assert.That(Html, Does.Contain("state.pilot.cloakCooldownRemainingMs||0"));
+            Assert.That(Html, Does.Contain("!p.cloaked&&cloakWait>0"));
         });
     }
 

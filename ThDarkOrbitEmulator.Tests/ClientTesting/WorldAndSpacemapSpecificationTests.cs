@@ -3493,6 +3493,7 @@ public sealed class WorldAndSpacemapSpecificationTests
         }, default);
 
         pilot = await first.SetCloakAsync(pilot, true, default);
+        Assert.That(await second.CloakCooldownRemainingMsAsync(pilot.UserId, default), Is.EqualTo(20_000));
         Assert.That((await second.ConnectedAsync(1, default)).Single().IsInvisible, Is.True);
         Assert.That(second.CurrentHitPoints(pilot), Is.EqualTo(1000));
         Assert.That((await second.EnterAsync(pilot with { IsInvisible = false }, default)).IsInvisible,
@@ -3503,7 +3504,10 @@ public sealed class WorldAndSpacemapSpecificationTests
         var cooldown = Assert.ThrowsAsync<WorldCloakCooldownException>(
             async () => await first.SetCloakAsync(pilot, true, default));
         Assert.That(cooldown!.RemainingMs, Is.EqualTo(20_000));
-        clock.Advance(TimeSpan.FromSeconds(20));
+        clock.Advance(TimeSpan.FromSeconds(7));
+        Assert.That(await second.CloakCooldownRemainingMsAsync(pilot.UserId, default), Is.EqualTo(13_000));
+        clock.Advance(TimeSpan.FromSeconds(13));
+        Assert.That(await second.CloakCooldownRemainingMsAsync(pilot.UserId, default), Is.Zero);
         pilot = await first.SetCloakAsync(pilot, true, default);
 
         pilot = await first.SetCloakAsync(pilot, false, default);
