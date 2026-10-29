@@ -1238,6 +1238,38 @@ public sealed class WorldAndSpacemapSpecificationTests
         });
     }
 
+    [Test]
+    public async Task Radiation_LethalTickReportsOnlyAppliedHullDamage()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var clock = new AdvancingClock();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), clock: clock);
+        var pilot = await store.EnterAsync(Pilot() with
+        {
+            UserId = 912, X = 300, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 995, default);
+        using var stream = new MemoryStream();
+        store.Attach(new WorldConnection(pilot, new WorldPacketWriter(stream)));
+
+        await store.MoveAsync(pilot, 0, 1300, null, default, clock.GetUtcNow());
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await store.TickRadiationAsync(pilot.MapId, default);
+
+        stream.Position = 0;
+        var damage = (await new WorldPacketReader(stream).ReadAsync())!.Value;
+        Assert.Multiple(() =>
+        {
+            Assert.That(damage.Command, Is.EqualTo(WorldCommandId.RadiationDamageCommand));
+            Assert.That(WorldPayload.Decode(damage.Payload, r =>
+                (WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r),
+                    WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r))),
+                Is.EqualTo((pilot.UserId, 5L, 0L, 0L)));
+            Assert.That(store.CurrentHitPoints(pilot), Is.Zero);
+        });
+    }
+
     [TestCase(3000, true)]
     [TestCase(3001, false)]
     public async Task StationRepair_UsesInclusiveRadiusAndRequiresStoppedTravel(int x, bool inside)

@@ -1180,14 +1180,17 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         var damage = variables is null ? Math.Max(1, ActiveStats(pilot).MaxHitPoints / 100)
             : (long)await variables.NumberAsync("world.radiation.damage_per_attempt", ct);
         if (damage == 0) damage = Math.Max(1, ActiveStats(pilot).MaxHitPoints / 100);
-        hitPoints[pilot.UserId] = Math.Max(0, CurrentHitPoints(pilot) - damage);
+        var current = CurrentHitPoints(pilot);
+        var remaining = Math.Max(0, current - damage);
+        var appliedDamage = current - remaining;
+        hitPoints[pilot.UserId] = remaining;
         if (hitPoints[pilot.UserId] == 0)
             pilot = await RecordDestructionAsync(pilot, ct);
         await PersistRuntimeAsync(pilot, ct);
         await BroadcastAsync(pilot, WorldCommandId.RadiationDamageCommand, WorldPayload.Encode(w =>
         {
             WorldPayload.WriteInt64(w, pilot.UserId);
-            WorldPayload.WriteInt64(w, damage);
+            WorldPayload.WriteInt64(w, appliedDamage);
             WorldPayload.WriteInt64(w, CurrentHitPoints(pilot));
             WorldPayload.WriteInt64(w, CurrentShield(pilot));
         }), ct);
