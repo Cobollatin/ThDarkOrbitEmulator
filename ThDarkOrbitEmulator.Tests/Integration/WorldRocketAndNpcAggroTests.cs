@@ -160,10 +160,17 @@ public sealed class WorldRocketAndNpcAggroTests
         clock.Advance(TimeSpan.FromSeconds(35));
         await npcs.TickAggroAsync(1, sessions, default);
         var afterRespawn = await npcs.VisibleAsync(1, default);
-        Assert.That(afterRespawn.Single(n => n.Id == spawns[0].Id).Hp, Is.EqualTo(250));
+        var revived = afterRespawn.Single(n => n.Id == spawns[0].Id);
+        Assert.That(revived.Hp, Is.EqualTo(250));
+        var map = WorldMapInstance.Starter(1);
+        Assert.That(revived.X, Is.EqualTo((spawns[0].X + map.Width / 3 + 1) % (map.Width + 1)));
+        Assert.That(revived.Y, Is.EqualTo((spawns[0].Y + map.Height / 3 + 1) % (map.Height + 1)));
+        var replica = CreateNpcs(cache, mutex, rewards, clock, options);
+        Assert.That((await replica.VisibleAsync(1, default)).Single(n => n.Id == revived.Id),
+            Is.EqualTo(revived));
         Assert.That(afterRespawn.Single(n => n.Id == spawns[1].Id).Hp, Is.EqualTo(249));
 
-        await sessions.TeleportAsync(pilot.UserId, 1, spawns[0].X, spawns[0].Y, false, default);
+        await sessions.TeleportAsync(pilot.UserId, 1, revived.X, revived.Y, false, default);
         Assert.That((await npcs.AttackAsync(pilot, spawns[0].Id, sessions, default, rocket: true)).Destroyed,
             Is.True);
         Assert.That(rewards.LastKey, Is.Not.EqualTo(firstRewardKey));

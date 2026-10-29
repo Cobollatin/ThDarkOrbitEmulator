@@ -514,8 +514,15 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             {
                 if (vital.RespawnAtUnixMs == 0 || now.ToUnixTimeMilliseconds() < vital.RespawnAtUnixMs)
                     continue;
+                var respawnMap = WorldMapInstance.Starter(mapId);
+                // Move each new life away from its death position. Persist the position
+                // with the life so another map owner observes the same spawn.
+                var respawnX = (int)(((long)(vital.Snapshot?.X ?? vital.X ?? spawn.X) +
+                    respawnMap.Width / 3 + 1) % (respawnMap.Width + 1L));
+                var respawnY = (int)(((long)(vital.Snapshot?.Y ?? vital.Y ?? spawn.Y) +
+                    respawnMap.Height / 3 + 1) % (respawnMap.Height + 1L));
                 vital = new Vital(spawn.Hp, spawn.Shield, false, Guid.Empty,
-                    Generation: vital.Generation + 1);
+                    X: respawnX, Y: respawnY, Generation: vital.Generation + 1);
                 await cache.SetStringAsync(key, JsonSerializer.Serialize(vital), Expiry, ct);
                 observerSnapshots.TryRemove(mapId, out _);
             }
