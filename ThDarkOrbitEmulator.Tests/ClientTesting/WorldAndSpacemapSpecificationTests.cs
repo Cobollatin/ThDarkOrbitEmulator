@@ -1045,7 +1045,7 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
-    public async Task Radiation_ThrottlesWithinOneSecond_AndNeverReducesHullBelowOne()
+    public async Task Radiation_ThrottlesWithinOneSecond_AndDestroysPilotAtZeroHull()
     {
         using var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection()
             .AddDistributedMemoryCache().BuildServiceProvider();
@@ -1062,9 +1062,42 @@ public sealed class WorldAndSpacemapSpecificationTests
         await store.MoveAsync(pilot, -1, 1300, null, default, now.AddSeconds(1));
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(98));
 
-        for (var second = 2; second <= 102; second++)
+        for (var second = 2; second <= 99; second++)
             await store.MoveAsync(pilot, -1, 1300, null, default, now.AddSeconds(second));
-        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(1));
+        Assert.That(store.CurrentHitPoints(pilot), Is.Zero);
+        Assert.ThrowsAsync<WorldPilotDestroyedException>(async () =>
+            await store.MoveAsync(pilot, 100, 1300, null, default, now.AddSeconds(100)));
+    }
+
+    [Test]
+    public async Task RadiationDeath_RecordsDeathAndCanRepairAcrossReplicas()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var wallet = new TestRepairWallet();
+        var clock = new AdvancingClock();
+        var accountId = Guid.NewGuid();
+        var owner = new WorldSessionStore(cache, clock: clock, repairWallet: wallet);
+        var pilot = await owner.EnterAsync(Pilot() with
+        {
+            AccountId = accountId, UserId = 908, X = 0, Y = 1300,
+            Stats = new WorldShipStats(300, 2, 0, 0, 0, [])
+        }, default);
+
+        await owner.MoveAsync(pilot, -1, 1300, null, default, clock.GetUtcNow());
+        Assert.That(owner.CurrentHitPoints(pilot), Is.EqualTo(1));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await owner.TickRadiationAsync(pilot.MapId, default);
+        Assert.That(owner.CurrentHitPoints(pilot), Is.Zero);
+        Assert.That(await wallet.FindPendingDeathAsync(accountId, default), Is.Not.Null);
+
+        var replica = new WorldSessionStore(cache, clock: clock, repairWallet: wallet);
+        var dead = await replica.EnterAsync(pilot, default);
+        Assert.That(replica.CurrentHitPoints(dead), Is.Zero);
+        var repaired = await replica.RespawnAtBaseAsync(dead, default);
+        Assert.That(repaired, Is.Not.Null);
+        Assert.That(replica.CurrentHitPoints(repaired!), Is.GreaterThan(0));
+        Assert.That(await wallet.FindPendingDeathAsync(accountId, default), Is.Null);
     }
 
     [Test]

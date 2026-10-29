@@ -1163,7 +1163,9 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         var damage = variables is null ? Math.Max(1, ActiveStats(pilot).MaxHitPoints / 100)
             : (long)await variables.NumberAsync("world.radiation.damage_per_attempt", ct);
         if (damage == 0) damage = Math.Max(1, ActiveStats(pilot).MaxHitPoints / 100);
-        hitPoints[pilot.UserId] = Math.Max(1, CurrentHitPoints(pilot) - damage);
+        hitPoints[pilot.UserId] = Math.Max(0, CurrentHitPoints(pilot) - damage);
+        if (hitPoints[pilot.UserId] == 0)
+            pilot = await RecordDestructionAsync(pilot, ct);
         await PersistRuntimeAsync(pilot, ct);
     }
 
@@ -1589,20 +1591,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         shields[pilot.UserId] = CurrentShield(pilot) - absorbed;
         hitPoints[pilot.UserId] = Math.Max(0, CurrentHitPoints(pilot) - (damage - absorbed));
         if (hitPoints[pilot.UserId] == 0)
-        {
-            var deathId = Guid.NewGuid().ToString("N");
-            var (x, y) = CurrentPosition(pilot);
-            pilot = pilot with { X = x, Y = y };
-            if (repairWallet is not null && pilot.AccountId != Guid.Empty)
-                await repairWallet.RecordDeathAsync(pilot.AccountId, deathId,
-                    new WorldPosition(pilot.MapId, x, y), ct);
-            await cache.SetStringAsync(DeathKey(pilot.UserId), deathId,
-                new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
-            travel.TryRemove(pilot.UserId, out _);
-            await PersistAsync(pilot, ct);
-            if (connected.TryGetValue(pilot.MapId, out var occupants))
-                occupants[pilot.UserId] = pilot;
-        }
+            pilot = await RecordDestructionAsync(pilot, ct);
         await PersistRuntimeAsync(pilot, ct);
         await BroadcastAsync(pilot, WorldCommandId.NpcFireCommand, WorldPayload.Encode(w =>
         {
@@ -1612,6 +1601,23 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             WorldPayload.WriteInt64(w, CurrentHitPoints(pilot));
             WorldPayload.WriteInt64(w, CurrentShield(pilot));
         }), ct);
+    }
+
+    private async Task<WorldPilot> RecordDestructionAsync(WorldPilot pilot, CancellationToken ct)
+    {
+        var deathId = Guid.NewGuid().ToString("N");
+        var (x, y) = CurrentPosition(pilot);
+        pilot = pilot with { X = x, Y = y };
+        if (repairWallet is not null && pilot.AccountId != Guid.Empty)
+            await repairWallet.RecordDeathAsync(pilot.AccountId, deathId,
+                new WorldPosition(pilot.MapId, x, y), ct);
+        await cache.SetStringAsync(DeathKey(pilot.UserId), deathId,
+            new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
+        travel.TryRemove(pilot.UserId, out _);
+        await PersistAsync(pilot, ct);
+        if (connected.TryGetValue(pilot.MapId, out var occupants))
+            occupants[pilot.UserId] = pilot;
+        return pilot;
     }
 
     public async Task BroadcastNpcMoveAsync(int mapId, WorldNpc npc, CancellationToken ct)
