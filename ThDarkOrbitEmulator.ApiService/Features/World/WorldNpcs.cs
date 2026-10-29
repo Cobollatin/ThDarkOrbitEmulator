@@ -504,7 +504,11 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             if (!resumePulse) pilot = await sessions.RestoreAsync(pilot, ct);
             if (expectedMapId is not null && pilot.MapId != expectedMapId)
                 throw new WorldMapChangedException();
-            if (fence is not null && pilot.MapId != mapId) throw new WorldLeaseLostException();
+            if (pilot.MapId != mapId)
+            {
+                if (fence is not null) throw new WorldLeaseLostException();
+                throw new WorldMapChangedException();
+            }
             if (!resumePulse && sessions.CurrentHitPoints(pilot) <= 0) return new("destroyed_pilot");
             key = Key(pilot.MapId, npcId);
             var stored = await cache.GetStringAsync(key, ct);
