@@ -1665,6 +1665,42 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task NpcPulse_RetryResumesStartedTargets_WithoutAnotherCharge()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var clock = new AdvancingClock();
+        var options = Options.Create(new WorldNpcOptions
+        {
+            PulseRange = 10000,
+            Templates = [new("Scout", "npc_scout", 2, 1, 0, 5, 0, 0, 0, 0)]
+        });
+        var rewards = new TestRewards { FailFirstCredit = true };
+        var inventory = new TestPulseInventory(1);
+        var first = new WorldNpcs(cache, mutex, rewards, options, clock, pulseInventory: inventory);
+        var second = new WorldNpcs(cache, mutex, rewards, options, clock, pulseInventory: inventory);
+        var spawn = first.Spawn(1, clock.GetUtcNow());
+        var sessions = new WorldSessionStore(cache, mutex);
+        var pilot = await sessions.EnterAsync(Pilot() with
+        {
+            AccountId = Guid.NewGuid(), X = spawn[0].X, Y = spawn[0].Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+        var actionId = Guid.NewGuid();
+        Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await first.PulseAsync(pilot, sessions, default, actionId: actionId));
+        Assert.That(inventory.Remaining, Is.Zero);
+        var resumed = await second.PulseAsync(pilot, sessions, default, actionId: actionId);
+        Assert.That(resumed.Status, Is.EqualTo("hit"));
+        Assert.That(inventory.Started, Is.EqualTo(1));
+        Assert.That(inventory.Completed, Is.EqualTo(1));
+        Assert.That(rewards.Calls, Is.EqualTo(3));
+        Assert.That((await second.PulseAsync(pilot, sessions, default, actionId: actionId)).Status,
+            Is.EqualTo("duplicate"));
+    }
+
+    [Test]
     public async Task NpcRewardFailure_PreservesKillForKillerRetry_AndRejectsOtherAccount()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
@@ -1787,6 +1823,7 @@ public sealed class WorldAndSpacemapSpecificationTests
         public int Started { get; private set; }
         public int Completed { get; private set; }
         private readonly HashSet<Guid> actions = [];
+        private readonly Dictionary<Guid, PulseActionPlan> plans = [];
 
         public void Refill(int amount) => Remaining += amount;
 
@@ -1799,15 +1836,21 @@ public sealed class WorldAndSpacemapSpecificationTests
             return Task.FromResult(PulseChargeResult.Consumed);
         }
 
-        public Task<bool> StartAsync(Guid accountId, Guid actionId, CancellationToken ct)
+        public Task<bool> StartAsync(Guid accountId, Guid actionId, int mapId, int[] targets,
+            CancellationToken ct)
         {
             Started++;
+            plans[actionId] = new("started", mapId, targets);
             return Task.FromResult(actions.Contains(actionId));
         }
+
+        public Task<PulseActionPlan?> PlanAsync(Guid accountId, Guid actionId, CancellationToken ct) =>
+            Task.FromResult(plans.GetValueOrDefault(actionId));
 
         public Task CompleteAsync(Guid accountId, Guid actionId, CancellationToken ct)
         {
             Completed++;
+            plans[actionId] = plans[actionId] with { Status = "completed" };
             return Task.CompletedTask;
         }
 

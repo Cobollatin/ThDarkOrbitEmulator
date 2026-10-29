@@ -941,17 +941,39 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
         return PulseChargeResult.Consumed;
     }
 
-    public async Task<bool> StartPulseActionAsync(Guid accountId, Guid actionId, CancellationToken ct)
+    public Task<bool> StartPulseActionAsync(Guid accountId, Guid actionId, CancellationToken ct) =>
+        StartPulseActionAsync(accountId, actionId, 0, [], ct);
+
+    public async Task<bool> StartPulseActionAsync(Guid accountId, Guid actionId, int mapId,
+        int[] targets, CancellationToken ct)
     {
         await using var db = Connection();
         await db.OpenAsync(ct);
         await using var cmd = new NpgsqlCommand("""
-            UPDATE economy.pulse_actions SET status='started'
+            UPDATE economy.pulse_actions SET status='started', map_id=@m, target_ids=@t
             WHERE account_id=@a AND action_id=@k AND status='charged'
             """, db);
         cmd.Parameters.AddWithValue("a", accountId);
         cmd.Parameters.AddWithValue("k", actionId);
+        cmd.Parameters.AddWithValue("m", mapId);
+        cmd.Parameters.AddWithValue("t", targets);
         return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task<PulseActionPlan?> PulseActionPlanAsync(Guid accountId, Guid actionId, CancellationToken ct)
+    {
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand("""
+            SELECT status,map_id,target_ids FROM economy.pulse_actions
+            WHERE account_id=@a AND action_id=@k
+            """, db);
+        cmd.Parameters.AddWithValue("a", accountId);
+        cmd.Parameters.AddWithValue("k", actionId);
+        await using var row = await cmd.ExecuteReaderAsync(ct);
+        return await row.ReadAsync(ct)
+            ? new PulseActionPlan(row.GetString(0), row.GetInt32(1), row.GetFieldValue<int[]>(2))
+            : null;
     }
 
     public async Task CompletePulseActionAsync(Guid accountId, Guid actionId, CancellationToken ct)

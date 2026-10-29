@@ -120,7 +120,11 @@ public class EconomyPostgresTests
         var started = Guid.NewGuid();
         Assert.That(await first.ConsumeItemOnceAsync(account, "pulse_charge", started, ct),
             Is.EqualTo(PulseChargeResult.Consumed));
-        Assert.That(await second.StartPulseActionAsync(account, started, ct), Is.True);
+        Assert.That(await second.StartPulseActionAsync(account, started, 3, [101, 102], ct), Is.True);
+        var storedPlan = await first.PulseActionPlanAsync(account, started, ct);
+        Assert.That(storedPlan?.Status, Is.EqualTo("started"));
+        Assert.That(storedPlan?.MapId, Is.EqualTo(3));
+        Assert.That(storedPlan?.Targets, Is.EqualTo(new[] { 101, 102 }));
         Assert.That(await first.RefundUnstartedPulseActionAsync(account, started, ct), Is.False);
         await first.CompletePulseActionAsync(account, started, ct);
         Assert.That(await second.RefundUnstartedPulseActionAsync(account, started, ct), Is.False);
