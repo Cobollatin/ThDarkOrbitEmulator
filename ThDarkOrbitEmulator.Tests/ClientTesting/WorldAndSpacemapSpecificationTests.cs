@@ -3797,6 +3797,32 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task StalePresenceAfterTransfer_WithRestoredOldPositionAndMissingMapOwner_UsesRuntimeMap()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var first = new WorldSessionStore(cache, mutex);
+        var second = new WorldSessionStore(cache, mutex);
+        var pilot = await first.EnterAsync(Pilot() with { AccountId = Guid.NewGuid() }, default);
+        using var wire = new MemoryStream();
+        first.Attach(new WorldConnection(pilot, new WorldPacketWriter(wire)));
+        var oldPosition = await cache.GetStringAsync($"world:position:{pilot.UserId}");
+        var oldRoster = await cache.GetStringAsync("world:presence:map:1");
+
+        await second.TeleportAsync(pilot.UserId, 2, 3000, 1300, false, default);
+        await cache.SetStringAsync($"world:position:{pilot.UserId}", oldPosition!);
+        await cache.SetStringAsync("world:presence:map:1", oldRoster!);
+        await cache.RemoveAsync($"world:map:{pilot.UserId}");
+
+        Assert.That(await first.ConnectedAsync(1, default), Is.Empty);
+        Assert.That(await first.VisiblePilotsAsync(1, default), Is.Empty);
+        await first.RefreshLocalPresenceAsync(default);
+        Assert.That(first.ActivePilotCount, Is.Zero);
+        Assert.That(await cache.GetStringAsync("world:presence:map:1"), Is.EqualTo("{}"));
+    }
+
+    [Test]
     public async Task StaleLocalSocketAfterTransfer_WithRestoredOldPosition_IsRemovedByHeartbeat()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

@@ -206,9 +206,10 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 }
                 catch (JsonException) { }
             }
-            var mapOnAnotherMap = await cache.GetStringAsync(MapKey(pilot.UserId), ct) is { } mapText
-                && int.TryParse(mapText, out var ownerMap) && ownerMap != pilot.MapId;
-            if (positionOnAnotherMap || (!hasSavedPosition && runtimeOnAnotherMap) || mapOnAnotherMap)
+            var hasMapOwner = int.TryParse(await cache.GetStringAsync(MapKey(pilot.UserId), ct), out var ownerMap);
+            var mapOnAnotherMap = hasMapOwner && ownerMap != pilot.MapId;
+            if (positionOnAnotherMap || ((!hasSavedPosition || !hasMapOwner) && runtimeOnAnotherMap)
+                || mapOnAnotherMap)
             {
                 if (connected.TryGetValue(pilot.MapId, out var local))
                     local.TryRemove(pilot.UserId, out _);
@@ -494,7 +495,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                     var snapshot = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(runtime);
                     // The runtime map also identifies a completed transfer when the
                     // position key has been evicted but an old roster entry survives.
-                    if (!hasSavedPosition && snapshot is not null && snapshot.MapId != mapId) continue;
+                    if ((!hasSavedPosition || !hasMapOwner) && snapshot is not null
+                        && snapshot.MapId != mapId) continue;
                     if (snapshot?.MapId == mapId)
                         pilot = pilot with { IsInvisible = snapshot.IsInvisible };
                 }
@@ -1202,7 +1204,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 }
                 catch (JsonException) { saved = null; }
             }
-            if (saved is null)
+            if (saved is null || !hasMapOwner)
             {
                 var runtime = await cache.GetStringAsync(RuntimeKey(userId));
                 if (runtime is not null)
