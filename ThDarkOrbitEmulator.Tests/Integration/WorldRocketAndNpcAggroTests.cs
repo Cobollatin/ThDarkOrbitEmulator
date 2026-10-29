@@ -274,6 +274,34 @@ public sealed class WorldRocketAndNpcAggroTests
     }
 
     [Test]
+    public async Task IdleNpc_DiagonalPatrolStaysWithinSpeedAcrossMapOwners()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var options = new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 1)],
+            AggroRange = 0
+        };
+        var first = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var second = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var previous = (await first.VisibleAsync(1, default)).Single();
+
+        for (var tick = 0; tick < 3; tick++)
+        {
+            await (tick % 2 == 0 ? first : second).TickAggroAsync(1, sessions, default);
+            var current = (await first.VisibleAsync(1, default)).Single();
+            Assert.That(Math.Sqrt(Math.Pow(current.X - previous.X, 2) +
+                Math.Pow(current.Y - previous.Y, 2)), Is.LessThanOrEqualTo(1));
+            previous = current;
+            clock.Advance(TimeSpan.FromSeconds(1));
+        }
+    }
+
+    [Test]
     public async Task NpcRespawn_PreservesFireCooldownAcrossMapOwners()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
@@ -404,6 +432,35 @@ public sealed class WorldRocketAndNpcAggroTests
         }
 
         Assert.That((await second.VisibleAsync(1, default)).Single().X, Is.EqualTo(spawn.X + 2));
+    }
+
+    [Test]
+    public async Task AutonomousNpc_DiagonalPursuitStaysWithinSpeedAcrossMapOwners()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var options = new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 1)],
+            AggroRange = 1000, NpcStandoffRange = 0, NpcFireRange = 0
+        };
+        var first = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var second = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var previous = (await first.VisibleAsync(1, default)).Single();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        await sessions.EnterAsync(Pilot(previous.X + 100, previous.Y + 100), default);
+
+        for (var tick = 0; tick < 3; tick++)
+        {
+            await (tick % 2 == 0 ? first : second).TickAggroAsync(1, sessions, default);
+            var current = (await first.VisibleAsync(1, default)).Single();
+            Assert.That(Math.Sqrt(Math.Pow(current.X - previous.X, 2) +
+                Math.Pow(current.Y - previous.Y, 2)), Is.LessThanOrEqualTo(1));
+            previous = current;
+            clock.Advance(TimeSpan.FromSeconds(1));
+        }
     }
 
     [Test]

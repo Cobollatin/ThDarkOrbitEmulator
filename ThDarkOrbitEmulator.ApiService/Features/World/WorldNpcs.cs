@@ -735,6 +735,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                     var reached = patrolStep >= patrolDistance;
                     var nextX = reached ? goalX : npc.X + (int)Math.Round(patrolDx * patrolStep / patrolDistance);
                     var nextY = reached ? goalY : npc.Y + (int)Math.Round(patrolDy * patrolStep / patrolDistance);
+                    (nextX, nextY) = LimitRoundedStep(npc.X, npc.Y, nextX, nextY,
+                        patrolStep);
                     var subpixelPatrol = patrolStep > 0 && !reached && nextX == npc.X && nextY == npc.Y;
                     vital = vital with
                     {
@@ -773,7 +775,6 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             // Keep accumulating elapsed time when a real step is too small to
             // change either integer coordinate. Otherwise fast ticks can
             // prevent a slow NPC from ever moving.
-            var subpixelStep = step != 0 && rawX == npc.X && rawY == npc.Y;
             var x = Math.Clamp(rawX, 0, map.Width);
             var y = Math.Clamp(rawY, 0, map.Height);
             if (step < 0 && distance > 0 && (rawX != x || rawY != y))
@@ -794,6 +795,9 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                     bestDistance = candidateDistance;
                 }
             }
+            (x, y) = LimitRoundedStep(npc.X, npc.Y, x, y, Math.Abs(step));
+            var subpixelStep = step != 0 && x == npc.X && y == npc.Y &&
+                rawX >= 0 && rawX <= map.Width && rawY >= 0 && rawY <= map.Height;
             npc = npc with { X = x, Y = y };
             var fire = (template?.Aggressive != false ||
                 vital.Retaliating && vital.TargetUserId == target.Pilot.UserId) &&
@@ -824,6 +828,19 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
 
     private static long DistanceSquared(int x, int y, int otherX, int otherY) =>
         (long)(x - otherX) * (x - otherX) + (long)(y - otherY) * (y - otherY);
+
+    private static (int X, int Y) LimitRoundedStep(int fromX, int fromY,
+        int toX, int toY, double distance)
+    {
+        var dx = toX - fromX;
+        var dy = toY - fromY;
+        while ((long)dx * dx + (long)dy * dy > distance * distance + 1e-9)
+        {
+            if (Math.Abs(dx) > Math.Abs(dy)) dx -= Math.Sign(dx);
+            else dy -= Math.Sign(dy);
+        }
+        return (fromX + dx, fromY + dy);
+    }
 
     private static bool InsidePeaceZone(int mapId, (int X, int Y) position)
     {
