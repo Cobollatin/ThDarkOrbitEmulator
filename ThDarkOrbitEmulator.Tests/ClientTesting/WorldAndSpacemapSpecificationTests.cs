@@ -1568,6 +1568,31 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task PilotDestruction_IneligiblePortalRepairDoesNotCharge()
+    {
+        var emptyMap = new WorldMapInstance(2, 1, 21000, 13100,
+            new WorldStation(200, 19000, 1300, 1000), []);
+        Assert.That(emptyMap.AllowsPortalRepair, Is.False);
+        Assert.That(WorldMapInstance.Starter(1).AllowsPortalRepair, Is.True);
+        Assert.That(WorldMapInstance.Starter(101).AllowsPortalRepair, Is.False);
+
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var wallet = new TestRepairWallet { CanPay = true };
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(),
+            repairWallet: wallet);
+        var pilot = await store.EnterAsync(Pilot() with
+        {
+            UserId = 964, AccountId = Guid.NewGuid(), MapId = 101, FactionId = 1,
+            Stats = new WorldShipStats(300, 1000, 100, 0, 100, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0);
+
+        Assert.That(await store.RespawnAsync(pilot, WorldRespawnLocation.NearestPortal, default), Is.Null);
+        Assert.That(wallet.Keys, Is.Empty);
+        Assert.That(store.CurrentHitPoints(pilot), Is.Zero);
+    }
+
+    [Test]
     public async Task PilotDestruction_RepairProtectsFromNpcAndBoundaryDamageForFiveSecondsAcrossReplicas()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

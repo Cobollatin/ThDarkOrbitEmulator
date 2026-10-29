@@ -16,6 +16,7 @@ public enum WorldRespawnLocation { Base, DeathLocation, NearestPortal }
 public sealed record WorldMapInstance(int MapId, int FactionId, int Width, int Height,
     WorldStation HomeStation, IReadOnlyList<WorldPortal> Portals)
 {
+    public bool AllowsPortalRepair => !IsGate(MapId) && Portals.Count > 0;
     public static bool IsGate(int mapId) => mapId is >= 101 and <= 120;
     public static string? GateId(int mapId) => IsGate(mapId)
         ? new[] { "alpha", "beta", "gamma", "delta", "epsilon" }[(mapId - 101) % 5] : null;
@@ -1354,8 +1355,10 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                     completedDeathId, ct);
                 return completed is null ? null : pilot with { Uridium = completed.Balance };
             }
-            if ((location is WorldRespawnLocation.DeathLocation or WorldRespawnLocation.NearestPortal)
-                && WorldMapInstance.IsGate(pilot.MapId))
+            if (location is WorldRespawnLocation.DeathLocation && WorldMapInstance.IsGate(pilot.MapId))
+                return null;
+            if (location is WorldRespawnLocation.NearestPortal
+                && !WorldMapInstance.Starter(pilot.MapId).AllowsPortalRepair)
                 return null;
             // A debit may have committed before the previous request could restore world state.
             // Resume that paid choice even when the retry asks for a different repair location.
