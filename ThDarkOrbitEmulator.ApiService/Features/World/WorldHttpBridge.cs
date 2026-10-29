@@ -27,6 +27,7 @@ public static class WorldHttpBridge
         app.MapPost("/spacemap/world/fire", FireAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/launcher-auto", LauncherAutoAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/rocket-auto", RocketAutoAsync).AllowAnonymous().DisableRateLimiting();
+        app.MapPost("/spacemap/world/cloak", CloakAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/pulse", PulseAsync).AllowAnonymous().DisableRateLimiting();
         app.MapGet("/spacemap/world/config", ConfigAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/config", ConfigAsync).AllowAnonymous().DisableRateLimiting();
@@ -598,6 +599,32 @@ public static class WorldHttpBridge
         await context.Response.WriteAsJsonAsync(result, ct);
     }
 
+    public static async Task CloakAsync(HttpContext context, IGameAuthSessionStore auth,
+        IWorldPilotResolver resolver, WorldSessionStore sessions, CancellationToken ct)
+    {
+        if (!JsonRequest(context)) { context.Response.StatusCode = 415; return; }
+        var pilot = await PilotAsync(context, auth, resolver, sessions, ct);
+        if (pilot is null) return;
+        pilot = await sessions.GetOrEnterAsync(pilot, ct);
+        await SetMeshHeadersAsync(context, pilot.MapId, ct);
+        bool active;
+        try
+        {
+            using var body = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: ct);
+            var value = body.RootElement.GetProperty("active");
+            if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                throw new JsonException("Expected a boolean.");
+            active = value.GetBoolean();
+        }
+        catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
+        { context.Response.StatusCode = 400; return; }
+        try { pilot = await sessions.SetCloakAsync(pilot, active, ct); }
+        catch (WorldPilotDestroyedException)
+        { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "destroyed_pilot" }, ct); return; }
+        context.Response.Headers.CacheControl = "no-store";
+        await context.Response.WriteAsJsonAsync(new { active = pilot.IsInvisible }, ct);
+    }
+
     public static async Task PulseAsync(HttpContext context, IGameAuthSessionStore auth,
         IWorldPilotResolver resolver, WorldSessionStore sessions, WorldNpcs npcs, CancellationToken ct)
     {
@@ -711,7 +738,7 @@ public static class WorldHttpBridge
             npcs = visibleNpcs,
             announcement = announcement is null ? null : new { announcement.Message, announcement.AtUtc },
             pilot = new { id = pilot.UserId, name = pilot.UserName, company = pilot.Company,
-                isAdmin = pilot.IsAdmin,
+                isAdmin = pilot.IsAdmin, cloaked = pilot.IsInvisible,
                 factionId = pilot.FactionId, shipId = pilot.ShipId, pilot.HangarSlot,
                 x = position.X, y = position.Y, targetX = destination.X, targetY = destination.Y,
                 moveId = sessions.MoveId(pilot),

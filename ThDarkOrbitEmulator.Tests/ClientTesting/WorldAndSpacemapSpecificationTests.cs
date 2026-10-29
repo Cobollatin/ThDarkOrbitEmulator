@@ -3395,6 +3395,36 @@ public sealed class WorldAndSpacemapSpecificationTests
         });
     }
 
+    [Test]
+    public async Task CloakState_IsSharedAcrossWorldInstances_AndSurvivesReentry()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var first = new WorldSessionStore(cache, mutex);
+        var second = new WorldSessionStore(cache, mutex);
+        var pilot = await first.EnterAsync(Pilot() with
+        {
+            X = 10000, Y = 6000,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+
+        pilot = await first.SetCloakAsync(pilot, true, default);
+        Assert.That((await second.ConnectedAsync(1, default)).Single().IsInvisible, Is.True);
+        Assert.That(second.CurrentHitPoints(pilot), Is.EqualTo(1000));
+        Assert.That((await second.EnterAsync(pilot with { IsInvisible = false }, default)).IsInvisible,
+            Is.True);
+
+        await second.MarkCombatAsync(pilot, default);
+        Assert.That((await first.ConnectedAsync(1, default)).Single().IsInvisible, Is.False);
+        pilot = await first.SetCloakAsync(pilot, true, default);
+
+        pilot = await first.SetCloakAsync(pilot, false, default);
+        Assert.That((await second.ConnectedAsync(1, default)).Single().IsInvisible, Is.False);
+        Assert.That((await second.EnterAsync(pilot with { IsInvisible = true }, default)).IsInvisible,
+            Is.False);
+    }
+
     private sealed class TestClock : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => DateTimeOffset.FromUnixTimeSeconds(1_000_000);

@@ -540,6 +540,31 @@ public sealed class WorldHttpBridgeTests
     }
 
     [Test]
+    public async Task BrowserCloakAction_ValidatesBooleanAndSharesState()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var a = new WorldSessionStore(cache, new NpcMutex());
+        var b = new WorldSessionStore(cache, new NpcMutex());
+        var auth = new Auth(); var resolver = new Resolver(100);
+
+        var invalid = await SendAsync("POST", "cloak", "{\"active\":1}", auth, resolver, a);
+        var enabled = await SendAsync("POST", "cloak", "{\"active\":true}", auth, resolver, a);
+        Assert.Multiple(() =>
+        {
+            Assert.That(invalid.Response.StatusCode, Is.EqualTo(400));
+            Assert.That(enabled.Response.StatusCode, Is.EqualTo(200));
+        });
+        Assert.That((await b.ConnectedAsync(1, default)).Single().IsInvisible, Is.True);
+        var state = await SendAsync("GET", "state", null, auth, resolver, b);
+        using var stateBody = JsonDocument.Parse(Body(state));
+        Assert.That(stateBody.RootElement.GetProperty("pilot").GetProperty("cloaked").GetBoolean(), Is.True);
+        var disabled = await SendAsync("POST", "cloak", "{\"active\":false}", auth, resolver, b);
+        Assert.That(disabled.Response.StatusCode, Is.EqualTo(200));
+        Assert.That((await a.ConnectedAsync(1, default)).Single().IsInvisible, Is.False);
+    }
+
+    [Test]
     [Explicit("Runs the shipped Spacemap page against live Kestrel pickup endpoints.")]
     public async Task SpacemapClient_UsesLivePickupRadius_BeforeReachingDefaultRange()
     {
@@ -1977,6 +2002,7 @@ public sealed class WorldHttpBridgeTests
                 services!.GetRequiredService<WorldNpcs>(), default); break;
             case "rocket-auto": await WorldHttpBridge.RocketAutoAsync(context, auth, resolver, store,
                 services!.GetRequiredService<WorldNpcs>(), default); break;
+            case "cloak": await WorldHttpBridge.CloakAsync(context, auth, resolver, store, default); break;
             case "admin/command": await WorldHttpBridge.AdminCommandAsync(context, auth, resolver,
                 store, dispatcher!, default); break;
         }

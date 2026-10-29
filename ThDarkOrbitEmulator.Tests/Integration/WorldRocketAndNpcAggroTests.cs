@@ -861,8 +861,8 @@ public sealed class WorldRocketAndNpcAggroTests
         var second = CreateNpcs(cache, mutex, new Rewards(), clock, options);
         var npc = (await first.VisibleAsync(1, default)).Single();
         var sessions = new WorldSessionStore(cache, mutex, clock: clock);
-        var invisible = await sessions.EnterAsync(Pilot(npc.X + 50, npc.Y) with
-            { IsInvisible = true }, default);
+        var invisible = await sessions.EnterAsync(Pilot(npc.X + 50, npc.Y), default);
+        invisible = await sessions.SetCloakAsync(invisible, true, default);
         var visible = await sessions.EnterAsync(Pilot(npc.X + 150, npc.Y) with
             { UserId = 8 }, default);
 

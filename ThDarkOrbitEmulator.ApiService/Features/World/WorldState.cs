@@ -106,7 +106,7 @@ public sealed record WorldPosition(int MapId, int X, int Y);
 public sealed record WorldRuntimeSnapshot(int MapId, int Configuration, long Shield,
     long LastSwitchUnixMilliseconds, WorldTravel? Travel, long? HitPoints = null,
     long LastHazardUnixMilliseconds = 0, bool RadiationWarning = false, bool RepairBotActive = false,
-    string? DeathId = null);
+    string? DeathId = null, bool IsInvisible = false);
 public sealed record WorldJumpResult(WorldPilot Pilot, int PortalId, string? TargetNodeId,
     string? TargetTcpHostPort);
 public sealed record WorldSwitchResult(bool Changed, int CooldownRemainingMs, WorldMoveResult? Move);
@@ -235,6 +235,18 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         await cache.SetStringAsync(CombatKey(pilot.UserId), combatClock.GetUtcNow().ToUnixTimeMilliseconds().ToString(),
             new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);
         await SetRepairBotAsync(pilot, false, ct);
+        var runtimeJson = await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct);
+        if (runtimeJson is null) return;
+        WorldRuntimeSnapshot? runtime;
+        try { runtime = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(runtimeJson); }
+        catch (JsonException) { return; }
+        if (runtime?.IsInvisible != true) return;
+        await cache.SetStringAsync(RuntimeKey(pilot.UserId),
+            JsonSerializer.Serialize(runtime with { IsInvisible = false }),
+            new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
+        var visible = pilot with { IsInvisible = false };
+        RefreshConnectedPilot(visible);
+        await WritePresenceAsync(visible, true, ct);
     }
 
     private async Task<bool> PortalCombatLockedAsync(WorldPilot pilot, CancellationToken ct)
@@ -402,6 +414,12 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                             pilot = pilot with { X = position.X, Y = position.Y };
                     }
                 }
+                catch (JsonException) { }
+            }
+            var runtime = await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct);
+            if (runtime is not null)
+            {
+                try { pilot = pilot with { IsInvisible = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(runtime)?.IsInvisible ?? pilot.IsInvisible }; }
                 catch (JsonException) { }
             }
             result.Add(pilot);
@@ -590,6 +608,19 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         return pilot;
     }
 
+    // Local world ability state is shared with map owners through the runtime snapshot.
+    public async Task<WorldPilot> SetCloakAsync(WorldPilot pilot, bool active, CancellationToken ct)
+    {
+        await using var held = meshMutex is null ? null : await meshMutex.AcquireAsync(ct);
+        pilot = await RefreshAsync(pilot, ct);
+        if (CurrentHitPoints(pilot) <= 0) throw new WorldPilotDestroyedException();
+        pilot = pilot with { IsInvisible = active };
+        await PersistRuntimeAsync(pilot, ct, cloakOverride: active);
+        RefreshConnectedPilot(pilot);
+        await WritePresenceAsync(pilot, true, ct);
+        return pilot;
+    }
+
     private async Task<WorldPilot> ResumeChargedRepairAsync(WorldPilot pilot, CancellationToken ct)
     {
         if (CurrentHitPoints(pilot) == 0 && repairWallet is not null && pilot.AccountId != Guid.Empty)
@@ -730,6 +761,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                         lastHazards[pilot.UserId] = DateTimeOffset.FromUnixTimeMilliseconds(runtime.LastHazardUnixMilliseconds);
                     radiationWarnings[pilot.UserId] = runtime.RadiationWarning;
                     repairBots[pilot.UserId] = runtime.RepairBotActive;
+                    pilot = pilot with { IsInvisible = runtime.IsInvisible };
                     if (runtime.LastSwitchUnixMilliseconds > 0)
                         lastSwitches[pilot.UserId] = DateTimeOffset.FromUnixTimeMilliseconds(runtime.LastSwitchUnixMilliseconds);
                 }
@@ -1186,15 +1218,23 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     }
 
     private async Task PersistRuntimeAsync(WorldPilot pilot, CancellationToken ct,
-        bool clearDeathId = false) =>
+        bool clearDeathId = false, bool? cloakOverride = null)
+    {
+        var previousJson = await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct);
+        WorldRuntimeSnapshot? previous = null;
+        if (previousJson is not null)
+            try { previous = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(previousJson); }
+            catch (JsonException) { }
         await cache.SetStringAsync(RuntimeKey(pilot.UserId), JsonSerializer.Serialize(new WorldRuntimeSnapshot(
             pilot.MapId, Configuration(pilot.UserId), CurrentShield(pilot),
             lastSwitches.TryGetValue(pilot.UserId, out var last) ? last.ToUnixTimeMilliseconds() : 0,
             travel.GetValueOrDefault(pilot.UserId), CurrentHitPoints(pilot),
             lastHazards.TryGetValue(pilot.UserId, out var hazard) ? hazard.ToUnixTimeMilliseconds() : 0,
             RadiationWarning(pilot.UserId), RepairBotActive(pilot.UserId),
-            clearDeathId ? null : await DeathIdAsync(pilot.UserId, ct))),
+            clearDeathId ? null : await DeathIdAsync(pilot.UserId, ct),
+            cloakOverride ?? previous?.IsInvisible ?? pilot.IsInvisible)),
             new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
+    }
 
     private async Task ApplyBoundaryDamageAsync(WorldPilot pilot, DateTimeOffset now, CancellationToken ct)
     {
