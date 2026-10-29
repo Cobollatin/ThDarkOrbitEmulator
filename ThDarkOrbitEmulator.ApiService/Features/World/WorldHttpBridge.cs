@@ -26,6 +26,7 @@ public static class WorldHttpBridge
         app.MapPost("/spacemap/world/target", TargetAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/fire", FireAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/launcher-auto", LauncherAutoAsync).AllowAnonymous().DisableRateLimiting();
+        app.MapPost("/spacemap/world/rocket-auto", RocketAutoAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/pulse", PulseAsync).AllowAnonymous().DisableRateLimiting();
         app.MapGet("/spacemap/world/config", ConfigAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/config", ConfigAsync).AllowAnonymous().DisableRateLimiting();
@@ -526,6 +527,30 @@ public static class WorldHttpBridge
         await context.Response.WriteAsJsonAsync(await npcs.LauncherStatusAsync(pilot.UserId, ct), ct);
     }
 
+    public static async Task RocketAutoAsync(HttpContext context, IGameAuthSessionStore auth,
+        IWorldPilotResolver resolver, WorldSessionStore sessions, WorldNpcs npcs, CancellationToken ct)
+    {
+        if (!JsonRequest(context)) { context.Response.StatusCode = 415; return; }
+        var pilot = await PilotAsync(context, auth, resolver, sessions, ct);
+        if (pilot is null) return;
+        pilot = await sessions.GetOrEnterAsync(pilot, ct);
+        if (WorldMapInstance.IsGate(pilot.MapId))
+        { context.Response.StatusCode = 409; return; }
+        bool enabled;
+        try
+        {
+            using var body = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: ct);
+            var value = body.RootElement.GetProperty("enabled");
+            if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) throw new JsonException();
+            enabled = value.GetBoolean();
+        }
+        catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
+        { context.Response.StatusCode = 400; return; }
+        await npcs.SetAutoRocketAsync(pilot.UserId, enabled, ct);
+        context.Response.Headers.CacheControl = "no-store";
+        await context.Response.WriteAsJsonAsync(new { autoFire = enabled }, ct);
+    }
+
     public static async Task FireAsync(HttpContext context, IGameAuthSessionStore auth,
         IWorldPilotResolver resolver, WorldSessionStore sessions, WorldNpcs npcs, CancellationToken ct)
     {
@@ -665,6 +690,8 @@ public static class WorldHttpBridge
         var gateState = gateCombat is null ? null : await gateCombat.StateAsync(pilot, ct);
         var launcher = gateCombat is not null || npcs is null ? null
             : await npcs.LauncherStatusAsync(pilot.UserId, ct);
+        var rocketAuto = gateCombat is null && npcs is not null &&
+            await npcs.AutoRocketEnabledAsync(pilot.UserId, ct);
         var adminEvents = context.RequestServices?.GetService<Admin.WorldAdminEvents>();
         var announcement = adminEvents is null ? null : await adminEvents.LatestAsync(ct);
         await context.Response.WriteAsJsonAsync(new
@@ -675,6 +702,7 @@ public static class WorldHttpBridge
                 station = map.HomeStation, portals = map.Portals },
             gate = gateState,
             launcher,
+            rocketAuto,
             jump = jump is null ? null : new { jump.PortalId, jump.TargetNodeId, jump.TargetTcpHostPort },
             pilots = occupants.Select(item => new { id = item.UserId, name = item.UserName,
                 x = item.X, y = item.Y }).ToArray(),

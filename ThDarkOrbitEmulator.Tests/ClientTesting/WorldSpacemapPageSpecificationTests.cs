@@ -181,6 +181,9 @@ public sealed class WorldSpacemapPageSpecificationTests
             Assert.That(Html, Does.Contain("id=\"launcherAuto\" type=\"button\" aria-pressed=\"false\""));
             Assert.That(Html, Does.Contain("request('launcher-auto','POST',{enabled:!state.launcher.autoFire})"));
             Assert.That(Html, Does.Contain("String(state.launcher?.autoFire===true)"));
+            Assert.That(Html, Does.Contain("id=\"rocketAuto\" type=\"button\" aria-pressed=\"false\""));
+            Assert.That(Html, Does.Contain("request('rocket-auto','POST',{enabled:!state.rocketAuto})"));
+            Assert.That(Html, Does.Contain("String(state.rocketAuto===true)"));
         });
     }
 

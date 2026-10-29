@@ -96,6 +96,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
     private sealed record ActiveLaser(int MapId, int NpcId, long Cycle, long NextShotUnixMs);
     private sealed record LauncherLoad(int Count, long UpdatedAtUnixMs);
     private static string LauncherAutoKey(long userId) => $"world:launcher:auto:{userId}";
+    private static string RocketAutoKey(long userId) => $"world:rocket:auto:{userId}";
     private static DistributedCacheEntryOptions Expiry => new();
 
     public async Task<bool> SetAutoLauncherAsync(long userId, bool enabled, CancellationToken ct)
@@ -109,6 +110,19 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
     {
         var stored = await cache.GetStringAsync(LauncherAutoKey(userId), ct);
         return stored is null ? settings.AutoLauncherOnLaser : stored == "1";
+    }
+
+    public async Task<bool> SetAutoRocketAsync(long userId, bool enabled, CancellationToken ct)
+    {
+        await using var held = await mutex.AcquireAsync(ct);
+        await cache.SetStringAsync(RocketAutoKey(userId), enabled ? "1" : "0", Expiry, ct);
+        return enabled;
+    }
+
+    public async Task<bool> AutoRocketEnabledAsync(long userId, CancellationToken ct)
+    {
+        var stored = await cache.GetStringAsync(RocketAutoKey(userId), ct);
+        return stored is null ? settings.AutoRocketOnLaser : stored == "1";
     }
 
     public async Task<WorldLauncherStatus> LauncherStatusAsync(long userId, CancellationToken ct)
@@ -292,7 +306,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 await StopLaserAsync(pilot.UserId, ct);
                 continue;
             }
-            if (settings.AutoRocketOnLaser)
+            if (await AutoRocketEnabledAsync(pilot.UserId, ct))
             {
                 var rocket = await AttackAsync(pilot, active.NpcId, sessions, ct, fence, mapId,
                     rocket: true);

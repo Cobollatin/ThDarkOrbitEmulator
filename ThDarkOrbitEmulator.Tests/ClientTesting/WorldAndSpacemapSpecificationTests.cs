@@ -2766,11 +2766,14 @@ public sealed class WorldAndSpacemapSpecificationTests
         await first.SelectAsync(pilot, spawn.Id, default);
         await first.StartLaserAsync(pilot, spawn.Id, default);
 
+        await first.SetAutoRocketAsync(pilot.UserId, false, default);
+
         clock.Advance(TimeSpan.FromSeconds(1));
         await second.TickLasersAsync(pilot.MapId, sessions, default);
         var firstHit = (await first.VisibleAsync(pilot.MapId, default)).Single(n => n.Id == spawn.Id);
         await first.TickLasersAsync(pilot.MapId, sessions, default);
         var duplicate = (await second.VisibleAsync(pilot.MapId, default)).Single(n => n.Id == spawn.Id);
+        await second.SetAutoRocketAsync(pilot.UserId, true, default);
         clock.Advance(TimeSpan.FromSeconds(1));
         await first.TickLasersAsync(pilot.MapId, sessions, default);
         var cooldown = (await second.VisibleAsync(pilot.MapId, default)).Single(n => n.Id == spawn.Id);
@@ -2780,11 +2783,29 @@ public sealed class WorldAndSpacemapSpecificationTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(firstHit.Hp, Is.EqualTo(989));
-            Assert.That(duplicate.Hp, Is.EqualTo(989));
+            Assert.That(firstHit.Hp, Is.EqualTo(999));
+            Assert.That(duplicate.Hp, Is.EqualTo(999));
             Assert.That(cooldown.Hp, Is.EqualTo(988));
-            Assert.That(ready.Hp, Is.EqualTo(977));
+            Assert.That(ready.Hp, Is.EqualTo(987));
         });
+    }
+
+    [Test]
+    public async Task AutoRocket_PilotToggleIsSharedAndOverridesServerDefault()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var options = Options.Create(new WorldNpcOptions { AutoRocketOnLaser = true });
+        var first = new WorldNpcs(cache, mutex, new TestRewards(), options, new AdvancingClock());
+        var second = new WorldNpcs(cache, mutex, new TestRewards(), options, new AdvancingClock());
+
+        Assert.That(await first.AutoRocketEnabledAsync(71, default), Is.True);
+        await first.SetAutoRocketAsync(71, false, default);
+        Assert.That(await second.AutoRocketEnabledAsync(71, default), Is.False);
+        Assert.That(await second.AutoRocketEnabledAsync(72, default), Is.True);
+        await second.SetAutoRocketAsync(71, true, default);
+        Assert.That(await first.AutoRocketEnabledAsync(71, default), Is.True);
     }
 
     [Test]
