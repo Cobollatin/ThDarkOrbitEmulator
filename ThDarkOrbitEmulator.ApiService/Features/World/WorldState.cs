@@ -438,6 +438,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         {
             var pilot = entry.Pilot;
             var saved = await cache.GetStringAsync(Key(pilot.UserId), ct);
+            var hasSavedPosition = false;
             if (saved is not null)
             {
                 try
@@ -446,6 +447,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                     // The saved position is authoritative for map membership.
                     var location = JsonSerializer.Deserialize<WorldPosition>(saved);
                     if (location is not null && location.MapId != mapId) continue;
+                    hasSavedPosition = location is not null;
                     var moving = JsonSerializer.Deserialize<WorldTravel>(saved);
                     if (moving?.MapId == mapId && moving.Speed > 0)
                     {
@@ -464,7 +466,15 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             var runtime = await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct);
             if (runtime is not null)
             {
-                try { pilot = pilot with { IsInvisible = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(runtime)?.IsInvisible ?? pilot.IsInvisible }; }
+                try
+                {
+                    var snapshot = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(runtime);
+                    // The runtime map also identifies a completed transfer when the
+                    // position key has been evicted but an old roster entry survives.
+                    if (!hasSavedPosition && snapshot is not null && snapshot.MapId != mapId) continue;
+                    if (snapshot?.MapId == mapId)
+                        pilot = pilot with { IsInvisible = snapshot.IsInvisible };
+                }
                 catch (JsonException) { }
             }
             result.Add(pilot);

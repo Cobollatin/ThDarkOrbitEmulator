@@ -3624,6 +3624,36 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task StalePresenceAfterTransfer_WithMissingPosition_CannotAttractNpc()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var first = new WorldSessionStore(cache, mutex);
+        var second = new WorldSessionStore(cache, mutex);
+        var clock = new TestClock();
+        var npcs = new WorldNpcs(cache, mutex, new TestRewards(), Options.Create(new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 100, 0, 0, 0, 0, 0, 1)]
+        }), clock);
+        var spawn = npcs.Spawn(1, clock.GetUtcNow()).Single();
+        var pilot = await first.EnterAsync(Pilot() with
+        {
+            AccountId = Guid.NewGuid(), X = spawn.X, Y = spawn.Y
+        }, default);
+        var oldRoster = await cache.GetStringAsync("world:presence:map:1");
+
+        await second.TeleportAsync(pilot.UserId, 2, 3000, 1300, false, default);
+        await cache.SetStringAsync("world:presence:map:1", oldRoster!);
+        await cache.RemoveAsync($"world:position:{pilot.UserId}");
+
+        Assert.That(await first.ConnectedAsync(1, default), Is.Empty);
+        Assert.That((await first.ConnectedAsync(2, default)).Single().UserId, Is.EqualTo(pilot.UserId));
+        await npcs.TickAggroAsync(1, first, default);
+        Assert.That(await cache.GetStringAsync($"world:npc:v2:1:{spawn.Id}"), Does.Contain("\"TargetUserId\":0"));
+    }
+
+    [Test]
     public async Task CloakCooldown_SurvivesCooldownKeyEvictionAcrossWorldInstances()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
