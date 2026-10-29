@@ -182,14 +182,19 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private static string RuntimeKey(long userId) => $"world:runtime:{userId}";
     private static string CombatKey(long userId) => $"world:combat:{userId}";
     private static string DeathKey(long userId) => $"world:death:{userId}";
-    private async Task<string?> DeathIdAsync(long userId, CancellationToken ct)
+    private async Task<string?> DeathIdAsync(long userId, CancellationToken ct,
+        Guid accountId = default)
     {
         var deathId = await cache.GetStringAsync(DeathKey(userId), ct);
         if (deathId is not null) return deathId;
         var saved = await cache.GetStringAsync(RuntimeKey(userId), ct);
-        if (saved is null) return null;
-        try { deathId = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(saved)?.DeathId; }
-        catch (JsonException) { return null; }
+        if (saved is not null)
+        {
+            try { deathId = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(saved)?.DeathId; }
+            catch (JsonException) { /* The durable record can still restore this life. */ }
+        }
+        if (deathId is null && accountId != Guid.Empty && repairWallet is not null)
+            deathId = await repairWallet.FindDeathAsync(accountId, ct);
         if (deathId is not null)
             await cache.SetStringAsync(DeathKey(userId), deathId,
                 new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
@@ -538,9 +543,27 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     public async Task<WorldPilot> EnterAsync(WorldPilot pilot, CancellationToken ct)
     {
         pilot = await RefreshAsync(pilot, ct);
+        // A lost runtime snapshot also loses the zero-hull marker. A committed repair
+        // for the latest durable death is enough to resume the paid world transition.
+        if (CurrentHitPoints(pilot) > 0 && repairWallet is not null && pilot.AccountId != Guid.Empty
+            && await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct) is null)
+        {
+            var savedDeath = await repairWallet.FindDeathAsync(pilot.AccountId, ct);
+            if (savedDeath is not null)
+            {
+                foreach (var paidLocation in new[]
+                         { WorldRespawnLocation.DeathLocation, WorldRespawnLocation.NearestPortal })
+                {
+                    if (await repairWallet.FindChargeAsync(pilot.AccountId, paidLocation, savedDeath, ct)
+                        is null) continue;
+                    hitPoints[pilot.UserId] = 0;
+                    break;
+                }
+            }
+        }
         if (CurrentHitPoints(pilot) == 0 && repairWallet is not null && pilot.AccountId != Guid.Empty)
         {
-            var deathId = await DeathIdAsync(pilot.UserId, ct);
+            var deathId = await DeathIdAsync(pilot.UserId, ct, pilot.AccountId);
             if (deathId is not null)
             {
                 foreach (var paidLocation in new[]
@@ -1212,7 +1235,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             {
                 if (repairWallet is null || pilot.AccountId == Guid.Empty
                     || location is WorldRespawnLocation.Base) return null;
-                var completedDeathId = await DeathIdAsync(pilot.UserId, ct);
+                var completedDeathId = await DeathIdAsync(pilot.UserId, ct, pilot.AccountId);
                 if (completedDeathId is null) return null;
                 var completed = await repairWallet.FindChargeAsync(pilot.AccountId, location,
                     completedDeathId, ct);
@@ -1225,7 +1248,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             // Resume that paid choice even when the retry asks for a different repair location.
             if (repairWallet is not null && pilot.AccountId != Guid.Empty)
             {
-                var deathId = await DeathIdAsync(pilot.UserId, ct);
+                var deathId = await DeathIdAsync(pilot.UserId, ct, pilot.AccountId);
                 if (deathId is not null)
                 {
                     foreach (var paidLocation in new[]
@@ -1251,7 +1274,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             if (cooldown > TimeSpan.Zero && repairWallet is not null)
             {
                 if (pilot.AccountId == Guid.Empty) return null;
-                var deathId = await DeathIdAsync(pilot.UserId, ct);
+                var deathId = await DeathIdAsync(pilot.UserId, ct, pilot.AccountId);
                 if (deathId is null)
                 {
                     deathId = Guid.NewGuid().ToString("N");
@@ -1488,7 +1511,10 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         hitPoints[pilot.UserId] = Math.Max(0, CurrentHitPoints(pilot) - (damage - absorbed));
         if (hitPoints[pilot.UserId] == 0)
         {
-            await cache.SetStringAsync(DeathKey(pilot.UserId), Guid.NewGuid().ToString("N"),
+            var deathId = Guid.NewGuid().ToString("N");
+            if (repairWallet is not null && pilot.AccountId != Guid.Empty)
+                await repairWallet.RecordDeathAsync(pilot.AccountId, deathId, ct);
+            await cache.SetStringAsync(DeathKey(pilot.UserId), deathId,
                 new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
             var (x, y) = CurrentPosition(pilot);
             pilot = pilot with { X = x, Y = y };

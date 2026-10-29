@@ -1489,6 +1489,27 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
         return applied;
     }
 
+    public async Task RecordWorldDeathAsync(Guid accountId, string deathId, CancellationToken ct)
+    {
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(
+            "INSERT INTO economy.world_deaths(account_id,death_id) VALUES (@a,@d) ON CONFLICT (account_id) DO UPDATE SET death_id=EXCLUDED.death_id", db);
+        cmd.Parameters.AddWithValue("a", accountId);
+        cmd.Parameters.AddWithValue("d", deathId);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<string?> FindWorldDeathAsync(Guid accountId, CancellationToken ct)
+    {
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(
+            "SELECT death_id FROM economy.world_deaths WHERE account_id=@a", db);
+        cmd.Parameters.AddWithValue("a", accountId);
+        return (string?)await cmd.ExecuteScalarAsync(ct);
+    }
+
     public async Task<WorldRepairPayment> ChargeRepairAsync(Guid accountId, int price, string key, CancellationToken ct)
     {
         if (accountId == Guid.Empty || price <= 0 || string.IsNullOrWhiteSpace(key))

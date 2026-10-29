@@ -1547,6 +1547,36 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(await cache.GetStringAsync($"world:death:{pilot.UserId}"), Is.EqualTo(wallet.Keys[0]));
     }
 
+    [TestCase(WorldRespawnLocation.DeathLocation, 300)]
+    [TestCase(WorldRespawnLocation.NearestPortal, 200)]
+    public async Task PilotDestruction_ReentryRecoversAfterBothDeathCachesAreLost(
+        WorldRespawnLocation paidLocation, int price)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var wallet = new TestRepairWallet { CanPay = true, ThrowAfterChargeOnce = true };
+        var store = new WorldSessionStore(cache, repairWallet: wallet);
+        var replica = new WorldSessionStore(cache, repairWallet: wallet);
+        var pilot = await store.EnterAsync(Pilot() with
+        {
+            UserId = 1900 + price, AccountId = Guid.NewGuid(), MapId = 2,
+            FactionId = 1, X = 5000, Y = 5000, Uridium = 1000,
+            Stats = new WorldShipStats(300, 1000, 100, 0, 100, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0);
+        Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await store.RespawnAsync(pilot, paidLocation, default));
+        await cache.RemoveAsync($"world:death:{pilot.UserId}");
+        await cache.RemoveAsync($"world:runtime:{pilot.UserId}");
+
+        var restored = await replica.EnterAsync(pilot, default);
+
+        Assert.That(replica.CurrentHitPoints(restored), Is.GreaterThan(0));
+        Assert.That(restored.Uridium, Is.EqualTo(1000 - price));
+        Assert.That(wallet.Keys, Has.Count.EqualTo(1));
+        Assert.That(await cache.GetStringAsync($"world:death:{pilot.UserId}"), Is.EqualTo(wallet.Keys[0]));
+    }
+
     [TestCase("0", 0)]
     [TestCase("1000000", 1000000)]
     [TestCase("-1", 150)]
@@ -2240,6 +2270,14 @@ public sealed class WorldAndSpacemapSpecificationTests
         public bool ThrowAfterChargeOnce { get; set; }
         public List<string> Keys { get; } = [];
         private readonly Dictionary<string, int> prices = [];
+        private readonly Dictionary<Guid, string> deaths = [];
+        public Task RecordDeathAsync(Guid accountId, string deathId, CancellationToken ct)
+        {
+            deaths[accountId] = deathId;
+            return Task.CompletedTask;
+        }
+        public Task<string?> FindDeathAsync(Guid accountId, CancellationToken ct) =>
+            Task.FromResult(deaths.GetValueOrDefault(accountId));
         public Task<WorldRepairPayment> ChargeAsync(Guid accountId, WorldRespawnLocation location,
             string deathId, CancellationToken ct)
         {
