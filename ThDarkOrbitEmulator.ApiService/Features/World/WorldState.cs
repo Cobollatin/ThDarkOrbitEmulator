@@ -184,9 +184,9 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 try
                 {
                     var runtime = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(runtimeJson);
-                    hasRuntimeMap = runtime is not null;
-                    runtimeOnAnotherMap = runtime is not null && runtime.MapId != pilot.MapId;
-                    if (runtime?.MapId == pilot.MapId && runtime.IsInvisible != pilot.IsInvisible)
+                    hasRuntimeMap = runtime is not null && IsValidWorldMap(runtime.MapId);
+                    runtimeOnAnotherMap = hasRuntimeMap && runtime!.MapId != pilot.MapId;
+                    if (hasRuntimeMap && runtime!.MapId == pilot.MapId && runtime.IsInvisible != pilot.IsInvisible)
                     {
                         current = pilot with { IsInvisible = runtime.IsInvisible };
                         RefreshConnectedPilot(current);
@@ -499,12 +499,12 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 try
                 {
                     var snapshot = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(runtime);
-                    hasRuntimeMap = snapshot is not null;
+                    hasRuntimeMap = snapshot is not null && IsValidWorldMap(snapshot.MapId);
                     // The runtime map also identifies a completed transfer when the
                     // position key has been evicted but an old roster entry survives.
-                    if ((!hasSavedPosition || !hasMapOwner) && snapshot is not null
-                        && snapshot.MapId != mapId) continue;
-                    if (snapshot?.MapId == mapId)
+                    if ((!hasSavedPosition || !hasMapOwner) && hasRuntimeMap
+                        && snapshot!.MapId != mapId) continue;
+                    if (hasRuntimeMap && snapshot!.MapId == mapId)
                         pilot = pilot with { IsInvisible = snapshot.IsInvisible };
                 }
                 catch (JsonException) { }
@@ -1237,8 +1237,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                     try
                     {
                         var snapshot = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(runtime);
-                        hasRuntimeMap = snapshot is not null;
-                        if (snapshot is not null && snapshot.MapId != mapId) continue;
+                        hasRuntimeMap = snapshot is not null && IsValidWorldMap(snapshot.MapId);
+                        if (hasRuntimeMap && snapshot!.MapId != mapId) continue;
                     }
                     catch (JsonException) { }
                 }
