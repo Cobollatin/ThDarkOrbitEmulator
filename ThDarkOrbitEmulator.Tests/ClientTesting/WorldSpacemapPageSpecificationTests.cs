@@ -77,6 +77,7 @@ public sealed class WorldSpacemapPageSpecificationTests
     [TestCase("jump")]
     [TestCase("target")]
     [TestCase("fire")]
+    [TestCase("pulse")]
     [TestCase("announcement")]
     [TestCase("status")]
     [TestCase("warning")]
@@ -136,10 +137,23 @@ public sealed class WorldSpacemapPageSpecificationTests
     [TestCase("request('collect','POST',{boxId:box.id,mapId:state.map.id})")]
     [TestCase("request('target','POST',{npcId:command.id,mapId:command.mapId})")]
     [TestCase("request('fire','POST',{npcId,mapId})")]
+    [TestCase("request('pulse','POST',{mapId})")]
     [TestCase("request('config','POST',{configuration:command.configuration,mapId:command.mapId})")]
     public void Page_UsesDocumentedWorldBridgeCommandShapes(string call)
     {
         Assert.That(Html, Does.Contain(call));
+    }
+
+    [Test]
+    public void Page_PulseCanBeUsedWithoutASelectedTarget_AndShowsServerResult()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(Html, Does.Contain("document.getElementById('pulse').disabled=p.hp<=0||state.map.id>=101||inside"));
+            Assert.That(Html, Does.Contain("if(!state||pulsePending||document.getElementById('pulse').disabled)return"));
+            Assert.That(Html, Does.Contain("result.hits.length?'Pulse hit '"));
+            Assert.That(Html, Does.Contain("e.status==='cooldown'?'Pulse is recharging.'"));
+        });
     }
 
     [TestCase("adminRequest('vars')")]
