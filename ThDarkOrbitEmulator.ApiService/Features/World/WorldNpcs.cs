@@ -582,6 +582,9 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             var x = distance == 0 ? npc.X + (int)Math.Round(step)
                 : npc.X + (int)Math.Round(dx * step / distance);
             var y = distance == 0 ? npc.Y : npc.Y + (int)Math.Round(dy * step / distance);
+            var map = WorldMapInstance.Starter(mapId);
+            x = Math.Clamp(x, 0, map.Width);
+            y = Math.Clamp(y, 0, map.Height);
             npc = npc with { X = x, Y = y };
             var fire = template?.Aggressive != false &&
                 DistanceSquared(x, y, target.Position.X, target.Position.Y) <=
