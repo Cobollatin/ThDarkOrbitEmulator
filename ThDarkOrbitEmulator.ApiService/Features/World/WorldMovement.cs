@@ -6,9 +6,11 @@ public sealed record WorldTravel(int MapId, double StartX, double StartY, int Ta
 {
     public (int X, int Y) PositionAt(DateTimeOffset now)
     {
-        var elapsed = Math.Max(0, now.ToUnixTimeMilliseconds() - StartedAtUnixMilliseconds) / 1000d;
+        var elapsedMilliseconds = Math.Max(0, now.ToUnixTimeMilliseconds() - StartedAtUnixMilliseconds);
         var distance = Math.Sqrt(Math.Pow(TargetX - StartX, 2) + Math.Pow(TargetY - StartY, 2));
-        var fraction = distance == 0 ? 1 : Math.Clamp(elapsed * Speed / distance, 0, 1);
+        var durationMilliseconds = WorldMovement.DurationMilliseconds(distance, Speed);
+        var fraction = Speed <= 0 ? 0 : durationMilliseconds == 0 ? 1
+            : Math.Clamp((double)elapsedMilliseconds / durationMilliseconds, 0, 1);
         return ((int)Math.Round(StartX + (TargetX - StartX) * fraction),
             (int)Math.Round(StartY + (TargetY - StartY) * fraction));
     }

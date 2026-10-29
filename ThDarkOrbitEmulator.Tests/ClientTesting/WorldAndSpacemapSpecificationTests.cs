@@ -830,6 +830,23 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public void TravelInterpolation_UsesAnnouncedRoundedDuration()
+    {
+        var start = DateTimeOffset.FromUnixTimeMilliseconds(10_000);
+        var pilot = Pilot() with { X = 0, Y = 100 };
+        var move = WorldMovement.Begin(pilot, null, 1, 100, 167, start);
+        var travel = WorldMovement.Travel(pilot, null, move, 167, start);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(move.TimeToTargetMs, Is.EqualTo(6));
+            Assert.That(travel.PositionAt(start.AddMilliseconds(3)), Is.EqualTo((0, 100)));
+            Assert.That(travel.PositionAt(start.AddMilliseconds(4)), Is.EqualTo((1, 100)));
+            Assert.That(travel.PositionAt(start.AddMilliseconds(6)), Is.EqualTo((1, 100)));
+        });
+    }
+
+    [Test]
     public void TravelInterpolation_UsesMidpointToEvenForBothCoordinates()
     {
         var start = DateTimeOffset.FromUnixTimeMilliseconds(10_000);
