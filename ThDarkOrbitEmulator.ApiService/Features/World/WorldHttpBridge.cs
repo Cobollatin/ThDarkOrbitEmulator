@@ -552,19 +552,22 @@ public static class WorldHttpBridge
         pilot = await sessions.GetOrEnterAsync(pilot, ct);
         await SetMeshHeadersAsync(context, pilot.MapId, ct);
         int? expectedMapId;
+        Guid actionId;
         try
         {
             using var body = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: ct);
             expectedMapId = body.RootElement.TryGetProperty("mapId", out var map) ? map.GetInt32() : null;
+            actionId = body.RootElement.TryGetProperty("actionId", out var action)
+                ? action.GetGuid() : Guid.Empty;
         }
-        catch (Exception e) when (e is JsonException or InvalidOperationException)
+        catch (Exception e) when (e is JsonException or InvalidOperationException or FormatException)
         { context.Response.StatusCode = 400; return; }
-        if (expectedMapId is <= 0) { context.Response.StatusCode = 400; return; }
+        if (expectedMapId is <= 0 || actionId == Guid.Empty) { context.Response.StatusCode = 400; return; }
         if (expectedMapId is not null && expectedMapId != pilot.MapId)
         { await MapChangedAsync(context, pilot, sessions, ct); return; }
         WorldNpcPulse result;
         try { result = await npcs.PulseAsync(pilot, sessions, ct,
-            await LeaseFenceAsync(context, pilot.MapId, ct), expectedMapId); }
+            await LeaseFenceAsync(context, pilot.MapId, ct), expectedMapId, actionId); }
         catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
         catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
         if (result.Status != "hit") context.Response.StatusCode = 409;

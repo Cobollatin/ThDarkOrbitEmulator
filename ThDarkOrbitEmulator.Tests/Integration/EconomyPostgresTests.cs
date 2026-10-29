@@ -49,6 +49,44 @@ public class EconomyPostgresTests
 
     [Test]
     [Category("Integration")]
+    public async Task PulseCharge_ActionRetryConsumesOnlyOnceAcrossStores()
+    {
+        var ct = TestContext.CurrentContext.CancellationToken;
+        await using var postgres = new PostgreSqlBuilder("postgres:16-alpine")
+            .WithDatabase("thdarkorbit").WithUsername("app").WithPassword("app").Build();
+        await postgres.StartAsync(ct);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["ConnectionStrings:identity-write"] = postgres.GetConnectionString() }).Build();
+        await new SqlMigrationHostedService(config, Options.Create(new IdentityDatabaseOptions
+        { AutoMigrate = true, BackupBeforeMigration = false, Schema = "identity" }),
+            NullLogger<SqlMigrationHostedService>.Instance).StartAsync(ct);
+        var account = Guid.NewGuid();
+        await using var db = new NpgsqlConnection(postgres.GetConnectionString());
+        await db.OpenAsync(ct);
+        await using (var create = new NpgsqlCommand(
+            "INSERT INTO identity.accounts(id,username,game_user_id) VALUES (@a,'pulse-retry',4023)", db))
+        { create.Parameters.AddWithValue("a", account); await create.ExecuteNonQueryAsync(ct); }
+        var first = new EconomyStore(config);
+        var second = new EconomyStore(config);
+        Assert.That(await first.GrantItemAsync(account, "pulse_charge", 2, "pulse-retry", 0,
+            "test", ct), Is.True);
+        var action = Guid.NewGuid();
+        var retries = await Task.WhenAll(first.ConsumeItemOnceAsync(account, "pulse_charge", action, ct),
+            second.ConsumeItemOnceAsync(account, "pulse_charge", action, ct));
+        Assert.That(retries, Is.EquivalentTo(new[]
+            { PulseChargeResult.Consumed, PulseChargeResult.Duplicate }));
+        Assert.That((await first.InventoryAsync(account, ct))["pulse_charge"], Is.EqualTo(1));
+        Assert.That(await second.ConsumeItemOnceAsync(account, "pulse_charge", action, ct),
+            Is.EqualTo(PulseChargeResult.Duplicate));
+        Assert.That(await second.ConsumeItemOnceAsync(account, "pulse_charge", Guid.NewGuid(), ct),
+            Is.EqualTo(PulseChargeResult.Consumed));
+        Assert.That(await first.ConsumeItemOnceAsync(account, "pulse_charge", Guid.NewGuid(), ct),
+            Is.EqualTo(PulseChargeResult.Unavailable));
+        Assert.That((await first.InventoryAsync(account, ct))["pulse_charge"], Is.Zero);
+    }
+
+    [Test]
+    [Category("Integration")]
     public async Task LegacyEquipmentImport_CapsShipSlotsAndKeepsRemainderTransferable()
     {
         var ct = TestContext.CurrentContext.CancellationToken;

@@ -4,11 +4,11 @@ namespace ThDarkOrbitEmulator.ApiService.Features.World;
 
 public interface IWorldPulseInventory
 {
-    Task<bool> ConsumeAsync(Guid accountId, CancellationToken ct);
+    Task<PulseChargeResult> ConsumeAsync(Guid accountId, Guid actionId, CancellationToken ct);
 }
 
 public sealed class WorldPulseInventory(EconomyStore economy) : IWorldPulseInventory
 {
-    public Task<bool> ConsumeAsync(Guid accountId, CancellationToken ct) =>
-        economy.ConsumeItemAsync(accountId, "pulse_charge", ct);
+    public Task<PulseChargeResult> ConsumeAsync(Guid accountId, Guid actionId, CancellationToken ct) =>
+        economy.ConsumeItemOnceAsync(accountId, "pulse_charge", actionId, ct);
 }

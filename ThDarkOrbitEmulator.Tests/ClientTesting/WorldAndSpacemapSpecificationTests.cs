@@ -1630,7 +1630,8 @@ public sealed class WorldAndSpacemapSpecificationTests
             AccountId = Guid.NewGuid(), X = npc.X, Y = npc.Y,
             Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
         }, default);
-        var first = await npcs.PulseAsync(pilot, sessions, default);
+        var actionId = Guid.NewGuid();
+        var first = await npcs.PulseAsync(pilot, sessions, default, actionId: actionId);
         Assert.That(first.Status, Is.EqualTo("hit"));
         Assert.That(first.Hits.Select(hit => hit.Damage), Is.EqualTo(new[] { 20 }));
         Assert.That(first.Hits.Single().Target!.Hp, Is.EqualTo(80));
@@ -1638,6 +1639,9 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That((await replica.PulseAsync(pilot, sessions, default)).Status, Is.EqualTo("cooldown"));
         Assert.That(inventory.Remaining, Is.EqualTo(1));
         clock.Advance(TimeSpan.FromSeconds(30));
+        Assert.That((await replica.PulseAsync(pilot, sessions, default, actionId: actionId)).Status,
+            Is.EqualTo("duplicate"));
+        Assert.That(inventory.Remaining, Is.EqualTo(1));
         var second = await replica.PulseAsync(pilot, sessions, default);
         Assert.That(second.Hits.Single().Target!.Hp, Is.EqualTo(64));
         Assert.That(inventory.Remaining, Is.Zero);
@@ -1781,11 +1785,11 @@ public sealed class WorldAndSpacemapSpecificationTests
 
         public void Refill(int amount) => Remaining += amount;
 
-        public Task<bool> ConsumeAsync(Guid accountId, CancellationToken ct)
+        public Task<PulseChargeResult> ConsumeAsync(Guid accountId, Guid actionId, CancellationToken ct)
         {
-            if (Remaining == 0) return Task.FromResult(false);
+            if (Remaining == 0) return Task.FromResult(PulseChargeResult.Unavailable);
             Remaining--;
-            return Task.FromResult(true);
+            return Task.FromResult(PulseChargeResult.Consumed);
         }
     }
 

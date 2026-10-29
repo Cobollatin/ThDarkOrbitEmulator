@@ -137,7 +137,7 @@ public sealed class WorldSpacemapPageSpecificationTests
     [TestCase("request('collect','POST',{boxId:box.id,mapId:state.map.id})")]
     [TestCase("request('target','POST',{npcId:command.id,mapId:command.mapId})")]
     [TestCase("request('fire','POST',{npcId,mapId})")]
-    [TestCase("request('pulse','POST',{mapId})")]
+    [TestCase("request('pulse','POST',{mapId,actionId})")]
     [TestCase("request('config','POST',{configuration:command.configuration,mapId:command.mapId})")]
     public void Page_UsesDocumentedWorldBridgeCommandShapes(string call)
     {
@@ -154,6 +154,7 @@ public sealed class WorldSpacemapPageSpecificationTests
             Assert.That(Html, Does.Contain("result.hits.length?'Pulse hit '"));
             Assert.That(Html, Does.Contain("e.status==='cooldown'?'Pulse is recharging.'"));
             Assert.That(Html, Does.Contain("e.status==='out_of_ammo'?'Buy pulse charges in the shop.'"));
+            Assert.That(Html, Does.Contain("sessionStorage.getItem('pulseActionId')||crypto.randomUUID()"));
         });
     }
 

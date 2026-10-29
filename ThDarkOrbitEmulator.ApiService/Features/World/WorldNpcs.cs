@@ -243,10 +243,13 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
     }
 
     public async Task<WorldNpcPulse> PulseAsync(WorldPilot pilot, WorldSessionStore sessions,
-        CancellationToken ct, WorldLeaseFence? fence = null, int? expectedMapId = null)
+        CancellationToken ct, WorldLeaseFence? fence = null, int? expectedMapId = null,
+        Guid? actionId = null)
     {
         if (pilot.AccountId == Guid.Empty || WorldMapInstance.IsGate(pilot.MapId))
             return new("invalid", []);
+        var pulseActionId = actionId.GetValueOrDefault();
+        if (pulseActionId == Guid.Empty) pulseActionId = Guid.NewGuid();
         await using (var held = await mutex.AcquireAsync(ct))
         {
             await WorldSessionStore.CheckLeaseAsync(pilot.MapId, fence, ct);
@@ -259,15 +262,24 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             if (InsidePeaceZone(pilot.MapId, position) || map.Portals.Any(portal =>
                 DistanceSquared(position.X, position.Y, portal.X, portal.Y) <= 300L * 300))
                 return new("restricted", []);
+            var actionKey = $"world:npc:pulse:action:{pilot.UserId}:{pulseActionId:N}";
+            if (await cache.GetStringAsync(actionKey, ct) is not null)
+                return new("duplicate", []);
             var key = $"world:npc:pulse:{pilot.UserId}";
             var now = clock.GetUtcNow().ToUnixTimeMilliseconds();
             var saved = await cache.GetStringAsync(key, ct);
             if (long.TryParse(saved, out var last) && now - last < Math.Max(1, settings.PulseCooldownSeconds) * 1000L)
                 return new("cooldown", []);
-            if (pulseInventory is not null && !await pulseInventory.ConsumeAsync(pilot.AccountId, ct))
-                return new("out_of_ammo", []);
+            if (pulseInventory is not null)
+            {
+                var charge = await pulseInventory.ConsumeAsync(pilot.AccountId, pulseActionId, ct);
+                if (charge == PulseChargeResult.Duplicate) return new("duplicate", []);
+                if (charge == PulseChargeResult.Unavailable) return new("out_of_ammo", []);
+            }
             await cache.SetStringAsync(key, now.ToString(), new DistributedCacheEntryOptions
             { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(Math.Max(1, settings.PulseCooldownSeconds)) }, ct);
+            await cache.SetStringAsync(actionKey, "1", new DistributedCacheEntryOptions
+            { AbsoluteExpirationRelativeToNow = TimeSpan.FromDays(1) }, ct);
         }
         var origin = sessions.CurrentPosition(pilot, clock.GetUtcNow());
         var candidates = (await VisibleAsync(pilot.MapId, ct))

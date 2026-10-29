@@ -21,6 +21,7 @@ public sealed record EconomyLedgerRow(long Id, long Sequence, string AssetId, lo
     string Reason, string MenuSource, DateTimeOffset OccurredAt);
 public enum EconomyPurchaseResult { Applied, Duplicate, Invalid, Unavailable, InsufficientFunds }
 public enum EconomyCraftResult { Applied, Duplicate, Invalid, NotFound, Unavailable, InsufficientInputs }
+public enum PulseChargeResult { Consumed, Duplicate, Unavailable }
 public enum GalaxyGateChange { Applied, Invalid, Conflict, InsufficientEnergy }
 public enum SkylabChange { Applied, Invalid, Conflict, InsufficientResources, MaxLevel, NothingToCollect }
 public enum TechFactoryChange { Applied, Invalid, Conflict, InsufficientComponents }
@@ -896,6 +897,48 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
         cmd.Parameters.AddWithValue("a", accountId);
         cmd.Parameters.AddWithValue("i", itemId);
         return await cmd.ExecuteScalarAsync(ct) is not null;
+    }
+
+    // The action row and inventory decrement commit together. Replaying the same
+    // action never takes another charge, including after a process restart.
+    public async Task<PulseChargeResult> ConsumeItemOnceAsync(Guid accountId, string itemId,
+        Guid actionId, CancellationToken ct)
+    {
+        if (accountId == Guid.Empty || actionId == Guid.Empty || string.IsNullOrWhiteSpace(itemId))
+            return PulseChargeResult.Unavailable;
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var tx = await db.BeginTransactionAsync(ct);
+        await using (var marker = new NpgsqlCommand("""
+            INSERT INTO economy.pulse_actions(account_id,action_id,item_id)
+            VALUES (@a,@k,@i) ON CONFLICT DO NOTHING RETURNING action_id
+            """, db, tx))
+        {
+            marker.Parameters.AddWithValue("a", accountId);
+            marker.Parameters.AddWithValue("k", actionId);
+            marker.Parameters.AddWithValue("i", itemId);
+            if (await marker.ExecuteScalarAsync(ct) is null)
+            {
+                await using var existing = new NpgsqlCommand("""
+                    SELECT item_id FROM economy.pulse_actions
+                    WHERE account_id=@a AND action_id=@k
+                    """, db, tx);
+                existing.Parameters.AddWithValue("a", accountId);
+                existing.Parameters.AddWithValue("k", actionId);
+                return string.Equals((string?)await existing.ExecuteScalarAsync(ct), itemId,
+                    StringComparison.Ordinal) ? PulseChargeResult.Duplicate : PulseChargeResult.Unavailable;
+            }
+        }
+        await using var consume = new NpgsqlCommand("""
+            UPDATE economy.inventory SET quantity=quantity-1
+            WHERE account_id=@a AND item_id=@i AND quantity>0
+            RETURNING quantity
+            """, db, tx);
+        consume.Parameters.AddWithValue("a", accountId);
+        consume.Parameters.AddWithValue("i", itemId);
+        if (await consume.ExecuteScalarAsync(ct) is null) return PulseChargeResult.Unavailable;
+        await tx.CommitAsync(ct);
+        return PulseChargeResult.Consumed;
     }
 
     public async Task<IReadOnlyList<EconomyRecipe>> RecipesAsync(CancellationToken ct)
