@@ -3432,6 +3432,29 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task CloakActivation_BlockedMapDoesNotStartCooldown()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var sessions = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(),
+            new TestMutex(), cloakBlockedMaps: new HashSet<int> { 1 });
+        var pilot = await sessions.EnterAsync(Pilot() with
+        {
+            X = 10000, Y = 6000,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+
+        Assert.ThrowsAsync<WorldCloakBlockedException>(
+            async () => await sessions.SetCloakAsync(pilot, true, default));
+        Assert.That((await sessions.ConnectedAsync(1, default)).Single().IsInvisible, Is.False);
+        Assert.That(await services.GetRequiredService<IDistributedCache>()
+            .GetStringAsync($"world:cloak-cooldown:{pilot.UserId}"), Is.Null);
+
+        var other = await sessions.EnterAsync(pilot with { UserId = pilot.UserId + 1, MapId = 2 }, default);
+        other = await sessions.SetCloakAsync(other, true, default);
+        Assert.That(other.IsInvisible, Is.True);
+    }
+
+    [Test]
     public async Task CloakState_IsSharedAcrossWorldInstances_AndSurvivesReentry()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

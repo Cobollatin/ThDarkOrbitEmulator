@@ -123,13 +123,14 @@ public sealed class WorldCloakCooldownException(int remainingMs) : Exception("Cl
 {
     public int RemainingMs { get; } = remainingMs;
 }
+public sealed class WorldCloakBlockedException() : Exception("Cloak activation is blocked on this map.");
 
 public sealed record WorldPresence(WorldPilot Pilot, DateTimeOffset SeenAtUtc);
 
 public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex? meshMutex = null,
     IRuntimeVariableRegistry? variables = null, TimeProvider? clock = null, EconomyStore? economy = null,
     IWorldRepairWallet? repairWallet = null, WorldPortalOperations? portalOperations = null,
-    IReadOnlySet<int>? combatRestrictedMaps = null)
+    IReadOnlySet<int>? combatRestrictedMaps = null, IReadOnlySet<int>? cloakBlockedMaps = null)
 {
     public Task<WorldMapInstance> MapAsync(int mapId, CancellationToken ct) => portalOperations is null
         ? Task.FromResult(WorldMapInstance.Starter(mapId)) : portalOperations.MapAsync(mapId, ct);
@@ -641,6 +642,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         if (pilot.IsInvisible == active) return pilot;
         if (active)
         {
+            if (cloakBlockedMaps?.Contains(pilot.MapId) == true)
+                throw new WorldCloakBlockedException();
             var saved = await cache.GetStringAsync(CloakCooldownKey(pilot.UserId), ct);
             if (long.TryParse(saved, out var milliseconds))
             {

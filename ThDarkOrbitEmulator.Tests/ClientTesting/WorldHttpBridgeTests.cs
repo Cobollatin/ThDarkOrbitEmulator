@@ -540,6 +540,21 @@ public sealed class WorldHttpBridgeTests
     }
 
     [Test]
+    public async Task BrowserCloakAction_ReportsBlockedMap()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var sessions = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(),
+            new NpcMutex(), cloakBlockedMaps: new HashSet<int> { 1 });
+
+        var response = await SendAsync("POST", "cloak", "{\"active\":true}",
+            new Auth(), new Resolver(100), sessions);
+
+        Assert.That(response.Response.StatusCode, Is.EqualTo(409));
+        using var body = JsonDocument.Parse(Body(response));
+        Assert.That(body.RootElement.GetProperty("status").GetString(), Is.EqualTo("blocked_map"));
+    }
+
+    [Test]
     public async Task BrowserCloakAction_ValidatesBooleanAndSharesState()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

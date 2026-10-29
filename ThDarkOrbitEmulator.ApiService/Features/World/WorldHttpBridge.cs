@@ -621,6 +621,8 @@ public static class WorldHttpBridge
         try { pilot = await sessions.SetCloakAsync(pilot, active, ct); }
         catch (WorldPilotDestroyedException)
         { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "destroyed_pilot" }, ct); return; }
+        catch (WorldCloakBlockedException)
+        { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "blocked_map" }, ct); return; }
         catch (WorldCloakCooldownException e)
         { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "cooldown", cooldownRemainingMs = e.RemainingMs }, ct); return; }
         context.Response.Headers.CacheControl = "no-store";
