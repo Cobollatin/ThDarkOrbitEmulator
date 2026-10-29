@@ -204,8 +204,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 }
                 catch (JsonException) { }
             }
-            var mapOnAnotherMap = saved is null && runtimeJson is null
-                && await cache.GetStringAsync(MapKey(pilot.UserId), ct) is { } mapText
+            var mapOnAnotherMap = await cache.GetStringAsync(MapKey(pilot.UserId), ct) is { } mapText
                 && int.TryParse(mapText, out var ownerMap) && ownerMap != pilot.MapId;
             if (positionOnAnotherMap || (saved is null && runtimeOnAnotherMap) || mapOnAnotherMap)
             {
