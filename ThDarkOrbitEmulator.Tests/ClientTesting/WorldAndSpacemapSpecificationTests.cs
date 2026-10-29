@@ -1383,6 +1383,42 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(replica.RadiationWarning(restored.UserId), Is.False);
     }
 
+    [Test]
+    public async Task RadiationDestruction_ClearsCloakForObserversAndRepair()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingClock();
+        var owner = new WorldSessionStore(cache, clock: clock);
+        var pilot = await owner.EnterAsync(Pilot() with
+        {
+            UserId = 913, X = 300, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await owner.ApplyNpcDamageAsync(pilot, 1, 995, default);
+        pilot = await owner.SetCloakAsync(pilot, true, default);
+        using var wire = new MemoryStream();
+        owner.Attach(new WorldConnection(pilot with { UserId = 914 }, new WorldPacketWriter(wire)));
+
+        await owner.MoveAsync(pilot, 0, 1300, null, default, clock.GetUtcNow());
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await owner.TickRadiationAsync(pilot.MapId, default);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        var cloak = await reader.ReadAsync();
+        Assert.That(cloak?.Command, Is.EqualTo(WorldCommandId.CloakStateCommand));
+        Assert.That(WorldPayload.Decode(cloak!.Value.Payload, r =>
+            (WorldPayload.ReadInt64(r), r.ReadBoolean())), Is.EqualTo((pilot.UserId, false)));
+        Assert.That((await owner.ConnectedAsync(pilot.MapId, default)).Single().IsInvisible, Is.False);
+        var replica = new WorldSessionStore(cache, clock: clock);
+        var restored = await replica.EnterAsync(pilot, default);
+        Assert.That(restored.IsInvisible, Is.False);
+        Assert.That(replica.CurrentHitPoints(restored), Is.Zero);
+        var repaired = await replica.RespawnAtBaseAsync(restored, default);
+        Assert.That(repaired?.IsInvisible, Is.False);
+    }
+
     [TestCase(3000, true)]
     [TestCase(3001, false)]
     public async Task StationRepair_UsesInclusiveRadiusAndRequiresStoppedTravel(int x, bool inside)

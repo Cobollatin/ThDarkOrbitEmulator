@@ -1732,11 +1732,26 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 new WorldPosition(pilot.MapId, x, y), ct);
         await cache.SetStringAsync(DeathKey(pilot.UserId), deathId,
             new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
+        var runtimeJson = await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct);
+        var wasCloaked = pilot.IsInvisible;
+        if (runtimeJson is not null)
+        {
+            try { wasCloaked |= JsonSerializer.Deserialize<WorldRuntimeSnapshot>(runtimeJson)?.IsInvisible == true; }
+            catch (JsonException) { }
+        }
         travel.TryRemove(pilot.UserId, out _);
         radiationWarnings.TryRemove(pilot.UserId, out _);
+        if (wasCloaked) pilot = pilot with { IsInvisible = false };
+        if (wasCloaked) await PersistRuntimeAsync(pilot, ct, cloakOverride: false);
         await PersistAsync(pilot, ct);
         if (connected.TryGetValue(pilot.MapId, out var occupants))
             occupants[pilot.UserId] = pilot;
+        if (wasCloaked)
+        {
+            RefreshConnectedPilot(pilot);
+            await WritePresenceAsync(pilot, true, ct);
+            await BroadcastCloakAsync(pilot, ct);
+        }
         return pilot;
     }
 
