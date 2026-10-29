@@ -3542,6 +3542,30 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task CombatAfterConcurrentCloakActivation_LeavesPilotVisible()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new EntryGateMutex();
+        var cloakNode = new WorldSessionStore(cache, mutex);
+        var combatNode = new WorldSessionStore(cache, mutex);
+        var pilot = await cloakNode.EnterAsync(Pilot() with
+        {
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+
+        mutex.PauseNextAcquire();
+        var combat = combatNode.MarkCombatAsync(pilot, default);
+        await mutex.WaitForPausedAcquireAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        try { pilot = await cloakNode.SetCloakAsync(pilot, true, default); }
+        finally { mutex.ResumeAcquire(); }
+        await combat;
+
+        Assert.That((await cloakNode.ConnectedAsync(pilot.MapId, default)).Single().IsInvisible, Is.False);
+        Assert.That((await combatNode.RestoreAsync(pilot, default)).IsInvisible, Is.False);
+    }
+
+    [Test]
     public async Task CombatDecloak_WithStalePilot_DoesNotRestorePresenceOnPreviousMap()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

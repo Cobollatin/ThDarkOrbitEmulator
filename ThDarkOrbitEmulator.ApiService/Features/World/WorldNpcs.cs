@@ -596,7 +596,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                             (1 - spread + Random.Shared.NextDouble() * 2 * spread)));
                     }
                 }
-                if (!resumePulse) await sessions.MarkCombatAsync(pilot, ct);
+                if (!resumePulse) await sessions.MarkCombatWhileLockedAsync(pilot, ct);
                 if (missed)
                 {
                     await cache.SetStringAsync(key, JsonSerializer.Serialize(vital with
@@ -833,7 +833,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 var multiplier = 1 - spread + Random.Shared.NextDouble() * 2 * spread;
                 var damage = missed ? 0 : Math.Max(1,
                     (int)Math.Round(Math.Max(1, settings.NpcDamage) * multiplier));
-                await sessions.ApplyNpcDamageAsync(target.Pilot, npc.Id, damage, ct,
+                await sessions.ApplyNpcDamageWhileLockedAsync(target.Pilot, npc.Id, damage, ct,
                     settings.PilotShieldAbsorption);
             }
         }

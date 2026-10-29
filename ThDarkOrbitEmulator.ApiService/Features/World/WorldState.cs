@@ -263,6 +263,13 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
 
     public async Task MarkCombatAsync(WorldPilot pilot, CancellationToken ct)
     {
+        await using var held = meshMutex is null ? null : await meshMutex.AcquireAsync(ct);
+        await MarkCombatWhileLockedAsync(pilot, ct);
+    }
+
+    // NPC attack paths already hold the mesh lock while selecting and damaging a target.
+    internal async Task MarkCombatWhileLockedAsync(WorldPilot pilot, CancellationToken ct)
+    {
         // Combat can arrive with a target captured before a map transfer.
         pilot = await RefreshAsync(pilot, ct);
         await cache.SetStringAsync(CombatKey(pilot.UserId), combatClock.GetUtcNow().ToUnixTimeMilliseconds().ToString(),
@@ -1778,11 +1785,18 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     public async Task ApplyNpcDamageAsync(WorldPilot pilot, int npcId, int damage, CancellationToken ct,
         double shieldAbsorption = 1)
     {
+        await using var held = meshMutex is null ? null : await meshMutex.AcquireAsync(ct);
+        await ApplyNpcDamageWhileLockedAsync(pilot, npcId, damage, ct, shieldAbsorption);
+    }
+
+    internal async Task ApplyNpcDamageWhileLockedAsync(WorldPilot pilot, int npcId, int damage,
+        CancellationToken ct, double shieldAbsorption = 1)
+    {
         var expectedMapId = pilot.MapId;
         pilot = await RestoreAsync(pilot, ct);
         if (pilot.MapId != expectedMapId || CurrentHitPoints(pilot) <= 0) return;
         if (await RepairProtectedAsync(pilot.UserId, ct)) return;
-        await MarkCombatAsync(pilot, ct);
+        await MarkCombatWhileLockedAsync(pilot, ct);
         var absorbed = Math.Min(CurrentShield(pilot),
             (long)Math.Round(Math.Max(0, damage) * Math.Clamp(shieldAbsorption, 0, 1)));
         shields[pilot.UserId] = CurrentShield(pilot) - absorbed;
