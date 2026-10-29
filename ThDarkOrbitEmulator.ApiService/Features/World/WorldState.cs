@@ -195,18 +195,20 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             }
             var saved = await cache.GetStringAsync(Key(pilot.UserId), ct);
             var positionOnAnotherMap = false;
+            var hasSavedPosition = false;
             if (saved is not null)
             {
                 try
                 {
                     var position = JsonSerializer.Deserialize<WorldPosition>(saved);
+                    hasSavedPosition = position is not null;
                     positionOnAnotherMap = position is not null && position.MapId != pilot.MapId;
                 }
                 catch (JsonException) { }
             }
             var mapOnAnotherMap = await cache.GetStringAsync(MapKey(pilot.UserId), ct) is { } mapText
                 && int.TryParse(mapText, out var ownerMap) && ownerMap != pilot.MapId;
-            if (positionOnAnotherMap || (saved is null && runtimeOnAnotherMap) || mapOnAnotherMap)
+            if (positionOnAnotherMap || (!hasSavedPosition && runtimeOnAnotherMap) || mapOnAnotherMap)
             {
                 if (connected.TryGetValue(pilot.MapId, out var local))
                     local.TryRemove(pilot.UserId, out _);
