@@ -1188,6 +1188,25 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             if ((location is WorldRespawnLocation.DeathLocation or WorldRespawnLocation.NearestPortal)
                 && WorldMapInstance.IsGate(pilot.MapId))
                 return null;
+            // A debit may have committed before the previous request could restore world state.
+            // Resume that paid choice even when the retry asks for a different repair location.
+            if (repairWallet is not null && pilot.AccountId != Guid.Empty)
+            {
+                var deathId = await cache.GetStringAsync(DeathKey(pilot.UserId), ct);
+                if (deathId is not null)
+                {
+                    foreach (var paidLocation in new[]
+                             { WorldRespawnLocation.DeathLocation, WorldRespawnLocation.NearestPortal })
+                    {
+                        if (await repairWallet.FindChargeAsync(pilot.AccountId, paidLocation, deathId, ct)
+                            is not null)
+                        {
+                            location = paidLocation;
+                            break;
+                        }
+                    }
+                }
+            }
             var cooldown = RespawnCooldown(location);
             if (cooldown > TimeSpan.Zero)
             {
