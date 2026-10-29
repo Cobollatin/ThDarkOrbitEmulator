@@ -87,7 +87,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         int? X = null, int? Y = null, long TargetUserId = 0, long LastFireUnixMs = 0,
         long LastStepUnixMs = 0, long LastHitUnixMs = 0, long LastShieldRepairUnixMs = 0,
         long RespawnAtUnixMs = 0, long Generation = 0, Guid[]? PulseActions = null,
-        bool Retaliating = false);
+        bool Retaliating = false, int? PatrolOriginX = null, int? PatrolOriginY = null,
+        bool PatrolOutbound = true);
     private long Cycle => clock.GetUtcNow().ToUnixTimeSeconds() / Math.Max(30, settings.RespawnSeconds);
     public long CurrentCycle => Cycle;
     private static string Key(int map, int id) => $"world:npc:v2:{map}:{id}";
@@ -676,7 +677,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                     respawnMap.Height / 3 + 1) % (respawnMap.Height + 1L));
                 vital = new Vital(spawn.Hp, spawn.Shield, false, Guid.Empty,
                     X: respawnX, Y: respawnY, Generation: vital.Generation + 1,
-                    LastFireUnixMs: vital.LastFireUnixMs);
+                    LastFireUnixMs: vital.LastFireUnixMs,
+                    PatrolOriginX: respawnX, PatrolOriginY: respawnY);
                 await cache.SetStringAsync(key, JsonSerializer.Serialize(vital), Expiry, ct);
                 observerSnapshots.TryRemove(mapId, out _);
             }
@@ -708,24 +710,37 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 target = eligible.OrderBy(p => p.Distance).ThenBy(p => p.Pilot.UserId).FirstOrDefault();
             if (target.Pilot is null)
             {
-                if (vital.TargetUserId != 0 || vital.X is not null || vital.Y is not null)
+                var patrolSpeed = (settings.MapTemplates.GetValueOrDefault(mapId) ?? settings.Templates)
+                    .FirstOrDefault(t => t.Kind == npc.Kind)?.Speed ?? 0;
+                if (patrolSpeed > 0 || vital.TargetUserId != 0)
                 {
-                    var patrolSpeed = (settings.MapTemplates.GetValueOrDefault(mapId) ?? settings.Templates)
-                        .FirstOrDefault(t => t.Kind == npc.Kind)?.Speed ?? 0;
+                    var patrolMap = WorldMapInstance.Starter(mapId);
+                    var originX = vital.PatrolOriginX ?? npc.X;
+                    var originY = vital.PatrolOriginY ?? npc.Y;
+                    var endX = Math.Clamp(originX + (npc.Id % 2 == 0 ? -1 : 1) * patrolMap.Width / 8,
+                        0, patrolMap.Width);
+                    var endY = Math.Clamp(originY + (npc.Id % 3 == 0 ? -1 : 1) * patrolMap.Height / 8,
+                        0, patrolMap.Height);
+                    var outbound = vital.TargetUserId == 0 && vital.PatrolOutbound;
+                    var goalX = outbound ? endX : originX;
+                    var goalY = outbound ? endY : originY;
                     var patrolElapsed = vital.LastStepUnixMs == 0 ? 1d : Math.Clamp(
                         (nowMs - vital.LastStepUnixMs) / 1000d, 0, 5);
-                    var patrolDx = spawn.X - npc.X;
-                    var patrolDy = spawn.Y - npc.Y;
+                    var patrolDx = goalX - npc.X;
+                    var patrolDy = goalY - npc.Y;
                     var patrolDistance = Math.Sqrt((double)patrolDx * patrolDx + (double)patrolDy * patrolDy);
                     var patrolStep = Math.Min(patrolDistance, Math.Max(0, patrolSpeed) * patrolElapsed);
                     var reached = patrolStep >= patrolDistance;
                     vital = vital with
                     {
-                        X = reached ? null : npc.X + (int)Math.Round(patrolDx * patrolStep / patrolDistance),
-                        Y = reached ? null : npc.Y + (int)Math.Round(patrolDy * patrolStep / patrolDistance),
+                        X = reached ? goalX : npc.X + (int)Math.Round(patrolDx * patrolStep / patrolDistance),
+                        Y = reached ? goalY : npc.Y + (int)Math.Round(patrolDy * patrolStep / patrolDistance),
                         TargetUserId = 0,
                         Retaliating = false,
-                        LastStepUnixMs = nowMs
+                        LastStepUnixMs = nowMs,
+                        PatrolOriginX = originX,
+                        PatrolOriginY = originY,
+                        PatrolOutbound = reached ? !outbound : outbound
                     };
                     await cache.SetStringAsync(key, JsonSerializer.Serialize(vital), Expiry, ct);
                     observerSnapshots.TryRemove(mapId, out _);
@@ -760,7 +775,9 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             vital = vital with { X = x, Y = y, TargetUserId = target.Pilot.UserId,
                 Retaliating = vital.Retaliating && vital.TargetUserId == target.Pilot.UserId,
                 LastStepUnixMs = now.ToUnixTimeMilliseconds(),
-                LastFireUnixMs = fire ? now.ToUnixTimeMilliseconds() : vital.LastFireUnixMs };
+                LastFireUnixMs = fire ? now.ToUnixTimeMilliseconds() : vital.LastFireUnixMs,
+                PatrolOriginX = vital.PatrolOriginX ?? spawn.X,
+                PatrolOriginY = vital.PatrolOriginY ?? spawn.Y };
             await cache.SetStringAsync(key, JsonSerializer.Serialize(vital), Expiry, ct);
             observerSnapshots.TryRemove(mapId, out _);
             if (fire)

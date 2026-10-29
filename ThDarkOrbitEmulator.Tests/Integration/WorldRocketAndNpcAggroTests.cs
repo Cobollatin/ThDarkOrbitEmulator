@@ -209,6 +209,43 @@ public sealed class WorldRocketAndNpcAggroTests
     }
 
     [Test]
+    public async Task IdleNpc_ContinuesBoundedPatrolAcrossMapOwners()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var options = new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 250, 0, 0, 0, 0, 0, 1000)],
+            AggroRange = 0
+        };
+        var first = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var second = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var spawn = (await first.VisibleAsync(1, default)).Single();
+
+        await first.TickAggroAsync(1, sessions, default);
+        var outbound = (await second.VisibleAsync(1, default)).Single();
+        clock.Advance(TimeSpan.FromSeconds(5));
+        await second.TickAggroAsync(1, sessions, default);
+        var turn = (await first.VisibleAsync(1, default)).Single();
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await first.TickAggroAsync(1, sessions, default);
+        var returning = (await second.VisibleAsync(1, default)).Single();
+        var map = WorldMapInstance.Starter(1);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((outbound.X, outbound.Y), Is.Not.EqualTo((spawn.X, spawn.Y)));
+            Assert.That((turn.X, turn.Y), Is.Not.EqualTo((outbound.X, outbound.Y)));
+            Assert.That(Math.Abs(returning.X - spawn.X), Is.LessThan(Math.Abs(turn.X - spawn.X)));
+            Assert.That(returning.X, Is.InRange(0, map.Width));
+            Assert.That(returning.Y, Is.InRange(0, map.Height));
+        });
+    }
+
+    [Test]
     public async Task NpcRespawn_PreservesFireCooldownAcrossMapOwners()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
