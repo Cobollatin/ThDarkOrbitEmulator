@@ -434,6 +434,44 @@ public sealed class WorldRocketAndNpcAggroTests
             Is.EqualTo(edgeX == 0 ? 200 : 20800));
     }
 
+    [TestCase(0, 6500, 100, 6500, 0, 6400)]
+    [TestCase(21000, 6500, 20900, 6500, 21000, 6400)]
+    [TestCase(10500, 0, 10500, 100, 10400, 0)]
+    [TestCase(10500, 13100, 10500, 13000, 10400, 13100)]
+    public async Task AutonomousNpc_RetreatsAlongEdgeWhenDirectPathIsBlocked(
+        int npcX, int npcY, int pilotX, int pilotY, int expectedX, int expectedY)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var options = new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 100)],
+            AggroRange = 1000, NpcStandoffRange = 300, NpcFireRange = 0
+        };
+        var first = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var spawn = (await first.VisibleAsync(1, default)).Single();
+        await cache.SetStringAsync($"world:npc:v2:1:{spawn.Id}",
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                spawn.Hp, spawn.Shield, Destroyed = false, Killer = Guid.Empty,
+                X = npcX, Y = npcY
+            }));
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        await sessions.EnterAsync(Pilot(pilotX, pilotY), default);
+
+        await first.TickAggroAsync(1, sessions, default);
+        var after = (await first.VisibleAsync(1, default)).Single();
+        Assert.That((after.X, after.Y), Is.EqualTo((expectedX, expectedY)));
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var second = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        await second.TickAggroAsync(1, sessions, default);
+        var continued = (await second.VisibleAsync(1, default)).Single();
+        Assert.That((continued.X, continued.Y), Is.Not.EqualTo((after.X, after.Y)));
+    }
+
     [TestCase(0, 0, 100, 100)]
     [TestCase(21000, 13100, 20900, 13000)]
     public async Task AutonomousNpc_RetreatStaysWithinMap(int npcX, int npcY,

@@ -769,6 +769,24 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             var y = distance == 0 ? npc.Y : npc.Y + (int)Math.Round(dy * step / distance);
             x = Math.Clamp(x, 0, map.Width);
             y = Math.Clamp(y, 0, map.Height);
+            if (step < 0 && distance > 0 && x == npc.X && y == npc.Y)
+            {
+                // A direct retreat can point outside the map. Follow an edge
+                // only when the step increases separation from the pilot.
+                var stride = (int)Math.Round(-step);
+                var bestDistance = target.Distance;
+                foreach (var (offsetX, offsetY) in new[]
+                    { (-stride, 0), (stride, 0), (0, -stride), (0, stride) })
+                {
+                    var candidateX = Math.Clamp(npc.X + offsetX, 0, map.Width);
+                    var candidateY = Math.Clamp(npc.Y + offsetY, 0, map.Height);
+                    var candidateDistance = DistanceSquared(candidateX, candidateY,
+                        target.Position.X, target.Position.Y);
+                    if (candidateDistance <= bestDistance) continue;
+                    (x, y) = (candidateX, candidateY);
+                    bestDistance = candidateDistance;
+                }
+            }
             npc = npc with { X = x, Y = y };
             var fire = (template?.Aggressive != false ||
                 vital.Retaliating && vital.TargetUserId == target.Pilot.UserId) &&
