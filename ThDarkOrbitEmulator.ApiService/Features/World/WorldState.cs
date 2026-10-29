@@ -100,7 +100,7 @@ public static class WorldShipStatCalculator
 public sealed record WorldPosition(int MapId, int X, int Y);
 public sealed record WorldRuntimeSnapshot(int MapId, int Configuration, long Shield,
     long LastSwitchUnixMilliseconds, WorldTravel? Travel, long? HitPoints = null,
-    long LastHazardUnixMilliseconds = 0, bool RadiationWarning = false);
+    long LastHazardUnixMilliseconds = 0, bool RadiationWarning = false, bool RepairBotActive = false);
 public sealed record WorldJumpResult(WorldPilot Pilot, int PortalId, string? TargetNodeId,
     string? TargetTcpHostPort);
 public sealed record WorldSwitchResult(bool Changed, int CooldownRemainingMs, WorldMoveResult? Move);
@@ -142,6 +142,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private readonly ConcurrentDictionary<long, long> hitPoints = new();
     private readonly ConcurrentDictionary<long, DateTimeOffset> lastHazards = new();
     private readonly ConcurrentDictionary<long, bool> radiationWarnings = new();
+    private readonly ConcurrentDictionary<long, bool> repairBots = new();
     private readonly ConcurrentDictionary<long, SemaphoreSlim> movementGates = new();
     public int ActivePilotCount => connected.Values.Sum(pilots => pilots.Count);
     // Mesh tick: every due heartbeat and departure on one map shares one roster read-modify-write.
@@ -193,9 +194,12 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         _ => TimeSpan.Zero
     };
 
-    public Task MarkCombatAsync(WorldPilot pilot, CancellationToken ct) =>
-        cache.SetStringAsync(CombatKey(pilot.UserId), combatClock.GetUtcNow().ToUnixTimeMilliseconds().ToString(),
+    public async Task MarkCombatAsync(WorldPilot pilot, CancellationToken ct)
+    {
+        await cache.SetStringAsync(CombatKey(pilot.UserId), combatClock.GetUtcNow().ToUnixTimeMilliseconds().ToString(),
             new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);
+        await SetRepairBotAsync(pilot, false, ct);
+    }
 
     private async Task<bool> PortalCombatLockedAsync(WorldPilot pilot, CancellationToken ct)
     {
@@ -255,10 +259,18 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 var hitPointMaximum = ActiveStats(pilot).MaxHitPoints;
                 var current = CurrentHitPoints(pilot);
                 if (current <= 0 || current >= hitPointMaximum || RadiationWarning(pilot.UserId))
+                {
+                    await SetRepairBotAsync(pilot, false, ct);
                     continue;
+                }
                 var combat = await cache.GetStringAsync(CombatKey(pilot.UserId), ct);
                 if (long.TryParse(combat, out var combatMs) &&
-                    now - DateTimeOffset.FromUnixTimeMilliseconds(combatMs) < PortalCombatWindow) continue;
+                    now - DateTimeOffset.FromUnixTimeMilliseconds(combatMs) < PortalCombatWindow)
+                {
+                    await SetRepairBotAsync(pilot, false, ct);
+                    continue;
+                }
+                await SetRepairBotAsync(pilot, true, ct);
                 var recovery = await cache.GetStringAsync(HullRecoveryKey(pilot.UserId), ct);
                 if (long.TryParse(recovery, out var recoveryMs) &&
                     now - DateTimeOffset.FromUnixTimeMilliseconds(recoveryMs) < TimeSpan.FromSeconds(1)) continue;
@@ -270,6 +282,15 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             finally { gate.Release(); }
         }
     }
+
+    private async Task SetRepairBotAsync(WorldPilot pilot, bool active, CancellationToken ct)
+    {
+        if (repairBots.GetValueOrDefault(pilot.UserId) == active) return;
+        repairBots[pilot.UserId] = active;
+        await PersistRuntimeAsync(pilot, ct);
+    }
+
+    public bool RepairBotActive(long userId) => repairBots.GetValueOrDefault(userId);
 
     // The map owner continues the hazard while the pilot remains at the boundary.
     public async Task TickRadiationAsync(int mapId, CancellationToken ct, WorldLeaseFence? fence = null)
@@ -560,6 +581,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                     if (runtime.LastHazardUnixMilliseconds > 0)
                         lastHazards[pilot.UserId] = DateTimeOffset.FromUnixTimeMilliseconds(runtime.LastHazardUnixMilliseconds);
                     radiationWarnings[pilot.UserId] = runtime.RadiationWarning;
+                    repairBots[pilot.UserId] = runtime.RepairBotActive;
                     if (runtime.LastSwitchUnixMilliseconds > 0)
                         lastSwitches[pilot.UserId] = DateTimeOffset.FromUnixTimeMilliseconds(runtime.LastSwitchUnixMilliseconds);
                 }
@@ -624,6 +646,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         hitPoints.TryRemove(pilot.UserId, out _);
         lastHazards.TryRemove(pilot.UserId, out _);
         radiationWarnings.TryRemove(pilot.UserId, out _);
+        repairBots.TryRemove(pilot.UserId, out _);
     }
 
     public void Attach(WorldConnection connection) => connections[connection.Pilot.UserId] = connection;
@@ -905,6 +928,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             var next = WorldMovement.Travel(pilot, previous, result, speed, now);
             travel[pilot.UserId] = next;
             radiationWarnings[pilot.UserId] = result.RadiationWarning;
+            if (result.RadiationWarning) repairBots[pilot.UserId] = false;
             configurations[pilot.UserId] = selected;
             await cache.SetStringAsync(Key(pilot.UserId), JsonSerializer.Serialize(next),
                 new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
@@ -1016,12 +1040,13 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             lastSwitches.TryGetValue(pilot.UserId, out var last) ? last.ToUnixTimeMilliseconds() : 0,
             travel.GetValueOrDefault(pilot.UserId), CurrentHitPoints(pilot),
             lastHazards.TryGetValue(pilot.UserId, out var hazard) ? hazard.ToUnixTimeMilliseconds() : 0,
-            RadiationWarning(pilot.UserId))),
+            RadiationWarning(pilot.UserId), RepairBotActive(pilot.UserId))),
             new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
 
     private async Task ApplyBoundaryDamageAsync(WorldPilot pilot, DateTimeOffset now, CancellationToken ct)
     {
         if (lastHazards.TryGetValue(pilot.UserId, out var last) && now - last < TimeSpan.FromSeconds(1)) return;
+        repairBots[pilot.UserId] = false;
         lastHazards[pilot.UserId] = now;
         var damage = variables is null ? Math.Max(1, ActiveStats(pilot).MaxHitPoints / 100)
             : (long)await variables.NumberAsync("world.radiation.damage_per_attempt", ct);
@@ -1116,6 +1141,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 X = portal.ArrivalX, Y = portal.ArrivalY };
             travel.TryRemove(pilot.UserId, out _);
             radiationWarnings.TryRemove(pilot.UserId, out _);
+            repairBots.TryRemove(pilot.UserId, out _);
             await PersistAsync(next, ct);
             await PersistRuntimeAsync(next, ct);
             await WritePresenceAsync(pilot, false, ct);
@@ -1187,6 +1213,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             shields[pilot.UserId] = 0;
             travel.TryRemove(pilot.UserId, out _);
             radiationWarnings.TryRemove(pilot.UserId, out _);
+            repairBots.TryRemove(pilot.UserId, out _);
             await cache.RemoveAsync(CombatKey(pilot.UserId), ct);
             await cache.RemoveAsync(HullRecoveryKey(pilot.UserId), ct);
             await cache.RemoveAsync(ShieldRecoveryKey(pilot.UserId), ct);

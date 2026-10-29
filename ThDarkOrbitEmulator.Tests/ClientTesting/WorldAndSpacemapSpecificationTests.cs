@@ -1218,8 +1218,10 @@ public sealed class WorldAndSpacemapSpecificationTests
         clock.Advance(TimeSpan.FromSeconds(9));
         await store.RecoverHullAsync(pilot.MapId, default);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(940));
+        Assert.That(store.RepairBotActive(pilot.UserId), Is.False);
         clock.Advance(TimeSpan.FromSeconds(1));
         await store.RecoverHullAsync(pilot.MapId, default);
+        Assert.That(store.RepairBotActive(pilot.UserId), Is.True);
         Assert.That(store.CurrentPosition(pilot, clock.GetUtcNow()).X, Is.LessThan(20000));
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(965));
         clock.Advance(TimeSpan.FromSeconds(1));
@@ -1229,11 +1231,40 @@ public sealed class WorldAndSpacemapSpecificationTests
 
         var replica = new WorldSessionStore(cache, clock: clock);
         await replica.EnterAsync(pilot, default);
+        Assert.That(replica.RepairBotActive(pilot.UserId), Is.True);
         await replica.RecoverHullAsync(pilot.MapId, default);
         Assert.That(replica.CurrentHitPoints(pilot), Is.EqualTo(990));
         clock.Advance(TimeSpan.FromSeconds(1));
         await replica.RecoverHullAsync(pilot.MapId, default);
         Assert.That(replica.CurrentHitPoints(pilot), Is.EqualTo(1000));
+        await replica.RecoverHullAsync(pilot.MapId, default);
+        Assert.That(replica.RepairBotActive(pilot.UserId), Is.False);
+    }
+
+    [Test]
+    public async Task FieldRepairBot_DeactivatesWhenCombatResumes()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingClock();
+        var store = new WorldSessionStore(cache, clock: clock);
+        var pilot = await store.EnterAsync(Pilot() with
+        {
+            UserId = 908, X = 5000, Y = 5000,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 100, default);
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await store.RecoverHullAsync(pilot.MapId, default);
+        Assert.That(store.RepairBotActive(pilot.UserId), Is.True);
+
+        await store.MarkCombatAsync(pilot, default);
+        Assert.That(store.RepairBotActive(pilot.UserId), Is.False);
+        var replica = new WorldSessionStore(cache, clock: clock);
+        await replica.EnterAsync(pilot, default);
+        Assert.That(replica.RepairBotActive(pilot.UserId), Is.False);
+        await replica.RecoverHullAsync(pilot.MapId, default);
+        Assert.That(replica.RepairBotActive(pilot.UserId), Is.False);
     }
 
     [Test]

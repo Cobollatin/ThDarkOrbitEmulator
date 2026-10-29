@@ -660,7 +660,8 @@ public static class WorldHttpBridge
                 speed = liveStats.Speed,
                 laserDamage = liveStats.LaserDamage,
                 companions = sessions.CompanionPositions(pilot),
-                radiationWarning = sessions.RadiationWarning(pilot.UserId) }
+                radiationWarning = sessions.RadiationWarning(pilot.UserId),
+                repairBotActive = sessions.RepairBotActive(pilot.UserId) }
         }, ct);
     }
 
