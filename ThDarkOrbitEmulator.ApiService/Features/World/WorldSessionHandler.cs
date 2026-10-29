@@ -600,7 +600,8 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
 
     private async Task<WorldMapInstance> RuntimeMapAsync(int mapId, CancellationToken ct)
     {
-        var map = WorldMapInstance.Starter(mapId);
+        var map = sessions is null ? WorldMapInstance.Starter(mapId)
+            : await sessions.MapAsync(mapId, ct);
         if (variables is null) return map;
         var peace = (int)await variables.NumberAsync("world.station.peace_radius", ct);
         var jump = (int)await variables.NumberAsync("world.portal.jump_radius", ct);

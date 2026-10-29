@@ -124,8 +124,10 @@ public sealed record WorldPresence(WorldPilot Pilot, DateTimeOffset SeenAtUtc);
 
 public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex? meshMutex = null,
     IRuntimeVariableRegistry? variables = null, TimeProvider? clock = null, EconomyStore? economy = null,
-    IWorldRepairWallet? repairWallet = null)
+    IWorldRepairWallet? repairWallet = null, WorldPortalOperations? portalOperations = null)
 {
+    public Task<WorldMapInstance> MapAsync(int mapId, CancellationToken ct) => portalOperations is null
+        ? Task.FromResult(WorldMapInstance.Starter(mapId)) : portalOperations.MapAsync(mapId, ct);
     private readonly TimeProvider combatClock = clock ?? TimeProvider.System;
     private readonly ConcurrentDictionary<int, ConcurrentDictionary<long, WorldPilot>> connected = new();
     private readonly ConcurrentDictionary<long, WorldConnection> connections = new();
@@ -1285,7 +1287,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             if (pilot.MapId != admittedMap) throw new WorldLeaseLostException();
             await CheckLeaseAsync(pilot.MapId, fence, ct);
             if (CurrentHitPoints(pilot) <= 0) throw new WorldPilotDestroyedException();
-            var portal = WorldMapInstance.Starter(pilot.MapId).Portals.FirstOrDefault(p => p.Id == portalId && p.Working);
+            var portal = (await MapAsync(pilot.MapId, ct)).Portals.FirstOrDefault(p => p.Id == portalId && p.Working);
             if (portal is null) return null;
             if (WorldMapInstance.GateId(portal.DestinationMapId) is { } gateId)
             {
@@ -1361,8 +1363,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             }
             if (location is WorldRespawnLocation.DeathLocation && WorldMapInstance.IsGate(pilot.MapId))
                 return null;
-            if (location is WorldRespawnLocation.NearestPortal
-                && !WorldMapInstance.Starter(pilot.MapId).AllowsPortalRepair)
+            var map = await MapAsync(pilot.MapId, ct);
+            if (location is WorldRespawnLocation.NearestPortal && !map.AllowsPortalRepair)
                 return null;
             // A debit may have committed before the previous request could restore world state.
             // Resume that paid choice even when the retry asks for a different repair location.
@@ -1385,6 +1387,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                     }
                 }
             }
+            if (location is WorldRespawnLocation.NearestPortal && !map.AllowsPortalRepair)
+                return null;
             var cooldown = RespawnCooldown(location);
             if (cooldown > TimeSpan.Zero && !chargedForThisDeath)
             {
@@ -1419,7 +1423,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             var respawned = location switch
             {
                 WorldRespawnLocation.DeathLocation => pilot,
-                WorldRespawnLocation.NearestPortal => AtNearestPortal(pilot),
+                WorldRespawnLocation.NearestPortal => AtNearestPortal(pilot, map),
                 _ => pilot with { MapId = baseMapId, X = station.X, Y = station.Y }
             };
             hitPoints[pilot.UserId] = Math.Max(1, ActiveStats(pilot).MaxHitPoints
@@ -1456,9 +1460,9 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         finally { gate.Release(); }
     }
 
-    private static WorldPilot AtNearestPortal(WorldPilot pilot)
+    private static WorldPilot AtNearestPortal(WorldPilot pilot, WorldMapInstance map)
     {
-        var portal = WorldMapInstance.Starter(pilot.MapId).NearestWorkingPortal(pilot.X, pilot.Y);
+        var portal = map.NearestWorkingPortal(pilot.X, pilot.Y);
         return portal is null ? pilot : pilot with { X = portal.X, Y = portal.Y };
     }
 

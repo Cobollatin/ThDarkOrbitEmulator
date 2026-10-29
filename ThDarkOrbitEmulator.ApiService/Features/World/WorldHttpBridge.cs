@@ -605,7 +605,7 @@ public static class WorldHttpBridge
     private static async Task WriteStateAsync(HttpContext context, WorldPilot pilot, WorldSessionStore sessions,
         CancellationToken ct, WorldJumpResult? jump = null)
     {
-        var map = WorldMapInstance.Starter(pilot.MapId);
+        var map = await sessions.MapAsync(pilot.MapId, ct);
         var runtimeVariables = context.RequestServices?.GetService<Admin.IRuntimeVariableRegistry>();
         var collectionRadius = WorldCollectibles.CollectionRadius;
         if (runtimeVariables is not null)

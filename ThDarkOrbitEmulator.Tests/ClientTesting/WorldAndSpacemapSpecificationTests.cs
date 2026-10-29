@@ -1607,6 +1607,38 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task PortalOperation_SharedStateControlsJumpAndPaidRepair()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var operations = new WorldPortalOperations(cache);
+        var wallet = new TestRepairWallet { CanPay = true };
+        var first = new WorldSessionStore(cache, repairWallet: wallet, portalOperations: operations);
+        var replica = new WorldSessionStore(cache, repairWallet: wallet,
+            portalOperations: new WorldPortalOperations(cache));
+        var pilot = await first.EnterAsync(Pilot() with
+        {
+            UserId = 965, AccountId = Guid.NewGuid(), MapId = 2, X = 1500, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 100, [])
+        }, default);
+
+        await operations.SetWorkingAsync(2, 201, false, default);
+        Assert.That((await replica.MapAsync(2, default)).AllowsPortalRepair, Is.False);
+        Assert.That(await replica.JumpAsync(pilot, 201, null, default), Is.Null);
+        Assert.That(await replica.SavedMapAsync(pilot.UserId, default), Is.EqualTo(2));
+
+        await first.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0);
+        Assert.That(await replica.RespawnAsync(pilot, WorldRespawnLocation.NearestPortal, default), Is.Null);
+        Assert.That(wallet.Keys, Is.Empty);
+
+        await operations.SetWorkingAsync(2, 201, true, default);
+        Assert.That((await replica.MapAsync(2, default)).AllowsPortalRepair, Is.True);
+        var repaired = await replica.RespawnAsync(pilot, WorldRespawnLocation.NearestPortal, default);
+        Assert.That((repaired?.X, repaired?.Y), Is.EqualTo((1500, 1300)));
+        Assert.That(wallet.Keys, Has.Count.EqualTo(1));
+    }
+
+    [Test]
     public async Task PilotDestruction_RepairProtectsFromNpcAndBoundaryDamageForFiveSecondsAcrossReplicas()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

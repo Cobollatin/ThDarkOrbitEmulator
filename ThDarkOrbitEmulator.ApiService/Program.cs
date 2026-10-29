@@ -62,6 +62,7 @@ builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.O
 builder.Services.AddSingleton<IWorldPilotResolver, WorldPilotResolver>();
 builder.Services.AddSingleton<IWorldAccountState, WorldAccountState>();
 builder.Services.AddSingleton<WorldSessionStore>();
+builder.Services.AddSingleton<WorldPortalOperations>();
 builder.Services.AddSingleton<IRuntimeVariableRegistry, RuntimeVariableStore>();
 builder.Services.AddSingleton<IAdminCommandDispatcher, AdminCommandDispatcher>();
 builder.Services.AddSingleton<WorldAdminEvents>();
