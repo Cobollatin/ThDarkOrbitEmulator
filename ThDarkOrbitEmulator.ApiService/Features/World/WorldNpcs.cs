@@ -731,7 +731,10 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                     var outbound = vital.TargetUserId != 0 || vital.PatrolOutbound;
                     var goalX = outbound ? endX : originX;
                     var goalY = outbound ? endY : originY;
-                    var patrolElapsed = vital.LastStepUnixMs == 0 ? 1d : Math.Clamp(
+                    // A lost target starts a new patrol clock. Time spent chasing
+                    // cannot fund the first step of a different route.
+                    var lostTarget = vital.TargetUserId != 0;
+                    var patrolElapsed = lostTarget || vital.LastStepUnixMs == 0 ? 1d : Math.Clamp(
                         (nowMs - vital.LastStepUnixMs) / 1000d, 0, 5);
                     var patrolDx = goalX - npc.X;
                     var patrolDy = goalY - npc.Y;
@@ -749,7 +752,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                         Y = nextY,
                         TargetUserId = 0,
                         Retaliating = false,
-                        LastStepUnixMs = subpixelPatrol ? vital.LastStepUnixMs : nowMs,
+                        LastStepUnixMs = subpixelPatrol && !lostTarget
+                            ? vital.LastStepUnixMs : nowMs,
                         PatrolOriginX = originX,
                         PatrolOriginY = originY,
                         PatrolOutbound = reached ? !outbound : outbound,
