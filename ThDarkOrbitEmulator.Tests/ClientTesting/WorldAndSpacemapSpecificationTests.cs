@@ -1568,6 +1568,35 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task PilotDestruction_RepairProtectsFromNpcAndBoundaryDamageForFiveSecondsAcrossReplicas()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingClock();
+        var owner = new WorldSessionStore(cache, clock: clock);
+        var pilot = await owner.EnterAsync(Pilot() with
+        {
+            UserId = 913, X = 0, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await owner.ApplyNpcDamageAsync(pilot, 1, 1200, default);
+        Assert.That(owner.CurrentHitPoints(pilot), Is.Zero);
+
+        var replica = new WorldSessionStore(cache, clock: clock);
+        var repaired = await replica.RespawnAsync(pilot, WorldRespawnLocation.DeathLocation, default);
+        Assert.That(repaired, Is.Not.Null);
+        await owner.ApplyNpcDamageAsync(repaired!, 1, 20, default);
+        await owner.TickRadiationAsync(repaired.MapId, default);
+        Assert.That(owner.CurrentHitPoints(repaired), Is.EqualTo(100));
+
+        clock.Advance(TimeSpan.FromSeconds(5));
+        await owner.TickRadiationAsync(repaired.MapId, default);
+        Assert.That(owner.CurrentHitPoints(repaired), Is.EqualTo(90));
+        await replica.ApplyNpcDamageAsync(repaired, 1, 20, default);
+        Assert.That(replica.CurrentHitPoints(repaired), Is.EqualTo(70));
+    }
+
+    [Test]
     public async Task PilotDestruction_RepairsAtNearestPortalOnceAcrossReplicas()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
@@ -1612,10 +1641,11 @@ public sealed class WorldAndSpacemapSpecificationTests
         await store.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0);
         var first = await replica.RespawnAsync(pilot, location, default);
         Assert.That(first, Is.Not.Null);
+        clock.Advance(TimeSpan.FromSeconds(5));
         await store.ApplyNpcDamageAsync(first!, 1, 1200, default, shieldAbsorption: 0);
         Assert.That(await replica.RespawnAsync(first!, location, default), Is.Null);
         Assert.That(store.CurrentHitPoints(first!), Is.Zero);
-        clock.Advance(TimeSpan.FromSeconds(cooldownSeconds - 1));
+        clock.Advance(TimeSpan.FromSeconds(cooldownSeconds - 6));
         Assert.That(await store.RespawnAsync(first!, location, default), Is.Null);
         clock.Advance(TimeSpan.FromSeconds(1));
         var second = await replica.RespawnAsync(first!, location, default);
@@ -1644,13 +1674,15 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(repaired, Is.Not.Null);
         await cache.RemoveAsync($"world:respawn-cooldown:{pilot.UserId}:{location}");
         var replica = new WorldSessionStore(cache, clock: clock, repairWallet: wallet);
+        clock.Advance(TimeSpan.FromSeconds(5));
         await replica.ApplyNpcDamageAsync(repaired!, 1, 1200, default, shieldAbsorption: 0);
         Assert.That(await replica.RespawnAsync(repaired!, location, default), Is.Null);
-        clock.Advance(TimeSpan.FromSeconds(cooldownSeconds));
+        clock.Advance(TimeSpan.FromSeconds(cooldownSeconds - 5));
         var second = await replica.RespawnAsync(repaired!, location, default);
         Assert.That(second, Is.Not.Null);
         Assert.That(wallet.Keys, Has.Count.EqualTo(2));
         await cache.RemoveAsync($"world:respawn-cooldown:{pilot.UserId}:{location}");
+        clock.Advance(TimeSpan.FromSeconds(5));
         await replica.ApplyNpcDamageAsync(second!, 1, 1200, default, shieldAbsorption: 0);
         Assert.That(await replica.RespawnAsync(second!, location, default), Is.Null);
     }
@@ -1711,8 +1743,9 @@ public sealed class WorldAndSpacemapSpecificationTests
             ? WorldRespawnLocation.NearestPortal : WorldRespawnLocation.DeathLocation;
         Assert.That(await store.RespawnAsync(first, otherLocation, default), Is.Null);
 
+        clock.Advance(TimeSpan.FromSeconds(5));
         await store.ApplyNpcDamageAsync(first, 1, 1200, default, shieldAbsorption: 0);
-        clock.Advance(TimeSpan.FromSeconds(cooldownSeconds));
+        clock.Advance(TimeSpan.FromSeconds(cooldownSeconds - 5));
         var second = await replica.RespawnAsync(first, location, default);
         Assert.That(second, Is.Not.Null);
         Assert.That(wallet.Keys, Has.Count.EqualTo(2));

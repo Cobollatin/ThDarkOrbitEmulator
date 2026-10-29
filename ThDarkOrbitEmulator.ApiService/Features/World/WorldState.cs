@@ -181,6 +181,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private static string Key(long userId) => $"world:position:{userId}";
     private static string RuntimeKey(long userId) => $"world:runtime:{userId}";
     private static string CombatKey(long userId) => $"world:combat:{userId}";
+    private static string RepairProtectionKey(long userId) => $"world:repair-protection:{userId}";
     private static string DeathKey(long userId) => $"world:death:{userId}";
     private async Task<string?> DeathIdAsync(long userId, CancellationToken ct,
         Guid accountId = default)
@@ -206,6 +207,14 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private static string HullRecoveryKey(long userId) => $"world:hull-recovery:{userId}";
     private static string PresenceKey(int mapId) => $"world:presence:map:{mapId}";
     private static readonly TimeSpan PortalCombatWindow = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan RepairProtectionWindow = TimeSpan.FromSeconds(5);
+    private async Task<bool> RepairProtectedAsync(long userId, CancellationToken ct)
+    {
+        var saved = await cache.GetStringAsync(RepairProtectionKey(userId), ct);
+        return long.TryParse(saved, out var milliseconds)
+            && combatClock.GetUtcNow() - DateTimeOffset.FromUnixTimeMilliseconds(milliseconds)
+                < RepairProtectionWindow;
+    }
     private static TimeSpan RespawnCooldown(WorldRespawnLocation location) => location switch
     {
         WorldRespawnLocation.DeathLocation => TimeSpan.FromSeconds(30),
@@ -1176,6 +1185,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
 
     private async Task ApplyBoundaryDamageAsync(WorldPilot pilot, DateTimeOffset now, CancellationToken ct)
     {
+        if (await RepairProtectedAsync(pilot.UserId, ct)) return;
         if (lastHazards.TryGetValue(pilot.UserId, out var last) && now - last < TimeSpan.FromSeconds(1)) return;
         repairBots[pilot.UserId] = false;
         lastHazards[pilot.UserId] = now;
@@ -1403,6 +1413,9 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             hitPoints[pilot.UserId] = Math.Max(1, ActiveStats(pilot).MaxHitPoints / 10);
             shields[pilot.UserId] = 0;
             await ClearRepairRuntimeAsync(pilot.UserId, ct);
+            await cache.SetStringAsync(RepairProtectionKey(pilot.UserId),
+                combatClock.GetUtcNow().ToUnixTimeMilliseconds().ToString(),
+                new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);
             var repairedDeathId = repairWallet is not null && pilot.AccountId != Guid.Empty
                 ? await DeathIdAsync(pilot.UserId, ct, pilot.AccountId) : null;
             if (repairedDeathId is not null)
@@ -1622,6 +1635,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         var expectedMapId = pilot.MapId;
         pilot = await RestoreAsync(pilot, ct);
         if (pilot.MapId != expectedMapId || CurrentHitPoints(pilot) <= 0) return;
+        if (await RepairProtectedAsync(pilot.UserId, ct)) return;
         await MarkCombatAsync(pilot, ct);
         var absorbed = Math.Min(CurrentShield(pilot),
             (long)Math.Round(Math.Max(0, damage) * Math.Clamp(shieldAbsorption, 0, 1)));
