@@ -207,7 +207,7 @@ public static class NativeWorldPackets
         WorldPayload.WriteString(w, string.Empty); // clan tag
         Rotated(w, 0, 27); // gates completed
         w.Write(false); // system font
-        w.Write(false); // cloaked
+        w.Write(pilot.IsInvisible); // cloaked
         w.Write(true); // refresh map
         Rotated(w, 0, 23); // captain energy
         Rotated(w, 0, 31);

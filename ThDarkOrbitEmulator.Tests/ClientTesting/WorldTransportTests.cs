@@ -2139,7 +2139,7 @@ public class WorldTransportTests
     {
         var pilot = new WorldPilot(42, "eic", 5, 2, "phoenix", 1234, 56)
         {
-            UserName = "Ace", FactionId = 2, X = 345, Y = 678,
+            UserName = "Ace", FactionId = 2, X = 345, Y = 678, IsInvisible = true,
             Stats = new WorldShipStats(320, 4000, 5000, 100, 150, []),
             Experience = 789, Honor = 1011, Level = 7
         };
@@ -2178,13 +2178,17 @@ public class WorldTransportTests
             Assert.That(WorldPayload.ReadString(reader), Is.Empty);
             Assert.That(Number(27), Is.Zero);
             Assert.That(reader.ReadBoolean(), Is.False);
-            Assert.That(reader.ReadBoolean(), Is.False);
+            Assert.That(reader.ReadBoolean(), Is.True);
             Assert.That(reader.ReadBoolean(), Is.True);
             Assert.That(Number(23), Is.Zero);
             Assert.That(Number(31), Is.Zero);
             Assert.That(reader.ReadByte(), Is.Zero);
             Assert.That(bytes.Position, Is.EqualTo(bytes.Length));
         });
+        var visiblePayload = NativeWorldPackets.ShipInitialization(pilot with { IsInvisible = false });
+        var cloakedPayload = bytes.ToArray();
+        Assert.That(visiblePayload.Length, Is.EqualTo(cloakedPayload.Length));
+        Assert.That(visiblePayload.Zip(cloakedPayload).Count(pair => pair.First != pair.Second), Is.EqualTo(1));
 
         using var move = new MemoryStream(NativeWorldPackets.Move(42, 345, 678, 900));
         using var moveReader = new BinaryReader(move);
