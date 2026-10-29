@@ -2742,6 +2742,52 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task AutoRocket_UsesSharedCooldownDuringSustainedLaserAcrossReplicas()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var options = Options.Create(new WorldNpcOptions
+        {
+            AutoRocketOnLaser = true, RocketDamage = 10, RocketCooldownSeconds = 3,
+            LaserCooldownMilliseconds = 1000,
+            Templates = [new("Scout", "npc_scout", 1, 1000, 0, 0, 0, 0, 0, 0)]
+        });
+        var clock = new AdvancingClock();
+        var first = new WorldNpcs(cache, mutex, new TestRewards(), options, clock);
+        var second = new WorldNpcs(cache, mutex, new TestRewards(), options, clock);
+        var spawn = first.Spawn(1, clock.GetUtcNow()).Single();
+        var sessions = new WorldSessionStore(cache, mutex);
+        var pilot = await sessions.EnterAsync(Pilot() with
+        {
+            AccountId = Guid.NewGuid(), X = spawn.X, Y = spawn.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 1, [])
+        }, default);
+        await first.SelectAsync(pilot, spawn.Id, default);
+        await first.StartLaserAsync(pilot, spawn.Id, default);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await second.TickLasersAsync(pilot.MapId, sessions, default);
+        var firstHit = (await first.VisibleAsync(pilot.MapId, default)).Single(n => n.Id == spawn.Id);
+        await first.TickLasersAsync(pilot.MapId, sessions, default);
+        var duplicate = (await second.VisibleAsync(pilot.MapId, default)).Single(n => n.Id == spawn.Id);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await first.TickLasersAsync(pilot.MapId, sessions, default);
+        var cooldown = (await second.VisibleAsync(pilot.MapId, default)).Single(n => n.Id == spawn.Id);
+        clock.Advance(TimeSpan.FromSeconds(2));
+        await second.TickLasersAsync(pilot.MapId, sessions, default);
+        var ready = (await first.VisibleAsync(pilot.MapId, default)).Single(n => n.Id == spawn.Id);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(firstHit.Hp, Is.EqualTo(989));
+            Assert.That(duplicate.Hp, Is.EqualTo(989));
+            Assert.That(cooldown.Hp, Is.EqualTo(988));
+            Assert.That(ready.Hp, Is.EqualTo(977));
+        });
+    }
+
+    [Test]
     public async Task AutoLauncher_FiresOnlyAtFullLoadDuringSustainedLaserAcrossReplicas()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
