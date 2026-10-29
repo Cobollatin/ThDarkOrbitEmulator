@@ -246,6 +246,44 @@ public sealed class WorldRocketAndNpcAggroTests
     }
 
     [Test]
+    public async Task IdleNpc_ChoosesAnotherBoundedLegAfterReturningAcrossMapOwners()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var options = new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 250, 0, 0, 0, 0, 0, 1000)],
+            AggroRange = 0
+        };
+        var first = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var second = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var origin = (await first.VisibleAsync(1, default)).Single();
+
+        await first.TickAggroAsync(1, sessions, default);
+        clock.Advance(TimeSpan.FromSeconds(5));
+        await second.TickAggroAsync(1, sessions, default);
+        var firstWaypoint = (await second.VisibleAsync(1, default)).Single();
+        clock.Advance(TimeSpan.FromSeconds(5));
+        await second.TickAggroAsync(1, sessions, default);
+        var returned = (await first.VisibleAsync(1, default)).Single();
+        clock.Advance(TimeSpan.FromSeconds(5));
+        await first.TickAggroAsync(1, sessions, default);
+        var nextWaypoint = (await second.VisibleAsync(1, default)).Single();
+        var map = WorldMapInstance.Starter(1);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That((returned.X, returned.Y), Is.EqualTo((origin.X, origin.Y)));
+            Assert.That((nextWaypoint.X, nextWaypoint.Y), Is.Not.EqualTo((firstWaypoint.X, firstWaypoint.Y)));
+            Assert.That(nextWaypoint.X, Is.InRange(0, map.Width));
+            Assert.That(nextWaypoint.Y, Is.InRange(0, map.Height));
+        });
+    }
+
+    [Test]
     public async Task IdleNpc_AccumulatesSubpixelPatrolAcrossMapOwners()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

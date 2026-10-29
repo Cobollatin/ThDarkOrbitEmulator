@@ -89,7 +89,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         long LastStepUnixMs = 0, long LastHitUnixMs = 0, long LastShieldRepairUnixMs = 0,
         long RespawnAtUnixMs = 0, long Generation = 0, Guid[]? PulseActions = null,
         bool Retaliating = false, int? PatrolOriginX = null, int? PatrolOriginY = null,
-        bool PatrolOutbound = true);
+        bool PatrolOutbound = true, int PatrolLeg = 0);
     private long Cycle => clock.GetUtcNow().ToUnixTimeSeconds() / Math.Max(30, settings.RespawnSeconds);
     public long CurrentCycle => Cycle;
     private static string Key(int map, int id) => $"world:npc:v2:{map}:{id}";
@@ -719,9 +719,12 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                     var patrolMap = WorldMapInstance.Starter(mapId);
                     var originX = vital.PatrolOriginX ?? npc.X;
                     var originY = vital.PatrolOriginY ?? npc.Y;
-                    var endX = Math.Clamp(originX + (npc.Id % 2 == 0 ? -1 : 1) * patrolMap.Width / 8,
+                    var leg = Math.Max(0, vital.PatrolLeg);
+                    var endX = Math.Clamp(originX + (leg % 2 == 0 ? 1 : -1) *
+                        (npc.Id % 2 == 0 ? -1 : 1) * patrolMap.Width / (8 + leg % 3),
                         0, patrolMap.Width);
-                    var endY = Math.Clamp(originY + (npc.Id % 3 == 0 ? -1 : 1) * patrolMap.Height / 8,
+                    var endY = Math.Clamp(originY + (leg % 3 == 0 ? 1 : -1) *
+                        (npc.Id % 3 == 0 ? -1 : 1) * patrolMap.Height / (8 + leg % 2),
                         0, patrolMap.Height);
                     var outbound = vital.TargetUserId == 0 && vital.PatrolOutbound;
                     var goalX = outbound ? endX : originX;
@@ -747,7 +750,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                         LastStepUnixMs = subpixelPatrol ? vital.LastStepUnixMs : nowMs,
                         PatrolOriginX = originX,
                         PatrolOriginY = originY,
-                        PatrolOutbound = reached ? !outbound : outbound
+                        PatrolOutbound = reached ? !outbound : outbound,
+                        PatrolLeg = reached && !outbound ? leg + 1 : leg
                     };
                     await cache.SetStringAsync(key, JsonSerializer.Serialize(vital), Expiry, ct);
                     observerSnapshots.TryRemove(mapId, out _);
