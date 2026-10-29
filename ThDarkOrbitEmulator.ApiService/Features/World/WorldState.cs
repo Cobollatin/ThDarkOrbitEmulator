@@ -1175,7 +1175,16 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             var admittedMap = pilot.MapId;
             pilot = await RefreshAsync(pilot, ct);
             if (pilot.MapId != admittedMap) throw new WorldLeaseLostException();
-            if (CurrentHitPoints(pilot) > 0) return null;
+            if (CurrentHitPoints(pilot) > 0)
+            {
+                if (repairWallet is null || pilot.AccountId == Guid.Empty
+                    || location is WorldRespawnLocation.Base) return null;
+                var completedDeathId = await cache.GetStringAsync(DeathKey(pilot.UserId), ct);
+                if (completedDeathId is null) return null;
+                var completed = await repairWallet.FindChargeAsync(pilot.AccountId, location,
+                    completedDeathId, ct);
+                return completed is null ? null : pilot with { Uridium = completed.Balance };
+            }
             if ((location is WorldRespawnLocation.DeathLocation or WorldRespawnLocation.NearestPortal)
                 && WorldMapInstance.IsGate(pilot.MapId))
                 return null;
@@ -1223,7 +1232,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 await cache.SetStringAsync(RespawnCooldownKey(pilot.UserId, location),
                     combatClock.GetUtcNow().ToUnixTimeMilliseconds().ToString(),
                     new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = cooldown }, ct);
-            await cache.RemoveAsync(DeathKey(pilot.UserId), ct);
+            if (location is WorldRespawnLocation.Base)
+                await cache.RemoveAsync(DeathKey(pilot.UserId), ct);
             await WritePresenceAsync(pilot, false, ct);
             await WritePresenceAsync(respawned, true, ct);
             if (connected.TryGetValue(pilot.MapId, out var old)) old.TryRemove(pilot.UserId, out _);

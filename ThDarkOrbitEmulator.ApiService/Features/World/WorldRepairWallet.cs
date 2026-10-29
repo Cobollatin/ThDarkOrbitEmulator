@@ -9,6 +9,8 @@ public interface IWorldRepairWallet
 {
     Task<WorldRepairPayment> ChargeAsync(Guid accountId, WorldRespawnLocation location,
         string deathId, CancellationToken ct);
+    Task<WorldRepairPayment?> FindChargeAsync(Guid accountId, WorldRespawnLocation location,
+        string deathId, CancellationToken ct);
 }
 
 public sealed class WorldRepairWallet(EconomyStore economy) : IWorldRepairWallet
@@ -22,5 +24,9 @@ public sealed class WorldRepairWallet(EconomyStore economy) : IWorldRepairWallet
 
     public Task<WorldRepairPayment> ChargeAsync(Guid accountId, WorldRespawnLocation location,
         string deathId, CancellationToken ct) => economy.ChargeRepairAsync(accountId,
+            Price(location), $"world-repair:{deathId}", ct);
+
+    public Task<WorldRepairPayment?> FindChargeAsync(Guid accountId, WorldRespawnLocation location,
+        string deathId, CancellationToken ct) => economy.FindRepairChargeAsync(accountId,
             Price(location), $"world-repair:{deathId}", ct);
 }

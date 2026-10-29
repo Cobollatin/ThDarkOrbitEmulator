@@ -1519,6 +1519,21 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
         return new(WorldRepairCharge.Applied, balance);
     }
 
+    public async Task<WorldRepairPayment?> FindRepairChargeAsync(Guid accountId, int price, string key,
+        CancellationToken ct)
+    {
+        if (accountId == Guid.Empty || price <= 0 || string.IsNullOrWhiteSpace(key)) return null;
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(
+            "SELECT l.delta,b.amount FROM economy.ledger l JOIN economy.balances b ON b.account_id=l.account_id AND b.asset_id='uridium' WHERE l.account_id=@a AND l.idempotency_key=@k AND l.reason='world_repair' AND l.asset_id='uridium'", db);
+        cmd.Parameters.AddWithValue("a", accountId);
+        cmd.Parameters.AddWithValue("k", key);
+        await using var row = await cmd.ExecuteReaderAsync(ct);
+        if (!await row.ReadAsync(ct) || row.GetInt64(0) != -price) return null;
+        return new(WorldRepairCharge.AlreadyCharged, row.GetInt64(1));
+    }
+
     private static async Task<long> CurrentBalanceAsync(NpgsqlConnection db, NpgsqlTransaction tx,
         Guid accountId, string assetId, CancellationToken ct)
     {

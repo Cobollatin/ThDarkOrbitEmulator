@@ -1435,8 +1435,13 @@ public sealed class WorldAndSpacemapSpecificationTests
         var first = await replica.RespawnAsync(pilot, location, default);
         Assert.That(first, Is.Not.Null);
         Assert.That(first!.Uridium, Is.EqualTo(1000 - price));
-        Assert.That(await store.RespawnAsync(first, location, default), Is.Null);
+        var replay = await store.RespawnAsync(first, location, default);
+        Assert.That(replay, Is.Not.Null);
+        Assert.That(replay!.Uridium, Is.EqualTo(1000 - price));
         Assert.That(wallet.Keys, Has.Count.EqualTo(1));
+        var otherLocation = location is WorldRespawnLocation.DeathLocation
+            ? WorldRespawnLocation.NearestPortal : WorldRespawnLocation.DeathLocation;
+        Assert.That(await store.RespawnAsync(first, otherLocation, default), Is.Null);
 
         await store.ApplyNpcDamageAsync(first, 1, 1200, default, shieldAbsorption: 0);
         clock.Advance(TimeSpan.FromSeconds(cooldownSeconds));
@@ -2137,14 +2142,25 @@ public sealed class WorldAndSpacemapSpecificationTests
     {
         public bool CanPay { get; set; }
         public List<string> Keys { get; } = [];
+        private readonly Dictionary<string, int> prices = [];
         public Task<WorldRepairPayment> ChargeAsync(Guid accountId, WorldRespawnLocation location,
             string deathId, CancellationToken ct)
         {
             if (!CanPay) return Task.FromResult(new WorldRepairPayment(WorldRepairCharge.InsufficientFunds, 0));
-            if (Keys.Contains(deathId)) return Task.FromResult(new WorldRepairPayment(WorldRepairCharge.AlreadyCharged, 1000 - WorldRepairWallet.Price(location)));
+            if (Keys.Contains(deathId)) return Task.FromResult(new WorldRepairPayment(
+                prices[deathId] == WorldRepairWallet.Price(location)
+                    ? WorldRepairCharge.AlreadyCharged : WorldRepairCharge.InsufficientFunds,
+                1000 - prices[deathId]));
             Keys.Add(deathId);
+            prices[deathId] = WorldRepairWallet.Price(location);
             return Task.FromResult(new WorldRepairPayment(WorldRepairCharge.Applied, 1000 - WorldRepairWallet.Price(location)));
         }
+
+        public Task<WorldRepairPayment?> FindChargeAsync(Guid accountId, WorldRespawnLocation location,
+            string deathId, CancellationToken ct) => Task.FromResult<WorldRepairPayment?>(
+                prices.TryGetValue(deathId, out var price)
+                    && price == WorldRepairWallet.Price(location)
+                    ? new(WorldRepairCharge.AlreadyCharged, 1000 - price) : null);
     }
 
     private sealed class TestMutex : IServerMeshMutex
