@@ -2592,6 +2592,43 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task PilotRocket_MissConsumesCooldownWithoutChangingTargetVitality()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var options = new WorldNpcOptions
+        {
+            RocketDamage = 50, RocketMissChance = 1, RocketCooldownSeconds = 3,
+            Templates = [new("Scout", "npc_scout", 1, 100, 50, 5, 0, 0, 0, 0)]
+        };
+        var clock = new AdvancingClock();
+        var npcs = new WorldNpcs(cache, mutex, new TestRewards(), Options.Create(options), clock);
+        var spawn = npcs.Spawn(1, clock.GetUtcNow()).Single();
+        var sessions = new WorldSessionStore(cache, mutex);
+        var pilot = await sessions.EnterAsync(Pilot() with
+        {
+            AccountId = Guid.NewGuid(), X = spawn.X, Y = spawn.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+
+        var miss = await npcs.AttackAsync(pilot, spawn.Id, sessions, default, rocket: true);
+        var cooldown = await npcs.AttackAsync(pilot, spawn.Id, sessions, default, rocket: true);
+        Assert.Multiple(() =>
+        {
+            Assert.That(miss.Status, Is.EqualTo("hit"));
+            Assert.That(miss.Damage, Is.Zero);
+            Assert.That((miss.Target!.Hp, miss.Target.Shield), Is.EqualTo((100, 50)));
+            Assert.That(cooldown.Status, Is.EqualTo("cooldown"));
+        });
+
+        clock.Advance(TimeSpan.FromSeconds(3));
+        options.RocketMissChance = 0;
+        var hit = await npcs.AttackAsync(pilot, spawn.Id, sessions, default, rocket: true);
+        Assert.That((hit.Damage, hit.Target!.Hp, hit.Target.Shield), Is.EqualTo((50, 100, 0)));
+    }
+
+    [Test]
     public async Task NpcPulse_DamagesNearbyTargets_AndSharesCooldownAcrossReplicas()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
