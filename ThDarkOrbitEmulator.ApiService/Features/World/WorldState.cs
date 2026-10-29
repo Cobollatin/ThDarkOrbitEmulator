@@ -868,13 +868,18 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private async Task<WorldPilot> RefreshAsync(WorldPilot pilot, CancellationToken ct)
     {
         travel.TryRemove(pilot.UserId, out _);
+        // A prior position write may reappear after a transfer. Use the same
+        // map precedence as TCP routing before restoring coordinates or vitals.
+        if (await SavedMapAsync(pilot.UserId, ct) is { } currentMap)
+            pilot = pilot with { MapId = currentMap };
         var saved = await cache.GetStringAsync(Key(pilot.UserId), ct);
         if (saved is not null)
         {
             try
             {
                 var position = JsonSerializer.Deserialize<WorldPosition>(saved);
-                if (position is not null && WorldMapInstance.Starter(position.MapId) is { } map
+                if (position is not null && position.MapId == pilot.MapId
+                    && WorldMapInstance.Starter(position.MapId) is { } map
                     && position.X >= 0 && position.X <= map.Width && position.Y >= 0 && position.Y <= map.Height)
                     pilot = pilot with { MapId = position.MapId, X = position.X, Y = position.Y };
             }

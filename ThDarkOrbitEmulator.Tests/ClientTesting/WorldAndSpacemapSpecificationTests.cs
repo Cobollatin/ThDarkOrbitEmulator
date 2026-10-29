@@ -4011,6 +4011,33 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(second.ActivePilotCount, Is.EqualTo(1));
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task EntryAfterTransfer_DoesNotRestoreOldMapFromStalePosition(bool removeMapOwner)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var first = new WorldSessionStore(cache, mutex);
+        var second = new WorldSessionStore(cache, mutex);
+        var pilot = await first.EnterAsync(Pilot() with { AccountId = Guid.NewGuid() }, default);
+        var oldPosition = await cache.GetStringAsync($"world:position:{pilot.UserId}");
+
+        await second.TeleportAsync(pilot.UserId, 2, 3000, 1300, false, default);
+        await cache.SetStringAsync($"world:position:{pilot.UserId}", oldPosition!);
+        if (removeMapOwner) await cache.RemoveAsync($"world:map:{pilot.UserId}");
+
+        var restored = await second.RestoreAsync(pilot with { MapId = 2, X = 3000, Y = 1300 }, default);
+        Assert.That(restored.MapId, Is.EqualTo(2));
+        Assert.That((restored.X, restored.Y), Is.EqualTo((3000, 1300)));
+
+        var entered = await second.EnterAsync(restored, default);
+        Assert.That(entered.MapId, Is.EqualTo(2));
+        Assert.That(await first.SavedMapAsync(pilot.UserId, default), Is.EqualTo(2));
+        Assert.That(await first.ConnectedAsync(1, default), Is.Empty);
+        Assert.That((await first.ConnectedAsync(2, default)).Single().UserId, Is.EqualTo(pilot.UserId));
+    }
+
     [Test]
     public async Task CloakCooldown_SurvivesCooldownKeyEvictionAcrossWorldInstances()
     {
