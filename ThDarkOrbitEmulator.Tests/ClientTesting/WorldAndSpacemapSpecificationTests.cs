@@ -3506,6 +3506,36 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task NpcSelection_FromPreviousMap_DoesNotSelectOnDestination()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var sessions = new WorldSessionStore(cache, mutex);
+        var destination = new WorldSessionStore(cache, mutex);
+        var npcs = new WorldNpcs(cache, mutex, new TestRewards(),
+            Options.Create(new WorldNpcOptions
+            {
+                Templates = [new("Scout", "npc_scout", 1, 100, 0, 0, 0, 0, 0, 0)]
+            }), new TestClock());
+        var stale = await sessions.EnterAsync(Pilot() with
+        {
+            AccountId = Guid.NewGuid(),
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+        var destinationTarget = npcs.Spawn(2, DateTimeOffset.UtcNow).Single();
+        var current = await destination.TeleportAsync(stale.UserId, 2,
+            destinationTarget.X, destinationTarget.Y, false, default);
+
+        Assert.ThrowsAsync<WorldMapChangedException>(
+            async () => await npcs.SelectAsync(stale, destinationTarget.Id, default,
+                sessions: sessions));
+        Assert.That(await cache.GetStringAsync($"world:npc:target:{stale.UserId}"), Is.Null);
+        Assert.That(await npcs.SelectAsync(current!, destinationTarget.Id, default,
+            sessions: destination), Is.Not.Null);
+    }
+
+    [Test]
     public async Task CloakState_IsSharedAcrossWorldInstances_AndSurvivesReentry()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

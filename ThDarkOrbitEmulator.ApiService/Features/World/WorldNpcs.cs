@@ -241,7 +241,11 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             pilot = await sessions.RestoreAsync(pilot, ct);
             if (expectedMapId is not null && pilot.MapId != expectedMapId)
                 throw new WorldMapChangedException();
-            if (fence is not null && pilot.MapId != mapId) throw new WorldLeaseLostException();
+            if (pilot.MapId != mapId)
+            {
+                if (fence is not null) throw new WorldLeaseLostException();
+                throw new WorldMapChangedException();
+            }
             if (sessions.CurrentHitPoints(pilot) <= 0) return null;
         }
         var target = (await VisibleAsync(pilot.MapId, ct)).FirstOrDefault(n => n.Id == npcId);
