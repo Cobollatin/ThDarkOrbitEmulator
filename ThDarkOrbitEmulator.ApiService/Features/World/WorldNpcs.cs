@@ -766,8 +766,10 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             var template = (settings.MapTemplates.GetValueOrDefault(mapId) ?? settings.Templates)
                 .FirstOrDefault(t => t.Kind == npc.Kind);
             var speed = template?.Speed ?? 0;
-            var elapsed = vital.LastStepUnixMs == 0 ? 1d : Math.Clamp(
-                (now.ToUnixTimeMilliseconds() - vital.LastStepUnixMs) / 1000d, 0, 5);
+            // A newly acquired pilot starts a pursuit now; idle patrol time or
+            // time spent following another pilot cannot fund its first step.
+            var elapsed = vital.TargetUserId != target.Pilot.UserId || vital.LastStepUnixMs == 0
+                ? 1d : Math.Clamp((nowMs - vital.LastStepUnixMs) / 1000d, 0, 5);
             var maxStep = Math.Max(0, speed) * elapsed;
             var step = Math.Clamp(distance - Math.Max(0, settings.NpcStandoffRange),
                 -maxStep, maxStep);

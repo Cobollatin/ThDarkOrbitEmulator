@@ -443,6 +443,37 @@ public sealed class WorldRocketAndNpcAggroTests
     }
 
     [Test]
+    public async Task AutonomousNpc_NewTargetDoesNotInheritIdleMovementTime()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var options = new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 1)],
+            AggroRange = 1000, NpcStandoffRange = 0, NpcFireRange = 0
+        };
+        var first = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var spawn = (await first.VisibleAsync(1, default)).Single();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        await first.TickAggroAsync(1, sessions, default);
+        clock.Advance(TimeSpan.FromSeconds(10));
+        var idle = (await first.VisibleAsync(1, default)).Single();
+        await sessions.EnterAsync(Pilot(idle.X + 500, idle.Y), default);
+
+        await first.TickAggroAsync(1, sessions, default);
+        var acquired = (await first.VisibleAsync(1, default)).Single();
+        Assert.That(acquired.X, Is.EqualTo(idle.X + 1));
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var second = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        await second.TickAggroAsync(1, sessions, default);
+        Assert.That((await second.VisibleAsync(1, default)).Single().X,
+            Is.EqualTo(acquired.X + 1));
+    }
+
+    [Test]
     public async Task AutonomousNpc_AccumulatesSubpixelPursuitAcrossMapOwners()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
