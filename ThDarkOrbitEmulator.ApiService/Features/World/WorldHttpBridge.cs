@@ -409,6 +409,7 @@ public static class WorldHttpBridge
             {
                 "base" => WorldRespawnLocation.Base,
                 "death" => WorldRespawnLocation.DeathLocation,
+                "portal" => WorldRespawnLocation.NearestPortal,
                 _ => throw new JsonException("Unknown respawn location.")
             };
         }

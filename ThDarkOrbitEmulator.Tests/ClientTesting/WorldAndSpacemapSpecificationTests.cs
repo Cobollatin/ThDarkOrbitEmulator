@@ -1275,7 +1275,35 @@ public sealed class WorldAndSpacemapSpecificationTests
         }, default);
         await store.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0);
         Assert.That(await store.RespawnAsync(pilot, WorldRespawnLocation.DeathLocation, default), Is.Null);
+        Assert.That(await store.RespawnAsync(pilot, WorldRespawnLocation.NearestPortal, default), Is.Null);
         Assert.That((await store.RespawnAtBaseAsync(pilot, default))?.MapId, Is.EqualTo(1));
+    }
+
+    [Test]
+    public async Task PilotDestruction_RepairsAtNearestPortalOnceAcrossReplicas()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var store = new WorldSessionStore(cache);
+        var pilot = await store.EnterAsync(Pilot() with
+        {
+            UserId = 910, MapId = 1, FactionId = 1, X = 19400, Y = 11000,
+            Stats = new WorldShipStats(300, 1000, 100, 0, 100, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0);
+        var replica = new WorldSessionStore(cache);
+        var respawned = await replica.RespawnAsync(pilot, WorldRespawnLocation.NearestPortal, default);
+        Assert.That(respawned, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(respawned!.MapId, Is.EqualTo(1));
+            Assert.That((respawned.X, respawned.Y), Is.EqualTo((19500, 11800)));
+            Assert.That(replica.CurrentHitPoints(respawned), Is.EqualTo(100));
+            Assert.That(replica.CurrentShield(respawned), Is.Zero);
+        });
+        Assert.That(await store.RespawnAsync(respawned!, WorldRespawnLocation.NearestPortal, default), Is.Null);
+        var restored = await store.RestoreAsync(pilot, default);
+        Assert.That((restored.X, restored.Y), Is.EqualTo((19500, 11800)));
     }
 
     [TestCase("0", 0)]

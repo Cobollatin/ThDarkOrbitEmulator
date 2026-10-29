@@ -12,7 +12,7 @@ namespace ThDarkOrbitEmulator.ApiService.Features.World;
 public sealed record WorldStation(int Id, int X, int Y, int PeaceRadius);
 public sealed record WorldPortal(int Id, int X, int Y, int DestinationMapId, int ArrivalX, int ArrivalY,
     int JumpRadius = 500);
-public enum WorldRespawnLocation { Base, DeathLocation }
+public enum WorldRespawnLocation { Base, DeathLocation, NearestPortal }
 public sealed record WorldMapInstance(int MapId, int FactionId, int Width, int Height,
     WorldStation HomeStation, IReadOnlyList<WorldPortal> Portals)
 {
@@ -1120,12 +1120,17 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             pilot = await RefreshAsync(pilot, ct);
             if (pilot.MapId != admittedMap) throw new WorldLeaseLostException();
             if (CurrentHitPoints(pilot) > 0) return null;
-            if (location == WorldRespawnLocation.DeathLocation && WorldMapInstance.IsGate(pilot.MapId))
+            if ((location is WorldRespawnLocation.DeathLocation or WorldRespawnLocation.NearestPortal)
+                && WorldMapInstance.IsGate(pilot.MapId))
                 return null;
             var baseMapId = (Math.Clamp(pilot.FactionId, 1, 4) - 1) * 4 + 1;
             var station = WorldMapInstance.Starter(baseMapId).HomeStation;
-            var respawned = location == WorldRespawnLocation.DeathLocation
-                ? pilot : pilot with { MapId = baseMapId, X = station.X, Y = station.Y };
+            var respawned = location switch
+            {
+                WorldRespawnLocation.DeathLocation => pilot,
+                WorldRespawnLocation.NearestPortal => AtNearestPortal(pilot),
+                _ => pilot with { MapId = baseMapId, X = station.X, Y = station.Y }
+            };
             hitPoints[pilot.UserId] = Math.Max(1, ActiveStats(pilot).MaxHitPoints / 10);
             shields[pilot.UserId] = 0;
             travel.TryRemove(pilot.UserId, out _);
@@ -1143,6 +1148,14 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             return respawned;
         }
         finally { gate.Release(); }
+    }
+
+    private static WorldPilot AtNearestPortal(WorldPilot pilot)
+    {
+        var portal = WorldMapInstance.Starter(pilot.MapId).Portals
+            .MinBy(p => (long)(p.X - pilot.X) * (p.X - pilot.X)
+                + (long)(p.Y - pilot.Y) * (p.Y - pilot.Y));
+        return portal is null ? pilot : pilot with { X = portal.X, Y = portal.Y };
     }
 
     internal static async Task CheckLeaseAsync(int mapId, WorldLeaseFence? fence, CancellationToken ct)
