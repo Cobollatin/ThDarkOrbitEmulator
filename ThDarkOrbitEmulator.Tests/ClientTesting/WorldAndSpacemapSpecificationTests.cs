@@ -3518,6 +3518,30 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task CloakActivatedWhileEntryWaitsForMeshLock_IsPublishedOnEntry()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new EntryGateMutex();
+        var first = new WorldSessionStore(cache, mutex);
+        var second = new WorldSessionStore(cache, mutex);
+        var pilot = await first.EnterAsync(Pilot() with
+        {
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+
+        mutex.PauseNextAcquire();
+        var entry = second.EnterAsync(pilot, default);
+        await mutex.WaitForPausedAcquireAsync();
+        try { pilot = await first.SetCloakAsync(pilot, true, default); }
+        finally { mutex.ResumeAcquire(); }
+
+        var entered = await entry;
+        Assert.That(entered.IsInvisible, Is.True);
+        Assert.That((await second.ConnectedAsync(pilot.MapId, default)).Single().IsInvisible, Is.True);
+    }
+
+    [Test]
     public async Task CloakCooldown_SurvivesCooldownKeyEvictionAcrossWorldInstances()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
@@ -3844,6 +3868,34 @@ public sealed class WorldAndSpacemapSpecificationTests
         { await gate.WaitAsync(ct); return new Releaser(gate); }
         private sealed class Releaser(SemaphoreSlim gate) : IAsyncDisposable
         { public ValueTask DisposeAsync() { gate.Release(); return ValueTask.CompletedTask; } }
+    }
+
+    private sealed class EntryGateMutex : IServerMeshMutex
+    {
+        private readonly TestMutex inner = new();
+        private int armed;
+        private TaskCompletionSource? paused;
+        private TaskCompletionSource? resumed;
+
+        public void PauseNextAcquire()
+        {
+            paused = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            resumed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            armed = 1;
+        }
+
+        public Task WaitForPausedAcquireAsync() => paused!.Task;
+        public void ResumeAcquire() => resumed!.SetResult();
+
+        public async Task<IAsyncDisposable> AcquireAsync(CancellationToken ct)
+        {
+            if (Interlocked.Exchange(ref armed, 0) == 1)
+            {
+                paused!.SetResult();
+                await resumed!.Task.WaitAsync(ct);
+            }
+            return await inner.AcquireAsync(ct);
+        }
     }
 
     private static WorldPilot Pilot() => new(7, "mmo", 1, 1, "ship_pusat-plus", 0, 0);

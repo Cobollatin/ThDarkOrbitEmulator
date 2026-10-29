@@ -632,6 +632,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         pilot = await ResumeChargedRepairAsync(pilot, ct);
         if (!travel.ContainsKey(pilot.UserId)) await PersistAsync(pilot, ct);
         await using var held = meshMutex is null ? null : await meshMutex.AcquireAsync(ct);
+        // Cloak may change on another node while entry waits for the shared lock.
+        pilot = await RefreshAsync(pilot, ct);
         foreach (var map in connected.Values)
             if (map.TryRemove(pilot.UserId, out var previous) && previous.MapId != pilot.MapId)
                 await WritePresenceAsync(previous, false, ct);
