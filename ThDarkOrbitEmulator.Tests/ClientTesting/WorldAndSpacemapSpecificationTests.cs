@@ -52,6 +52,9 @@ public sealed class WorldAndSpacemapSpecificationTests
         context.Response.StatusCode = 200;
         await WorldHttpBridge.FireAsync(context, null!, null!, null!, null!, default);
         Assert.That(context.Response.StatusCode, Is.EqualTo(415));
+        context.Response.StatusCode = 200;
+        await WorldHttpBridge.PulseAsync(context, null!, null!, null!, null!, default);
+        Assert.That(context.Response.StatusCode, Is.EqualTo(415));
     }
 
     [Test]
@@ -80,6 +83,9 @@ public sealed class WorldAndSpacemapSpecificationTests
             Assert.That(context.Response.StatusCode, Is.EqualTo(415), contentType);
             context.Response.StatusCode = 200;
             await WorldHttpBridge.FireAsync(context, null!, null!, null!, null!, default);
+            Assert.That(context.Response.StatusCode, Is.EqualTo(415), contentType);
+            context.Response.StatusCode = 200;
+            await WorldHttpBridge.PulseAsync(context, null!, null!, null!, null!, default);
             Assert.That(context.Response.StatusCode, Is.EqualTo(415), contentType);
             Assert.That(context.Request.Body.Position, Is.Zero, contentType);
         }
@@ -1598,6 +1604,46 @@ public sealed class WorldAndSpacemapSpecificationTests
         });
         Assert.That(await npcs.VisibleAsync(1, default), Is.Empty);
         Assert.That((await npcs.AttackAsync(pilot, spawn.Id, sessions, default)).Status, Is.EqualTo("destroyed"));
+    }
+
+    [Test]
+    public async Task NpcPulse_DamagesNearbyTargets_AndSharesCooldownAcrossReplicas()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var clock = new AdvancingClock();
+        var options = Options.Create(new WorldNpcOptions
+        {
+            PulseRange = 1000, PulseCooldownSeconds = 30,
+            Templates = [new("Scout", "npc_scout", 2, 100, 0, 5, 0, 0, 0, 0)]
+        });
+        var npcs = new WorldNpcs(cache, mutex, new TestRewards(), options, clock);
+        var replica = new WorldNpcs(cache, mutex, new TestRewards(), options, clock);
+        var npc = npcs.Spawn(1, clock.GetUtcNow()).First();
+        var sessions = new WorldSessionStore(cache, mutex);
+        var pilot = await sessions.EnterAsync(Pilot() with
+        {
+            AccountId = Guid.NewGuid(), X = npc.X, Y = npc.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+        var first = await npcs.PulseAsync(pilot, sessions, default);
+        Assert.That(first.Status, Is.EqualTo("hit"));
+        Assert.That(first.Hits.Select(hit => hit.Damage), Is.EqualTo(new[] { 20 }));
+        Assert.That(first.Hits.Single().Target!.Hp, Is.EqualTo(80));
+        Assert.That((await npcs.VisibleAsync(1, default)).Single(other => other.Id != npc.Id).Hp, Is.EqualTo(100));
+        Assert.That((await replica.PulseAsync(pilot, sessions, default)).Status, Is.EqualTo("cooldown"));
+        clock.Advance(TimeSpan.FromSeconds(30));
+        var second = await replica.PulseAsync(pilot, sessions, default);
+        Assert.That(second.Hits.Single().Target!.Hp, Is.EqualTo(64));
+        var station = WorldMapInstance.Starter(1).HomeStation;
+        var stationPilot = await sessions.EnterAsync(pilot with
+        { UserId = 8, AccountId = Guid.NewGuid(), X = station.X, Y = station.Y }, default);
+        Assert.That((await npcs.PulseAsync(stationPilot, sessions, default)).Status, Is.EqualTo("restricted"));
+        var portal = WorldMapInstance.Starter(1).Portals.First();
+        var portalPilot = await sessions.EnterAsync(pilot with
+        { UserId = 9, AccountId = Guid.NewGuid(), X = portal.X, Y = portal.Y }, default);
+        Assert.That((await npcs.PulseAsync(portalPilot, sessions, default)).Status, Is.EqualTo("restricted"));
     }
 
     [Test]

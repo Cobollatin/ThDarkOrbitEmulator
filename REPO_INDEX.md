@@ -5,7 +5,8 @@
 - `ThDarkOrbitEmulator.Tests/ClientTesting/`: focused Unity contract and world protocol tests; `Integration/` holds database and HTTP integration tests.
 - `docs/cockpit-catalog.md`: cockpit evidence, unresolved native contracts, and public catalog routes.
 - `docs/client-endpoint-map.md` and `docs/world-protocol.md`: observed client endpoints and provisional local world protocol.
-- `docs/reference-parity.md`: ranked gameplay gaps from ignored third-party reference clones; iterations 1–18 cover NPC pursuit, combat, loot, recovery, destruction, repair choices and cooldowns. Iteration 19 adds durable premium repair charges and retry keys.
+- `docs/reference-parity.md`: ranked gameplay gaps from ignored third-party reference clones; iterations 1–19 cover NPC pursuit, combat, loot, recovery, destruction, repair choices, cooldowns, and premium charges. Iteration 20 adds a local NPC proximity pulse.
+- `ApiService/Features/World/WorldNpcs.cs`: `PulseAsync` owns the local NPC proximity action, shared cooldown and zone checks; `WorldHttpBridge.cs` exposes `/spacemap/world/pulse`.
 - `ApiService/Features/World/WorldRepairWallet.cs`: paid repair prices and economy adapter; `EconomyStore.ChargeRepairAsync` performs the ledger debit, and `WorldSessionStore.RespawnAsync` applies the repaired world state.
 - `ApiService/Features/World/WorldCollectibleVisibility.cs`: computes map-owner box removals and creations across pickup and respawn cycles for TCP broadcasts.
 - `_reversing/`: local analysis artifacts and captured sessions; `scripts/client-testing/` contains capture helpers.

@@ -25,6 +25,7 @@ public static class WorldHttpBridge
         app.MapPost("/spacemap/world/collect", CollectAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/target", TargetAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/fire", FireAsync).AllowAnonymous().DisableRateLimiting();
+        app.MapPost("/spacemap/world/pulse", PulseAsync).AllowAnonymous().DisableRateLimiting();
         app.MapGet("/spacemap/world/config", ConfigAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/config", ConfigAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/admin/command", AdminCommandAsync).AllowAnonymous().DisableRateLimiting();
@@ -535,6 +536,35 @@ public static class WorldHttpBridge
             ? await context.RequestServices.GetRequiredService<WorldGateCombat>().AttackAsync(pilot, id, sessions, ct)
             : await npcs.AttackAsync(pilot, id, sessions, ct,
                 await LeaseFenceAsync(context, pilot.MapId, ct), expectedMapId, rocket); }
+        catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
+        catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
+        if (result.Status != "hit") context.Response.StatusCode = 409;
+        context.Response.Headers.CacheControl = "no-store";
+        await context.Response.WriteAsJsonAsync(result, ct);
+    }
+
+    public static async Task PulseAsync(HttpContext context, IGameAuthSessionStore auth,
+        IWorldPilotResolver resolver, WorldSessionStore sessions, WorldNpcs npcs, CancellationToken ct)
+    {
+        if (!JsonRequest(context)) { context.Response.StatusCode = 415; return; }
+        var pilot = await PilotAsync(context, auth, resolver, sessions, ct);
+        if (pilot is null) return;
+        pilot = await sessions.GetOrEnterAsync(pilot, ct);
+        await SetMeshHeadersAsync(context, pilot.MapId, ct);
+        int? expectedMapId;
+        try
+        {
+            using var body = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: ct);
+            expectedMapId = body.RootElement.TryGetProperty("mapId", out var map) ? map.GetInt32() : null;
+        }
+        catch (Exception e) when (e is JsonException or InvalidOperationException)
+        { context.Response.StatusCode = 400; return; }
+        if (expectedMapId is <= 0) { context.Response.StatusCode = 400; return; }
+        if (expectedMapId is not null && expectedMapId != pilot.MapId)
+        { await MapChangedAsync(context, pilot, sessions, ct); return; }
+        WorldNpcPulse result;
+        try { result = await npcs.PulseAsync(pilot, sessions, ct,
+            await LeaseFenceAsync(context, pilot.MapId, ct), expectedMapId); }
         catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
         catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
         if (result.Status != "hit") context.Response.StatusCode = 409;

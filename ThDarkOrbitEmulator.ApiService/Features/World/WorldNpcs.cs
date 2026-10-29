@@ -13,6 +13,7 @@ public sealed record WorldNpc(int Id, string Kind, string ShipId, int X, int Y,
 public sealed record WorldNpcReward(int Credits, int Uridium, int Experience, int Honor);
 public sealed record WorldNpcAttack(string Status, WorldNpc? Target = null, int Damage = 0,
     bool Destroyed = false, WorldNpcReward? Reward = null);
+public sealed record WorldNpcPulse(string Status, IReadOnlyList<WorldNpcAttack> Hits);
 public sealed record WorldNpcTemplate(string Kind, string ShipId, int Count, int Hp, int Shield,
     int Credits, int Uridium, int Experience, int Honor, int Speed, bool Aggressive = true);
 public sealed class WorldNpcOptions
@@ -23,6 +24,8 @@ public sealed class WorldNpcOptions
     public int RocketRange { get; set; } = 1500;
     public int RocketDamage { get; set; } = 250;
     public int RocketCooldownSeconds { get; set; } = 3;
+    public int PulseRange { get; set; } = 700;
+    public int PulseCooldownSeconds { get; set; } = 30;
     public int LaserCooldownMilliseconds { get; set; } = 1000;
     public int AggroRange { get; set; } = 1200;
     public int NpcStandoffRange { get; set; } = 300;
@@ -238,9 +241,48 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         return vital is { Destroyed: true } && vital.Killer == pilot.AccountId;
     }
 
+    public async Task<WorldNpcPulse> PulseAsync(WorldPilot pilot, WorldSessionStore sessions,
+        CancellationToken ct, WorldLeaseFence? fence = null, int? expectedMapId = null)
+    {
+        if (pilot.AccountId == Guid.Empty || WorldMapInstance.IsGate(pilot.MapId))
+            return new("invalid", []);
+        await using (var held = await mutex.AcquireAsync(ct))
+        {
+            await WorldSessionStore.CheckLeaseAsync(pilot.MapId, fence, ct);
+            pilot = await sessions.RestoreAsync(pilot, ct);
+            if (expectedMapId is not null && pilot.MapId != expectedMapId)
+                throw new WorldMapChangedException();
+            if (sessions.CurrentHitPoints(pilot) <= 0) return new("destroyed_pilot", []);
+            var position = sessions.CurrentPosition(pilot, clock.GetUtcNow());
+            var map = WorldMapInstance.Starter(pilot.MapId);
+            if (InsidePeaceZone(pilot.MapId, position) || map.Portals.Any(portal =>
+                DistanceSquared(position.X, position.Y, portal.X, portal.Y) <= 300L * 300))
+                return new("restricted", []);
+            var key = $"world:npc:pulse:{pilot.UserId}";
+            var now = clock.GetUtcNow().ToUnixTimeMilliseconds();
+            var saved = await cache.GetStringAsync(key, ct);
+            if (long.TryParse(saved, out var last) && now - last < Math.Max(1, settings.PulseCooldownSeconds) * 1000L)
+                return new("cooldown", []);
+            await cache.SetStringAsync(key, now.ToString(), new DistributedCacheEntryOptions
+            { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(Math.Max(1, settings.PulseCooldownSeconds)) }, ct);
+        }
+        var origin = sessions.CurrentPosition(pilot, clock.GetUtcNow());
+        var candidates = (await VisibleAsync(pilot.MapId, ct))
+            .Where(npc => DistanceSquared(origin.X, origin.Y, npc.X, npc.Y) <=
+                (long)settings.PulseRange * settings.PulseRange).ToArray();
+        var hits = new List<WorldNpcAttack>(candidates.Length);
+        foreach (var npc in candidates)
+        {
+            var hit = await AttackAsync(pilot, npc.Id, sessions, ct, fence, pilot.MapId,
+                pulse: true);
+            if (hit.Status == "hit") hits.Add(hit);
+        }
+        return new("hit", hits);
+    }
+
     public async Task<WorldNpcAttack> AttackAsync(WorldPilot pilot, int npcId,
         WorldSessionStore sessions, CancellationToken ct, WorldLeaseFence? fence = null,
-        int? expectedMapId = null, bool rocket = false)
+        int? expectedMapId = null, bool rocket = false, bool pulse = false)
     {
         if (pilot.AccountId == Guid.Empty) return new("invalid");
         WorldNpc? npc;
@@ -277,11 +319,16 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             else
             {
                 var (x, y) = sessions.CurrentPosition(pilot, clock.GetUtcNow());
-                var fireRange = rocket ? settings.RocketRange : variables is null ? settings.LaserRange
+                if (pulse && (InsidePeaceZone(pilot.MapId, (x, y)) ||
+                    WorldMapInstance.Starter(pilot.MapId).Portals.Any(portal =>
+                        DistanceSquared(x, y, portal.X, portal.Y) <= 300L * 300)))
+                    return new("restricted", npc);
+                var fireRange = pulse ? settings.PulseRange : rocket ? settings.RocketRange : variables is null ? settings.LaserRange
                     : await variables.NumberAsync("world.combat.fire_range", ct);
                 if ((long)(x - npc.X) * (x - npc.X) + (long)(y - npc.Y) * (y - npc.Y) >
                     (long)fireRange * fireRange) return new("distant", npc);
-                if (rocket)
+                if (pulse) damage = Math.Max(1, vital.Hp / 5);
+                else if (rocket)
                 {
                     var cooldownKey = $"world:rocket:{pilot.UserId}";
                     var last = await cache.GetStringAsync(cooldownKey, ct);
