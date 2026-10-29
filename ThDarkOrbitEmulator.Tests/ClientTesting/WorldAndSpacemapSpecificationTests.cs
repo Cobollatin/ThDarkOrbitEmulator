@@ -1509,13 +1509,13 @@ public sealed class WorldAndSpacemapSpecificationTests
         {
             Assert.That(respawned!.MapId, Is.EqualTo(1));
             Assert.That((respawned.X, respawned.Y), Is.EqualTo((2000, 1300)));
-            Assert.That(replica.CurrentHitPoints(respawned), Is.EqualTo(100));
+            Assert.That(replica.CurrentHitPoints(respawned), Is.EqualTo(10));
             Assert.That(replica.CurrentShield(respawned), Is.Zero);
         });
         Assert.That(await store.RespawnAtBaseAsync(respawned!, default), Is.Null);
         var restored = await store.RestoreAsync(pilot, default);
         Assert.That(restored.MapId, Is.EqualTo(1));
-        Assert.That(store.CurrentHitPoints(restored), Is.EqualTo(100));
+        Assert.That(store.CurrentHitPoints(restored), Is.EqualTo(10));
         Assert.That((await store.MoveAsync(restored, 3000, 1300, null, default)).X, Is.EqualTo(3000));
     }
 
@@ -1596,8 +1596,8 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(replica.CurrentHitPoints(repaired), Is.EqualTo(70));
     }
 
-    [TestCase(2, 100)]
-    [TestCase(5, 80)]
+    [TestCase(2, 10)]
+    [TestCase(5, 5)]
     public async Task PilotDestruction_StagedRepairRetainsRemainingProtectionAfterCacheLoss(
         int elapsedSeconds, int expectedHitPoints)
     {
@@ -1620,7 +1620,7 @@ public sealed class WorldAndSpacemapSpecificationTests
 
         var replica = new WorldSessionStore(cache, clock: clock, repairWallet: wallet);
         var repaired = await replica.EnterAsync(pilot, default);
-        await replica.ApplyNpcDamageAsync(repaired, 1, 20, default);
+        await replica.ApplyNpcDamageAsync(repaired, 1, 5, default);
         Assert.That(replica.CurrentHitPoints(repaired), Is.EqualTo(expectedHitPoints));
     }
 
@@ -2109,7 +2109,8 @@ public sealed class WorldAndSpacemapSpecificationTests
 
         var replica = new WorldSessionStore(cache, repairWallet: wallet);
         var restored = await replica.EnterAsync(pilot, default);
-        Assert.That(replica.CurrentHitPoints(restored), Is.GreaterThan(0));
+        Assert.That(replica.CurrentHitPoints(restored),
+            Is.EqualTo(location == WorldRespawnLocation.Base ? 10 : 100));
         Assert.That(restored.MapId, Is.EqualTo(location == WorldRespawnLocation.Base ? 1 : 2));
         Assert.That(restored.Uridium, Is.EqualTo(1000 - price));
         Assert.That(replica.RadiationWarning(pilot.UserId), Is.False);
@@ -2144,7 +2145,8 @@ public sealed class WorldAndSpacemapSpecificationTests
 
         var replica = new WorldSessionStore(cache, repairWallet: wallet);
         var restored = await replica.RestoreAsync(pilot, default);
-        Assert.That(replica.CurrentHitPoints(restored), Is.GreaterThan(0));
+        Assert.That(replica.CurrentHitPoints(restored),
+            Is.EqualTo(location == WorldRespawnLocation.Base ? 10 : 100));
         Assert.That(restored.MapId, Is.EqualTo(location == WorldRespawnLocation.Base ? 1 : 2));
         Assert.That(restored.Uridium, Is.EqualTo(1000 - price));
         Assert.That(replica.RadiationWarning(pilot.UserId), Is.False);

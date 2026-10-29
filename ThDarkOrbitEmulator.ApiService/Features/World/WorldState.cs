@@ -1415,7 +1415,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 WorldRespawnLocation.NearestPortal => AtNearestPortal(pilot),
                 _ => pilot with { MapId = baseMapId, X = station.X, Y = station.Y }
             };
-            hitPoints[pilot.UserId] = Math.Max(1, ActiveStats(pilot).MaxHitPoints / 10);
+            hitPoints[pilot.UserId] = Math.Max(1, ActiveStats(pilot).MaxHitPoints
+                / (location is WorldRespawnLocation.Base ? 100 : 10));
             shields[pilot.UserId] = 0;
             await ClearRepairRuntimeAsync(pilot.UserId, ct);
             var repairedAt = combatClock.GetUtcNow();
