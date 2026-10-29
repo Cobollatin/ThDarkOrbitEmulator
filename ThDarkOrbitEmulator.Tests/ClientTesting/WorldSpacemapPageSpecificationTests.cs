@@ -167,6 +167,20 @@ public sealed class WorldSpacemapPageSpecificationTests
     }
 
     [Test]
+    public void Page_CloakControlUsesAuthenticatedWorldActionAndServerState()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(Html, Does.Contain("id=\"cloak\" type=\"button\" aria-pressed=\"false\""));
+            Assert.That(Html, Does.Contain("request('cloak','POST',{active:!state.pilot.cloaked})"));
+            Assert.That(Html, Does.Contain("state.pilot.cloaked=result.active"));
+            Assert.That(Html, Does.Contain("String(p.cloaked===true)"));
+            Assert.That(Html, Does.Contain("e.status==='blocked_map'?'Cloak is unavailable on this map.'"));
+            Assert.That(Html, Does.Contain("e.status==='cooldown'?'Cloak is recharging.'"));
+        });
+    }
+
+    [Test]
     public void Page_LauncherRequiresAnEligibleTarget_AndReportsReloading()
     {
         Assert.Multiple(() =>
