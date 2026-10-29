@@ -3723,6 +3723,32 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task StaleLocalSocketAfterTransfer_WithMissingPosition_IsRemovedByHeartbeat()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var first = new WorldSessionStore(cache, mutex);
+        var second = new WorldSessionStore(cache, mutex);
+        var pilot = await first.EnterAsync(Pilot() with { AccountId = Guid.NewGuid() }, default);
+        using var wire = new MemoryStream();
+        first.Attach(new WorldConnection(pilot, new WorldPacketWriter(wire)));
+        var oldRoster = await cache.GetStringAsync("world:presence:map:1");
+
+        await second.TeleportAsync(pilot.UserId, 2, 3000, 1300, false, default);
+        await cache.SetStringAsync("world:presence:map:1", oldRoster!);
+        await cache.RemoveAsync($"world:position:{pilot.UserId}");
+
+        Assert.That(first.ActivePilotCount, Is.EqualTo(1));
+        Assert.That(await cache.GetStringAsync($"world:runtime:{pilot.UserId}"), Does.Contain("\"MapId\":2"));
+        await first.RefreshLocalPresenceAsync(default);
+
+        Assert.That(first.ActivePilotCount, Is.Zero);
+        Assert.That(await cache.GetStringAsync("world:presence:map:1"), Is.EqualTo("{}"));
+        Assert.That((await second.ConnectedAsync(2, default)).Single().UserId, Is.EqualTo(pilot.UserId));
+    }
+
+    [Test]
     public async Task CloakCooldown_SurvivesCooldownKeyEvictionAcrossWorldInstances()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

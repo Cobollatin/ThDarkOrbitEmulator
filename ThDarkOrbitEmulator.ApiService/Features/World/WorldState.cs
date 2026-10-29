@@ -177,11 +177,13 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         {
             var current = pilot;
             var runtimeJson = await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct);
+            var runtimeOnAnotherMap = false;
             if (runtimeJson is not null)
             {
                 try
                 {
                     var runtime = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(runtimeJson);
+                    runtimeOnAnotherMap = runtime is not null && runtime.MapId != pilot.MapId;
                     if (runtime?.MapId == pilot.MapId && runtime.IsInvisible != pilot.IsInvisible)
                     {
                         current = pilot with { IsInvisible = runtime.IsInvisible };
@@ -192,25 +194,20 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 catch (JsonException) { }
             }
             var saved = await cache.GetStringAsync(Key(pilot.UserId), ct);
+            var positionOnAnotherMap = false;
             if (saved is not null)
             {
                 try
                 {
                     var position = JsonSerializer.Deserialize<WorldPosition>(saved);
-                    if (position is not null && position.MapId != pilot.MapId)
-                    {
-                        if (connected.TryGetValue(pilot.MapId, out var local))
-                            ((ICollection<KeyValuePair<long, WorldPilot>>)local)
-                                .Remove(new(pilot.UserId, pilot));
-                        (absent.TryGetValue(pilot.MapId, out var gone) ? gone : absent[pilot.MapId] = []).Add(pilot.UserId);
-                        continue;
-                    }
+                    positionOnAnotherMap = position is not null && position.MapId != pilot.MapId;
                 }
                 catch (JsonException) { }
             }
-            else if (runtimeJson is null
+            var mapOnAnotherMap = saved is null && runtimeJson is null
                 && await cache.GetStringAsync(MapKey(pilot.UserId), ct) is { } mapText
-                && int.TryParse(mapText, out var ownerMap) && ownerMap != pilot.MapId)
+                && int.TryParse(mapText, out var ownerMap) && ownerMap != pilot.MapId;
+            if (positionOnAnotherMap || (saved is null && runtimeOnAnotherMap) || mapOnAnotherMap)
             {
                 if (connected.TryGetValue(pilot.MapId, out var local))
                     local.TryRemove(pilot.UserId, out _);
