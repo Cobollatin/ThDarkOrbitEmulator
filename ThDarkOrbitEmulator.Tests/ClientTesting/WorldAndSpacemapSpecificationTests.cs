@@ -1770,6 +1770,41 @@ public sealed class WorldAndSpacemapSpecificationTests
             Assert.That((restored.X, restored.Y), Is.Not.EqualTo((1000, 1000)));
     }
 
+    [TestCase(WorldRespawnLocation.DeathLocation, 300)]
+    [TestCase(WorldRespawnLocation.NearestPortal, 200)]
+    public async Task PilotDestruction_GameplayRestoreResumesChargedRepairAfterCacheLoss(
+        WorldRespawnLocation location, int price)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var wallet = new TestRepairWallet { CanPay = true, ThrowAfterChargeOnce = true };
+        var original = Pilot() with { UserId = 2800 + price, AccountId = Guid.NewGuid(),
+            MapId = 2, X = 5000, Y = 5000, Uridium = 1000,
+            Stats = new WorldShipStats(300, 1000, 100, 0, 100, []) };
+        var first = new WorldSessionStore(cache, repairWallet: wallet);
+        await first.EnterAsync(original, default);
+        await first.ApplyNpcDamageAsync(original, 1, 1200, default, shieldAbsorption: 0);
+        Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await first.RespawnAsync(original, location, default));
+        await cache.RemoveAsync($"world:position:{original.UserId}");
+        await cache.RemoveAsync($"world:runtime:{original.UserId}");
+        await cache.RemoveAsync($"world:death:{original.UserId}");
+
+        var replica = new WorldSessionStore(cache, repairWallet: wallet);
+        var restored = await replica.RestoreAsync(original, default);
+        Assert.That(replica.CurrentHitPoints(restored), Is.GreaterThan(0));
+        Assert.That(restored.MapId, Is.EqualTo(2));
+        Assert.That(restored.Uridium, Is.EqualTo(1000 - price));
+        Assert.That(wallet.Keys, Has.Count.EqualTo(1));
+        Assert.That(await wallet.FindPendingDeathAsync(original.AccountId, default), Is.Null);
+        if (location is WorldRespawnLocation.DeathLocation)
+            Assert.That((restored.X, restored.Y), Is.EqualTo((5000, 5000)));
+        else
+            Assert.That((restored.X, restored.Y), Is.Not.EqualTo((5000, 5000)));
+        var next = new WorldSessionStore(cache, repairWallet: wallet);
+        Assert.That(next.CurrentHitPoints(await next.RestoreAsync(original, default)), Is.GreaterThan(0));
+    }
+
     [TestCase(WorldRespawnLocation.Base, 0, false)]
     [TestCase(WorldRespawnLocation.DeathLocation, 300, false)]
     [TestCase(WorldRespawnLocation.NearestPortal, 200, false)]

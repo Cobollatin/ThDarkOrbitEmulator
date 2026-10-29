@@ -546,6 +546,19 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         pilot = await RestorePendingDeathPositionAsync(pilot, ct);
         pilot = await CompleteStagedRepairAsync(pilot, ct);
         await ReconcilePendingDeathAsync(pilot, ct);
+        pilot = await ResumeChargedRepairAsync(pilot, ct);
+        if (!travel.ContainsKey(pilot.UserId)) await PersistAsync(pilot, ct);
+        await using var held = meshMutex is null ? null : await meshMutex.AcquireAsync(ct);
+        foreach (var map in connected.Values)
+            if (map.TryRemove(pilot.UserId, out var previous) && previous.MapId != pilot.MapId)
+                await WritePresenceAsync(previous, false, ct);
+        connected.GetOrAdd(pilot.MapId, _ => new ConcurrentDictionary<long, WorldPilot>())[pilot.UserId] = pilot;
+        await HeartbeatPresenceCoreAsync(pilot, ct);
+        return pilot;
+    }
+
+    private async Task<WorldPilot> ResumeChargedRepairAsync(WorldPilot pilot, CancellationToken ct)
+    {
         if (CurrentHitPoints(pilot) == 0 && repairWallet is not null && pilot.AccountId != Guid.Empty)
         {
             var deathId = await DeathIdAsync(pilot.UserId, ct, pilot.AccountId);
@@ -563,13 +576,6 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 }
             }
         }
-        if (!travel.ContainsKey(pilot.UserId)) await PersistAsync(pilot, ct);
-        await using var held = meshMutex is null ? null : await meshMutex.AcquireAsync(ct);
-        foreach (var map in connected.Values)
-            if (map.TryRemove(pilot.UserId, out var previous) && previous.MapId != pilot.MapId)
-                await WritePresenceAsync(previous, false, ct);
-        connected.GetOrAdd(pilot.MapId, _ => new ConcurrentDictionary<long, WorldPilot>())[pilot.UserId] = pilot;
-        await HeartbeatPresenceCoreAsync(pilot, ct);
         return pilot;
     }
 
@@ -616,7 +622,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         }
         pilot = await CompleteStagedRepairAsync(pilot, ct);
         await ReconcilePendingDeathAsync(pilot, ct);
-        return pilot;
+        return await ResumeChargedRepairAsync(pilot, ct);
     }
 
     private async Task<WorldPilot> RestorePendingDeathPositionAsync(WorldPilot pilot,
