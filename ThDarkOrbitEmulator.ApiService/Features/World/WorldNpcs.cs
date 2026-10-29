@@ -478,7 +478,6 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                     var elapsed = Math.Max(0, nowMs - load.UpdatedAtUnixMs);
                     var added = Math.Min(capacity - Math.Clamp(load.Count, 0, capacity), elapsed / reloadMs);
                     var count = Math.Clamp(load.Count, 0, capacity) + (int)added;
-                    var updatedAt = count == capacity ? nowMs : load.UpdatedAtUnixMs + added * reloadMs;
                     if (count == 0) return new("reloading", npc);
                     // A volley is one target hit; each loaded rocket rolls independently.
                     for (var i = 0; i < count; i++)
@@ -490,7 +489,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                     }
                     missed = damage == 0;
                     await cache.SetStringAsync(loadKey,
-                        JsonSerializer.Serialize(new LauncherLoad(0, updatedAt)), Expiry, ct);
+                        JsonSerializer.Serialize(new LauncherLoad(0, nowMs)), Expiry, ct);
                 }
                 else if (rocket)
                 {
