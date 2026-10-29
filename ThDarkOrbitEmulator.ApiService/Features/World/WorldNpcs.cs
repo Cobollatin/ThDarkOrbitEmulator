@@ -575,9 +575,12 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             var speed = template?.Speed ?? 0;
             var elapsed = vital.LastStepUnixMs == 0 ? 1d : Math.Clamp(
                 (now.ToUnixTimeMilliseconds() - vital.LastStepUnixMs) / 1000d, 0, 5);
-            var step = Math.Min(Math.Max(0, speed) * elapsed,
-                Math.Max(0, distance - Math.Max(0, settings.NpcStandoffRange)));
-            var x = distance == 0 ? npc.X : npc.X + (int)Math.Round(dx * step / distance);
+            var maxStep = Math.Max(0, speed) * elapsed;
+            var step = Math.Clamp(distance - Math.Max(0, settings.NpcStandoffRange),
+                -maxStep, maxStep);
+            // At overlap there is no direction to retreat along; choose a stable axis.
+            var x = distance == 0 ? npc.X + (int)Math.Round(step)
+                : npc.X + (int)Math.Round(dx * step / distance);
             var y = distance == 0 ? npc.Y : npc.Y + (int)Math.Round(dy * step / distance);
             npc = npc with { X = x, Y = y };
             var fire = template?.Aggressive != false &&

@@ -235,6 +235,57 @@ public sealed class WorldRocketAndNpcAggroTests
     }
 
     [Test]
+    public async Task AutonomousNpc_RetreatsWhenPilotEntersStandoffRange()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var options = new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 100)],
+            AggroRange = 1000, NpcStandoffRange = 300, NpcFireRange = 0
+        };
+        var first = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var spawn = (await first.VisibleAsync(1, default)).Single();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        await sessions.EnterAsync(Pilot(spawn.X + 100, spawn.Y), default);
+
+        await first.TickAggroAsync(1, sessions, default);
+        Assert.That((await first.VisibleAsync(1, default)).Single().X, Is.EqualTo(spawn.X - 100));
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var second = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        await second.TickAggroAsync(1, sessions, default);
+        Assert.That((await second.VisibleAsync(1, default)).Single().X, Is.EqualTo(spawn.X - 200));
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await first.TickAggroAsync(1, sessions, default);
+        Assert.That((await first.VisibleAsync(1, default)).Single().X, Is.EqualTo(spawn.X - 200));
+    }
+
+    [Test]
+    public async Task AutonomousNpc_RetreatsFromOverlappingPilot()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var npcs = CreateNpcs(cache, mutex, new Rewards(), clock, new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 100)],
+            AggroRange = 1000, NpcStandoffRange = 300, NpcFireRange = 0
+        });
+        var spawn = (await npcs.VisibleAsync(1, default)).Single();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        await sessions.EnterAsync(Pilot(spawn.X, spawn.Y), default);
+
+        await npcs.TickAggroAsync(1, sessions, default);
+
+        Assert.That((await npcs.VisibleAsync(1, default)).Single().X, Is.EqualTo(spawn.X - 100));
+    }
+
+    [Test]
     public async Task AutonomousNpc_ReturnsTowardPatrolAfterTargetLeaves()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
