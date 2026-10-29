@@ -562,6 +562,12 @@ public sealed class WorldHttpBridgeTests
         var disabled = await SendAsync("POST", "cloak", "{\"active\":false}", auth, resolver, b);
         Assert.That(disabled.Response.StatusCode, Is.EqualTo(200));
         Assert.That((await a.ConnectedAsync(1, default)).Single().IsInvisible, Is.False);
+        var cooling = await SendAsync("POST", "cloak", "{\"active\":true}", auth, resolver, b);
+        Assert.That(cooling.Response.StatusCode, Is.EqualTo(409));
+        using var cooldownBody = JsonDocument.Parse(Body(cooling));
+        Assert.That(cooldownBody.RootElement.GetProperty("status").GetString(), Is.EqualTo("cooldown"));
+        Assert.That(cooldownBody.RootElement.GetProperty("cooldownRemainingMs").GetInt32(), Is.GreaterThan(0));
+        Assert.That((await a.ConnectedAsync(1, default)).Single().IsInvisible, Is.False);
     }
 
     [Test]

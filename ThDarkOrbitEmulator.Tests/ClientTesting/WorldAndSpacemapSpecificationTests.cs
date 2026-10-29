@@ -3437,8 +3437,9 @@ public sealed class WorldAndSpacemapSpecificationTests
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
         var cache = services.GetRequiredService<IDistributedCache>();
         var mutex = new TestMutex();
-        var first = new WorldSessionStore(cache, mutex);
-        var second = new WorldSessionStore(cache, mutex);
+        var clock = new AdvancingClock();
+        var first = new WorldSessionStore(cache, mutex, clock: clock);
+        var second = new WorldSessionStore(cache, mutex, clock: clock);
         var pilot = await first.EnterAsync(Pilot() with
         {
             X = 10000, Y = 6000,
@@ -3453,6 +3454,10 @@ public sealed class WorldAndSpacemapSpecificationTests
 
         await second.MarkCombatAsync(pilot, default);
         Assert.That((await first.ConnectedAsync(1, default)).Single().IsInvisible, Is.False);
+        var cooldown = Assert.ThrowsAsync<WorldCloakCooldownException>(
+            async () => await first.SetCloakAsync(pilot, true, default));
+        Assert.That(cooldown!.RemainingMs, Is.EqualTo(20_000));
+        clock.Advance(TimeSpan.FromSeconds(20));
         pilot = await first.SetCloakAsync(pilot, true, default);
 
         pilot = await first.SetCloakAsync(pilot, false, default);

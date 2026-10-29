@@ -119,6 +119,10 @@ public sealed class WorldConfigurationCooldownException(int remainingMs) : Excep
 {
     public int RemainingMs { get; } = remainingMs;
 }
+public sealed class WorldCloakCooldownException(int remainingMs) : Exception("Cloak activation is cooling down.")
+{
+    public int RemainingMs { get; } = remainingMs;
+}
 
 public sealed record WorldPresence(WorldPilot Pilot, DateTimeOffset SeenAtUtc);
 
@@ -206,6 +210,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private static string Key(long userId) => $"world:position:{userId}";
     private static string RuntimeKey(long userId) => $"world:runtime:{userId}";
     private static string CombatKey(long userId) => $"world:combat:{userId}";
+    private static string CloakCooldownKey(long userId) => $"world:cloak-cooldown:{userId}";
     private static string RepairProtectionKey(long userId) => $"world:repair-protection:{userId}";
     private static string DeathKey(long userId) => $"world:death:{userId}";
     private async Task<string?> DeathIdAsync(long userId, CancellationToken ct,
@@ -232,6 +237,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private static string HullRecoveryKey(long userId) => $"world:hull-recovery:{userId}";
     private static string PresenceKey(int mapId) => $"world:presence:map:{mapId}";
     private static readonly TimeSpan PortalCombatWindow = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan CloakActivationCooldown = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan RepairProtectionWindow = TimeSpan.FromSeconds(5);
     private async Task<bool> RepairProtectedAsync(long userId, CancellationToken ct)
     {
@@ -633,8 +639,23 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         pilot = await RefreshAsync(pilot, ct);
         if (CurrentHitPoints(pilot) <= 0) throw new WorldPilotDestroyedException();
         if (pilot.IsInvisible == active) return pilot;
+        if (active)
+        {
+            var saved = await cache.GetStringAsync(CloakCooldownKey(pilot.UserId), ct);
+            if (long.TryParse(saved, out var milliseconds))
+            {
+                var remaining = CloakActivationCooldown -
+                    (combatClock.GetUtcNow() - DateTimeOffset.FromUnixTimeMilliseconds(milliseconds));
+                if (remaining > TimeSpan.Zero)
+                    throw new WorldCloakCooldownException((int)Math.Ceiling(remaining.TotalMilliseconds));
+            }
+        }
         pilot = pilot with { IsInvisible = active };
         await PersistRuntimeAsync(pilot, ct, cloakOverride: active);
+        if (active)
+            await cache.SetStringAsync(CloakCooldownKey(pilot.UserId),
+                combatClock.GetUtcNow().ToUnixTimeMilliseconds().ToString(),
+                new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = CloakActivationCooldown }, ct);
         RefreshConnectedPilot(pilot);
         await WritePresenceAsync(pilot, true, ct);
         await BroadcastCloakAsync(pilot, ct);
