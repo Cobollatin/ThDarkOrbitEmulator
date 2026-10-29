@@ -596,6 +596,10 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 if (!resumePulse) await sessions.MarkCombatAsync(pilot, ct);
                 if (missed)
                 {
+                    await cache.SetStringAsync(key, JsonSerializer.Serialize(vital with
+                    {
+                        LastHitUnixMs = clock.GetUtcNow().ToUnixTimeMilliseconds()
+                    }), Expiry, ct);
                     target = npc with { Hp = vital.Hp, Shield = vital.Shield };
                 }
                 else
