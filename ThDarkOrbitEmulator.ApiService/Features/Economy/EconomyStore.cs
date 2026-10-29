@@ -1087,6 +1087,27 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
         return true;
     }
 
+    // A charge abandoned before StartPulseActionAsync has no world effect to replay.
+    // The row-level status transition in RefundUnstartedPulseActionAsync serializes with a late start.
+    public async Task<int> RefundStalePulseActionsAsync(DateTimeOffset olderThan, CancellationToken ct)
+    {
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand("""
+            SELECT account_id,action_id FROM economy.pulse_actions
+            WHERE status='charged' AND created_at < @cutoff
+            ORDER BY created_at LIMIT 16
+            """, db);
+        cmd.Parameters.AddWithValue("cutoff", olderThan);
+        var actions = new List<(Guid AccountId, Guid ActionId)>();
+        await using (var rows = await cmd.ExecuteReaderAsync(ct))
+            while (await rows.ReadAsync(ct)) actions.Add((rows.GetGuid(0), rows.GetGuid(1)));
+        var refunded = 0;
+        foreach (var action in actions)
+            if (await RefundUnstartedPulseActionAsync(action.AccountId, action.ActionId, ct)) refunded++;
+        return refunded;
+    }
+
     public async Task<IReadOnlyList<EconomyRecipe>> RecipesAsync(CancellationToken ct)
     {
         await using var db = Connection(); await db.OpenAsync(ct);

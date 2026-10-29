@@ -158,6 +158,56 @@ public class EconomyPostgresTests
 
     [Test]
     [Category("Integration")]
+    public async Task PulseCharge_RefundsOnlyStaleUnstartedActions()
+    {
+        var ct = TestContext.CurrentContext.CancellationToken;
+        await using var postgres = new PostgreSqlBuilder("postgres:16-alpine")
+            .WithDatabase("thdarkorbit").WithUsername("app").WithPassword("app").Build();
+        await postgres.StartAsync(ct);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["ConnectionStrings:identity-write"] = postgres.GetConnectionString() }).Build();
+        await new SqlMigrationHostedService(config, Options.Create(new IdentityDatabaseOptions
+        { AutoMigrate = true, BackupBeforeMigration = false, Schema = "identity" }),
+            NullLogger<SqlMigrationHostedService>.Instance).StartAsync(ct);
+        var account = Guid.NewGuid();
+        await using var db = new NpgsqlConnection(postgres.GetConnectionString());
+        await db.OpenAsync(ct);
+        await using (var create = new NpgsqlCommand(
+            "INSERT INTO identity.accounts(id,username,game_user_id) VALUES (@a,'pulse-stale',4025)", db))
+        { create.Parameters.AddWithValue("a", account); await create.ExecuteNonQueryAsync(ct); }
+        var first = new EconomyStore(config);
+        var second = new EconomyStore(config);
+        Assert.That(await first.GrantItemAsync(account, "pulse_charge", 3, "pulse-stale", 0,
+            "test", ct), Is.True);
+        var stale = Guid.NewGuid();
+        var recent = Guid.NewGuid();
+        var started = Guid.NewGuid();
+        foreach (var id in new[] { stale, recent, started })
+            Assert.That(await first.ConsumeItemOnceAsync(account, "pulse_charge", id, ct),
+                Is.EqualTo(PulseChargeResult.Consumed));
+        Assert.That(await first.StartPulseActionAsync(account, started, 1, [], ct), Is.True);
+        await using (var age = new NpgsqlCommand("""
+            UPDATE economy.pulse_actions SET created_at=@old
+            WHERE action_id IN (@stale,@started)
+            """, db))
+        {
+            age.Parameters.AddWithValue("old", DateTimeOffset.UtcNow.AddMinutes(-5));
+            age.Parameters.AddWithValue("stale", stale);
+            age.Parameters.AddWithValue("started", started);
+            await age.ExecuteNonQueryAsync(ct);
+        }
+        Assert.That(await second.RefundStalePulseActionsAsync(DateTimeOffset.UtcNow.AddMinutes(-2), ct),
+            Is.EqualTo(1));
+        Assert.That(await first.RefundStalePulseActionsAsync(DateTimeOffset.UtcNow.AddMinutes(-2), ct),
+            Is.Zero);
+        Assert.That((await first.PulseActionPlanAsync(account, stale, ct))?.Status, Is.EqualTo("refunded"));
+        Assert.That((await first.PulseActionPlanAsync(account, recent, ct))?.Status, Is.EqualTo("charged"));
+        Assert.That((await first.PulseActionPlanAsync(account, started, ct))?.Status, Is.EqualTo("started"));
+        Assert.That((await first.InventoryAsync(account, ct))["pulse_charge"], Is.EqualTo(1));
+    }
+
+    [Test]
+    [Category("Integration")]
     public async Task LegacyEquipmentImport_CapsShipSlotsAndKeepsRemainderTransferable()
     {
         var ct = TestContext.CurrentContext.CancellationToken;
