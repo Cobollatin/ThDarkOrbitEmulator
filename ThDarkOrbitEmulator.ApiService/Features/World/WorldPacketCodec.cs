@@ -47,7 +47,8 @@ public enum WorldCommandId : ushort
     NpcFireCommand = 40,
     LaserStopRequest = 41,
     RadiationDamageCommand = 42,
-    PortalOperationCommand = 43
+    PortalOperationCommand = 43,
+    CloakStateCommand = 44
 }
 
 public enum WorldLoginError : byte

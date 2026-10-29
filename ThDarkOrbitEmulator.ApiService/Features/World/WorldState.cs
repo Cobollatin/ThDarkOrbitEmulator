@@ -247,6 +247,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         var visible = pilot with { IsInvisible = false };
         RefreshConnectedPilot(visible);
         await WritePresenceAsync(visible, true, ct);
+        await BroadcastCloakAsync(visible, ct);
     }
 
     private async Task<bool> PortalCombatLockedAsync(WorldPilot pilot, CancellationToken ct)
@@ -614,10 +615,12 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         await using var held = meshMutex is null ? null : await meshMutex.AcquireAsync(ct);
         pilot = await RefreshAsync(pilot, ct);
         if (CurrentHitPoints(pilot) <= 0) throw new WorldPilotDestroyedException();
+        if (pilot.IsInvisible == active) return pilot;
         pilot = pilot with { IsInvisible = active };
         await PersistRuntimeAsync(pilot, ct, cloakOverride: active);
         RefreshConnectedPilot(pilot);
         await WritePresenceAsync(pilot, true, ct);
+        await BroadcastCloakAsync(pilot, ct);
         return pilot;
     }
 
@@ -1590,6 +1593,13 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             catch (IOException) { }
         }
     }
+
+    private Task BroadcastCloakAsync(WorldPilot pilot, CancellationToken ct) =>
+        BroadcastAsync(pilot, WorldCommandId.CloakStateCommand, WorldPayload.Encode(w =>
+        {
+            WorldPayload.WriteInt64(w, pilot.UserId);
+            w.Write(pilot.IsInvisible);
+        }), ct);
 
     public (int X, int Y) CurrentPosition(WorldPilot pilot, DateTimeOffset? at = null) =>
         travel.TryGetValue(pilot.UserId, out var moving) && moving.MapId == pilot.MapId

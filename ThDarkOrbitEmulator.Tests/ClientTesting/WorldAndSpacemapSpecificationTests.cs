@@ -3425,6 +3425,46 @@ public sealed class WorldAndSpacemapSpecificationTests
             Is.False);
     }
 
+    [Test]
+    public async Task CloakTransitions_NotifyConnectedPilotsOncePerChange()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var sessions = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), new TestMutex());
+        var pilot = await sessions.EnterAsync(Pilot() with
+        {
+            X = 10000, Y = 6000,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+        using var ownWire = new MemoryStream();
+        using var observerWire = new MemoryStream();
+        sessions.Attach(new WorldConnection(pilot, new WorldPacketWriter(ownWire)));
+        sessions.Attach(new WorldConnection(pilot with { UserId = pilot.UserId + 1 },
+            new WorldPacketWriter(observerWire)));
+
+        pilot = await sessions.SetCloakAsync(pilot, true, default);
+        pilot = await sessions.SetCloakAsync(pilot, true, default);
+        await sessions.MarkCombatAsync(pilot, default);
+        await sessions.MarkCombatAsync(pilot, default);
+
+        foreach (var wire in new[] { ownWire, observerWire })
+        {
+            wire.Position = 0;
+            var reader = new WorldPacketReader(wire);
+            var first = await reader.ReadAsync();
+            var second = await reader.ReadAsync();
+            Assert.Multiple(() =>
+            {
+                Assert.That(first?.Command, Is.EqualTo(WorldCommandId.CloakStateCommand));
+                Assert.That(second?.Command, Is.EqualTo(WorldCommandId.CloakStateCommand));
+            });
+            Assert.That(WorldPayload.Decode(first!.Value.Payload, r =>
+                (WorldPayload.ReadInt64(r), r.ReadBoolean())), Is.EqualTo((pilot.UserId, true)));
+            Assert.That(WorldPayload.Decode(second!.Value.Payload, r =>
+                (WorldPayload.ReadInt64(r), r.ReadBoolean())), Is.EqualTo((pilot.UserId, false)));
+            Assert.That(await reader.ReadAsync(), Is.Null);
+        }
+    }
+
     private sealed class TestClock : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => DateTimeOffset.FromUnixTimeSeconds(1_000_000);

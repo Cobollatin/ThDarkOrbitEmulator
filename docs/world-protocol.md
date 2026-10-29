@@ -562,3 +562,5 @@ Iteration 15 adds `{"location":"death"}` to that HTTP action on standard maps. A
 ## World-54 radiation damage update (2026-10-28)
 
 The map owner broadcasts provisional `RadiationDamageCommand=42` to observers on the pilot's map after a radiation hit persists. Its payload is big-endian `i64 pilotUserId, i64 damage, i64 remainingHitPoints, i64 remainingShield`. One-second throttling suppresses repeat hit frames. The native Unity packet ID and payload remain unverified.
+
+The local cloak action and combat decloaking broadcast provisional `CloakStateCommand=44` to connected pilots on the same map when the state changes. Its payload is big-endian `i64 pilotUserId, bool cloaked`. The packet is sent by the node handling the change; cross-node socket fanout is not implemented. Its native Unity ID and layout remain unverified.
