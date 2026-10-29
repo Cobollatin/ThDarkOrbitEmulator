@@ -134,6 +134,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     IReadOnlySet<int>? combatRestrictedMaps = null, IReadOnlySet<int>? cloakBlockedMaps = null,
     IConfiguration? configuration = null)
 {
+    private readonly IReadOnlySet<int>? configuredCombatRestrictedMaps = combatRestrictedMaps
+        ?? configuration?.GetSection("World:CombatRestrictedMaps").Get<int[]>()?.ToHashSet();
     private readonly IReadOnlySet<int> configuredCloakBlockedMaps = cloakBlockedMaps
         ?? configuration?.GetSection("World:CloakBlockedMaps").Get<int[]>()?.ToHashSet()
         ?? new HashSet<int>();
@@ -1408,7 +1410,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             var jumpRadius = variables is null ? portal.JumpRadius
                 : (int)await variables.NumberAsync("world.portal.jump_radius", ct);
             if (dx * dx + dy * dy > (long)jumpRadius * jumpRadius) return null;
-            if ((combatRestrictedMaps?.Contains(pilot.MapId) ?? !WorldMapInstance.IsGate(pilot.MapId))
+            if ((configuredCombatRestrictedMaps?.Contains(pilot.MapId) ?? !WorldMapInstance.IsGate(pilot.MapId))
                 && await PortalCombatLockedAsync(pilot, ct)) return null;
             var next = pilot with { MapId = portal.DestinationMapId,
                 X = portal.ArrivalX, Y = portal.ArrivalY };

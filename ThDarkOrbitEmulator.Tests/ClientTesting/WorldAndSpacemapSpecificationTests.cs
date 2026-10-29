@@ -734,17 +734,18 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
-    public async Task PortalJump_CombatLockAppliesOnlyOnConfiguredMapsAcrossReplicas()
+    public async Task PortalJump_CombatLockReadsConfiguredMapsAcrossReplicas()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
         var cache = services.GetRequiredService<IDistributedCache>();
         var mutex = new TestMutex();
         var clock = new AdvancingClock();
-        var restricted = new HashSet<int> { 2 };
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["World:CombatRestrictedMaps:0"] = "2" }).Build();
         var first = new WorldSessionStore(cache, mutex, clock: clock,
-            combatRestrictedMaps: restricted);
+            configuration: configuration);
         var replica = new WorldSessionStore(cache, mutex, clock: clock,
-            combatRestrictedMaps: restricted);
+            configuration: configuration);
         var pilot = await first.EnterAsync(Pilot() with
         {
             X = 19500, Y = 1300,
