@@ -24,6 +24,7 @@ public sealed class WorldNpcOptions
     public int RocketRange { get; set; } = 1500;
     public int RocketDamage { get; set; } = 250;
     public double RocketMissChance { get; set; }
+    public double RocketDamageSpread { get; set; }
     public int RocketCooldownSeconds { get; set; } = 3;
     public int PulseRange { get; set; } = 700;
     public int PulseCooldownSeconds { get; set; } = 30;
@@ -454,6 +455,12 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                     damage = Math.Max(1, settings.RocketDamage);
                     missed = Random.Shared.NextDouble() < Math.Clamp(settings.RocketMissChance, 0, 1);
                     if (missed) damage = 0;
+                    else
+                    {
+                        var spread = Math.Clamp(settings.RocketDamageSpread, 0, 1);
+                        damage = Math.Max(1, (int)Math.Round(damage *
+                            (1 - spread + Random.Shared.NextDouble() * 2 * spread)));
+                    }
                 }
                 else
                 {

@@ -2667,6 +2667,45 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task PilotRocket_RollsBoundedDamageAcrossCooldowns()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var options = new WorldNpcOptions
+        {
+            RocketDamage = 100, RocketDamageSpread = 0.2, RocketCooldownSeconds = 1,
+            Templates = [new("Scout", "npc_scout", 1, 100_000, 0, 0, 0, 0, 0, 0)]
+        };
+        var clock = new AdvancingClock();
+        var npcs = new WorldNpcs(cache, mutex, new TestRewards(), Options.Create(options), clock);
+        var spawn = npcs.Spawn(1, clock.GetUtcNow()).Single();
+        var sessions = new WorldSessionStore(cache, mutex);
+        var pilot = await sessions.EnterAsync(Pilot() with
+        {
+            AccountId = Guid.NewGuid(), X = spawn.X, Y = spawn.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+
+        var shots = new List<int>();
+        for (var i = 0; i < 10; i++)
+        {
+            var hit = await npcs.AttackAsync(pilot, spawn.Id, sessions, default, rocket: true);
+            Assert.That(hit.Status, Is.EqualTo("hit"));
+            shots.Add(hit.Damage);
+            clock.Advance(TimeSpan.FromSeconds(1));
+        }
+
+        var remainingHp = (await npcs.VisibleAsync(1, default)).Single().Hp;
+        Assert.Multiple(() =>
+        {
+            Assert.That(shots, Is.All.InRange(80, 120));
+            Assert.That(shots.Distinct().Count(), Is.GreaterThan(1));
+            Assert.That(remainingHp, Is.EqualTo(100_000 - shots.Sum()));
+        });
+    }
+
+    [Test]
     public async Task NpcPulse_DamagesNearbyTargets_AndSharesCooldownAcrossReplicas()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
