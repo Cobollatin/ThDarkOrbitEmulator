@@ -31,6 +31,7 @@ public sealed class WorldNpcOptions
     public int NpcStandoffRange { get; set; } = 300;
     public int NpcFireRange { get; set; } = 650;
     public int NpcDamage { get; set; } = 40;
+    public double NpcMissChance { get; set; } = 0.1;
     public double PilotShieldAbsorption { get; set; } = 0.8;
     public int NpcFireCooldownSeconds { get; set; } = 2;
     public int NpcShieldRepairDelaySeconds { get; set; } = 10;
@@ -610,7 +611,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             await cache.SetStringAsync(key, JsonSerializer.Serialize(vital), Expiry, ct);
             observerSnapshots.TryRemove(mapId, out _);
             if (fire) await sessions.ApplyNpcDamageAsync(target.Pilot, npc.Id,
-                Math.Max(1, settings.NpcDamage), ct, settings.PilotShieldAbsorption);
+                Random.Shared.NextDouble() < Math.Clamp(settings.NpcMissChance, 0, 1)
+                    ? 0 : Math.Max(1, settings.NpcDamage), ct, settings.PilotShieldAbsorption);
         }
     }
 

@@ -187,7 +187,7 @@ public sealed class WorldRocketAndNpcAggroTests
         {
             Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 100)],
             AggroRange = 1000, NpcStandoffRange = 0, NpcFireRange = 300,
-            NpcDamage = 40, NpcFireCooldownSeconds = 2
+            NpcDamage = 40, NpcFireCooldownSeconds = 2, NpcMissChance = 0
         });
         var npc = (await npcs.VisibleAsync(1, default)).Single();
         var sessions = new WorldSessionStore(cache, mutex, clock: clock);
@@ -379,7 +379,7 @@ public sealed class WorldRocketAndNpcAggroTests
         {
             Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 0)],
             AggroRange = 1000, NpcFireRange = 1000, NpcDamage = 10,
-            NpcFireCooldownSeconds = 1
+            NpcFireCooldownSeconds = 1, NpcMissChance = 0
         });
         var npc = (await npcs.VisibleAsync(1, default)).Single();
         var sessions = new WorldSessionStore(cache, mutex, clock: clock);
@@ -435,6 +435,37 @@ public sealed class WorldRocketAndNpcAggroTests
     }
 
     [Test]
+    public async Task AutonomousNpc_MissConsumesShotCooldownWithoutDamagingPilot()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var options = new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 0)],
+            AggroRange = 1000, NpcFireRange = 1000, NpcDamage = 10,
+            NpcFireCooldownSeconds = 2, NpcMissChance = 1
+        };
+        var npcs = CreateNpcs(cache, mutex, new Rewards(), clock, options);
+        var npc = (await npcs.VisibleAsync(1, default)).Single();
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var pilot = await sessions.EnterAsync(Pilot(npc.X + 400, npc.Y), default);
+
+        await npcs.TickAggroAsync(1, sessions, default);
+        Assert.That(sessions.CurrentHitPoints(pilot), Is.EqualTo(1000));
+
+        options.NpcMissChance = 0;
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await npcs.TickAggroAsync(1, sessions, default);
+        Assert.That(sessions.CurrentHitPoints(pilot), Is.EqualTo(1000));
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await npcs.TickAggroAsync(1, sessions, default);
+        Assert.That(sessions.CurrentHitPoints(pilot), Is.EqualTo(990));
+    }
+
+    [Test]
     public async Task PassiveNpc_RetaliatesAgainstAttackerThenStopsAfterTargetLeaves()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
@@ -446,7 +477,7 @@ public sealed class WorldRocketAndNpcAggroTests
             Templates = [new("Scout", "npc_scout", 1, 300, 0, 0, 0, 0, 0, 0,
                 Aggressive: false)],
             AggroRange = 1000, NpcFireRange = 1000, NpcDamage = 10,
-            NpcFireCooldownSeconds = 1
+            NpcFireCooldownSeconds = 1, NpcMissChance = 0
         };
         var firstNode = CreateNpcs(cache, mutex, new Rewards(), clock, options);
         var npc = (await firstNode.VisibleAsync(1, default)).Single();
