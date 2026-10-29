@@ -1517,6 +1517,36 @@ public sealed class WorldAndSpacemapSpecificationTests
             Assert.That((restored.X, restored.Y), Is.Not.EqualTo((5000, 5000)));
     }
 
+    [TestCase(WorldRespawnLocation.DeathLocation, 300)]
+    [TestCase(WorldRespawnLocation.NearestPortal, 200)]
+    public async Task PilotDestruction_ReentryRecoversMissingDeathKeyAfterCharge(
+        WorldRespawnLocation paidLocation, int price)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var wallet = new TestRepairWallet { CanPay = true, ThrowAfterChargeOnce = true };
+        var store = new WorldSessionStore(cache, repairWallet: wallet);
+        var replica = new WorldSessionStore(cache, repairWallet: wallet);
+        var pilot = await store.EnterAsync(Pilot() with
+        {
+            UserId = 1800 + price, AccountId = Guid.NewGuid(), MapId = 2,
+            FactionId = 1, X = 5000, Y = 5000, Uridium = 1000,
+            Stats = new WorldShipStats(300, 1000, 100, 0, 100, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0);
+        Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await store.RespawnAsync(pilot, paidLocation, default));
+        await cache.RemoveAsync($"world:death:{pilot.UserId}");
+        store.SetCurrentShield(pilot, 0); // A later runtime write must retain the death identity.
+
+        var restored = await replica.EnterAsync(pilot, default);
+
+        Assert.That(replica.CurrentHitPoints(restored), Is.GreaterThan(0));
+        Assert.That(restored.Uridium, Is.EqualTo(1000 - price));
+        Assert.That(wallet.Keys, Has.Count.EqualTo(1));
+        Assert.That(await cache.GetStringAsync($"world:death:{pilot.UserId}"), Is.EqualTo(wallet.Keys[0]));
+    }
+
     [TestCase("0", 0)]
     [TestCase("1000000", 1000000)]
     [TestCase("-1", 150)]

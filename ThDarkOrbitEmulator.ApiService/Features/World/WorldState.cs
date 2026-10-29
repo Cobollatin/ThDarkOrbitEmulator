@@ -100,7 +100,8 @@ public static class WorldShipStatCalculator
 public sealed record WorldPosition(int MapId, int X, int Y);
 public sealed record WorldRuntimeSnapshot(int MapId, int Configuration, long Shield,
     long LastSwitchUnixMilliseconds, WorldTravel? Travel, long? HitPoints = null,
-    long LastHazardUnixMilliseconds = 0, bool RadiationWarning = false, bool RepairBotActive = false);
+    long LastHazardUnixMilliseconds = 0, bool RadiationWarning = false, bool RepairBotActive = false,
+    string? DeathId = null);
 public sealed record WorldJumpResult(WorldPilot Pilot, int PortalId, string? TargetNodeId,
     string? TargetTcpHostPort);
 public sealed record WorldSwitchResult(bool Changed, int CooldownRemainingMs, WorldMoveResult? Move);
@@ -181,6 +182,19 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private static string RuntimeKey(long userId) => $"world:runtime:{userId}";
     private static string CombatKey(long userId) => $"world:combat:{userId}";
     private static string DeathKey(long userId) => $"world:death:{userId}";
+    private async Task<string?> DeathIdAsync(long userId, CancellationToken ct)
+    {
+        var deathId = await cache.GetStringAsync(DeathKey(userId), ct);
+        if (deathId is not null) return deathId;
+        var saved = await cache.GetStringAsync(RuntimeKey(userId), ct);
+        if (saved is null) return null;
+        try { deathId = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(saved)?.DeathId; }
+        catch (JsonException) { return null; }
+        if (deathId is not null)
+            await cache.SetStringAsync(DeathKey(userId), deathId,
+                new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
+        return deathId;
+    }
     private static string RespawnCooldownKey(long userId, WorldRespawnLocation location) =>
         $"world:respawn-cooldown:{userId}:{location}";
     private static string ShieldRecoveryKey(long userId) => $"world:shield-recovery:{userId}";
@@ -526,7 +540,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         pilot = await RefreshAsync(pilot, ct);
         if (CurrentHitPoints(pilot) == 0 && repairWallet is not null && pilot.AccountId != Guid.Empty)
         {
-            var deathId = await cache.GetStringAsync(DeathKey(pilot.UserId), ct);
+            var deathId = await DeathIdAsync(pilot.UserId, ct);
             if (deathId is not null)
             {
                 foreach (var paidLocation in new[]
@@ -1051,13 +1065,15 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         finally { gate.Release(); }
     }
 
-    private Task PersistRuntimeAsync(WorldPilot pilot, CancellationToken ct) =>
-        cache.SetStringAsync(RuntimeKey(pilot.UserId), JsonSerializer.Serialize(new WorldRuntimeSnapshot(
+    private async Task PersistRuntimeAsync(WorldPilot pilot, CancellationToken ct,
+        bool clearDeathId = false) =>
+        await cache.SetStringAsync(RuntimeKey(pilot.UserId), JsonSerializer.Serialize(new WorldRuntimeSnapshot(
             pilot.MapId, Configuration(pilot.UserId), CurrentShield(pilot),
             lastSwitches.TryGetValue(pilot.UserId, out var last) ? last.ToUnixTimeMilliseconds() : 0,
             travel.GetValueOrDefault(pilot.UserId), CurrentHitPoints(pilot),
             lastHazards.TryGetValue(pilot.UserId, out var hazard) ? hazard.ToUnixTimeMilliseconds() : 0,
-            RadiationWarning(pilot.UserId), RepairBotActive(pilot.UserId))),
+            RadiationWarning(pilot.UserId), RepairBotActive(pilot.UserId),
+            clearDeathId ? null : await DeathIdAsync(pilot.UserId, ct))),
             new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
 
     private async Task ApplyBoundaryDamageAsync(WorldPilot pilot, DateTimeOffset now, CancellationToken ct)
@@ -1196,7 +1212,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             {
                 if (repairWallet is null || pilot.AccountId == Guid.Empty
                     || location is WorldRespawnLocation.Base) return null;
-                var completedDeathId = await cache.GetStringAsync(DeathKey(pilot.UserId), ct);
+                var completedDeathId = await DeathIdAsync(pilot.UserId, ct);
                 if (completedDeathId is null) return null;
                 var completed = await repairWallet.FindChargeAsync(pilot.AccountId, location,
                     completedDeathId, ct);
@@ -1209,7 +1225,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             // Resume that paid choice even when the retry asks for a different repair location.
             if (repairWallet is not null && pilot.AccountId != Guid.Empty)
             {
-                var deathId = await cache.GetStringAsync(DeathKey(pilot.UserId), ct);
+                var deathId = await DeathIdAsync(pilot.UserId, ct);
                 if (deathId is not null)
                 {
                     foreach (var paidLocation in new[]
@@ -1235,7 +1251,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             if (cooldown > TimeSpan.Zero && repairWallet is not null)
             {
                 if (pilot.AccountId == Guid.Empty) return null;
-                var deathId = await cache.GetStringAsync(DeathKey(pilot.UserId), ct);
+                var deathId = await DeathIdAsync(pilot.UserId, ct);
                 if (deathId is null)
                 {
                     deathId = Guid.NewGuid().ToString("N");
@@ -1263,13 +1279,13 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             await cache.RemoveAsync(HullRecoveryKey(pilot.UserId), ct);
             await cache.RemoveAsync(ShieldRecoveryKey(pilot.UserId), ct);
             await PersistAsync(respawned, ct);
-            await PersistRuntimeAsync(respawned, ct);
+            if (location is WorldRespawnLocation.Base)
+                await cache.RemoveAsync(DeathKey(pilot.UserId), ct);
+            await PersistRuntimeAsync(respawned, ct, clearDeathId: location is WorldRespawnLocation.Base);
             if (cooldown > TimeSpan.Zero)
                 await cache.SetStringAsync(RespawnCooldownKey(pilot.UserId, location),
                     combatClock.GetUtcNow().ToUnixTimeMilliseconds().ToString(),
                     new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = cooldown }, ct);
-            if (location is WorldRespawnLocation.Base)
-                await cache.RemoveAsync(DeathKey(pilot.UserId), ct);
             await WritePresenceAsync(pilot, false, ct);
             await WritePresenceAsync(respawned, true, ct);
             if (connected.TryGetValue(pilot.MapId, out var old)) old.TryRemove(pilot.UserId, out _);
