@@ -575,15 +575,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 await repairWallet.CompleteDeathAsync(pilot.AccountId, deathId, ct);
             }
         }
-        // The durable death also wins when the process stopped before writing zero hull to cache.
-        if (CurrentHitPoints(pilot) > 0 && repairWallet is not null && pilot.AccountId != Guid.Empty
-            && await repairWallet.FindPendingDeathAsync(pilot.AccountId, ct) is not null)
-        {
-            hitPoints[pilot.UserId] = 0;
-            shields[pilot.UserId] = 0;
-            await ClearRepairRuntimeAsync(pilot.UserId, ct);
-            await PersistRuntimeAsync(pilot, ct);
-        }
+        await ReconcilePendingDeathAsync(pilot, ct);
         if (CurrentHitPoints(pilot) == 0 && repairWallet is not null && pilot.AccountId != Guid.Empty)
         {
             var deathId = await DeathIdAsync(pilot.UserId, ct, pilot.AccountId);
@@ -612,7 +604,23 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     }
 
     // Read persisted travel/map before a TCP node admits a socket. This does not create presence.
-    public Task<WorldPilot> RestoreAsync(WorldPilot pilot, CancellationToken ct) => RefreshAsync(pilot, ct);
+    public async Task<WorldPilot> RestoreAsync(WorldPilot pilot, CancellationToken ct)
+    {
+        pilot = await RefreshAsync(pilot, ct);
+        await ReconcilePendingDeathAsync(pilot, ct);
+        return pilot;
+    }
+
+    private async Task ReconcilePendingDeathAsync(WorldPilot pilot, CancellationToken ct)
+    {
+        // A request can arrive on another replica before the lethal hit's cache write.
+        if (CurrentHitPoints(pilot) <= 0 || repairWallet is null || pilot.AccountId == Guid.Empty
+            || await repairWallet.FindPendingDeathAsync(pilot.AccountId, ct) is null) return;
+        hitPoints[pilot.UserId] = 0;
+        shields[pilot.UserId] = 0;
+        await ClearRepairRuntimeAsync(pilot.UserId, ct);
+        await PersistRuntimeAsync(pilot, ct);
+    }
 
     // A remote admin can teleport a pilot while this process still holds the old TCP socket.
     public async Task<int?> SavedMapAsync(long userId, CancellationToken ct)

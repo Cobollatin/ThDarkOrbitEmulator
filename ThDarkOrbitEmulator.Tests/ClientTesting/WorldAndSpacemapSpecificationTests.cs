@@ -1684,6 +1684,29 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(await next.RespawnAtBaseAsync(reentered, default), Is.Not.Null);
     }
 
+    [Test]
+    public async Task PilotDestruction_GameplayRestoreReconcilesInterruptedDeath()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var wallet = new TestRepairWallet { ThrowAfterRecordOnce = true };
+        var pilot = Pilot() with { UserId = 2412, AccountId = Guid.NewGuid(),
+            Stats = new WorldShipStats(300, 1000, 100, 0, 100, []) };
+        var first = new WorldSessionStore(cache, repairWallet: wallet);
+        pilot = await first.EnterAsync(pilot, default);
+        first.SetCurrentShield(pilot, 0);
+        Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await first.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0));
+
+        var replica = new WorldSessionStore(cache, repairWallet: wallet);
+        var restored = await replica.RestoreAsync(pilot, default);
+        Assert.That(replica.CurrentHitPoints(restored), Is.Zero);
+        Assert.That(replica.CurrentShield(restored), Is.Zero);
+        var another = new WorldSessionStore(cache, repairWallet: wallet);
+        var again = await another.RestoreAsync(pilot, default);
+        Assert.That(another.CurrentHitPoints(again), Is.Zero);
+    }
+
     [TestCase(WorldRespawnLocation.DeathLocation, 300)]
     [TestCase(WorldRespawnLocation.NearestPortal, 200)]
     public async Task PilotDestruction_PaidRepairUsesDurableDeathPositionAfterCacheLoss(
