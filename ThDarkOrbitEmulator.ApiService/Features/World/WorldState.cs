@@ -254,7 +254,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 var now = combatClock.GetUtcNow();
                 var hitPointMaximum = ActiveStats(pilot).MaxHitPoints;
                 var current = CurrentHitPoints(pilot);
-                if (current <= 0 || current >= hitPointMaximum)
+                if (current <= 0 || current >= hitPointMaximum || RadiationWarning(pilot.UserId))
                     continue;
                 var combat = await cache.GetStringAsync(CombatKey(pilot.UserId), ct);
                 if (long.TryParse(combat, out var combatMs) &&
@@ -266,6 +266,26 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 await PersistRuntimeAsync(pilot, ct);
                 await cache.SetStringAsync(HullRecoveryKey(pilot.UserId), now.ToUnixTimeMilliseconds().ToString(),
                     new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);
+            }
+            finally { gate.Release(); }
+        }
+    }
+
+    // The map owner continues the hazard while the pilot remains at the boundary.
+    public async Task TickRadiationAsync(int mapId, CancellationToken ct, WorldLeaseFence? fence = null)
+    {
+        foreach (var connectedPilot in await ConnectedAsync(mapId, ct))
+        {
+            var gate = movementGates.GetOrAdd(connectedPilot.UserId, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync(ct);
+            try
+            {
+                await using var held = meshMutex is null ? null : await meshMutex.AcquireAsync(ct);
+                await CheckLeaseAsync(mapId, fence, ct);
+                var pilot = await RefreshAsync(connectedPilot, ct);
+                if (pilot.MapId != mapId || CurrentHitPoints(pilot) <= 0 || !RadiationWarning(pilot.UserId))
+                    continue;
+                await ApplyBoundaryDamageAsync(pilot, combatClock.GetUtcNow(), ct);
             }
             finally { gate.Release(); }
         }

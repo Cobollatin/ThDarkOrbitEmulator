@@ -58,6 +58,7 @@ public sealed class WorldNpcSimulationService(WorldNpcs npcs, WorldSessionStore 
                         catch (Exception ex)
                         { logger?.LogWarning(ex, "Pulse cleanup failed for map {MapId}", lease.MapId); }
                     }
+                    await sessions.TickRadiationAsync(lease.MapId, stoppingToken, fence);
                     await sessions.RecoverShieldsAsync(lease.MapId, stoppingToken, fence);
                     await sessions.RecoverHullAsync(lease.MapId, stoppingToken, fence);
                 }

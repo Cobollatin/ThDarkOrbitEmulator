@@ -1067,6 +1067,43 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(1));
     }
 
+    [Test]
+    public async Task Radiation_ContinuesWithoutMoveCommands_AcrossReplicaHandoff_AndStopsOnSafeMove()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingClock();
+        var pilot = Pilot() with
+        {
+            UserId = 907, X = 0, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        };
+        var owner = new WorldSessionStore(cache, clock: clock);
+        pilot = await owner.EnterAsync(pilot, default);
+        await owner.MoveAsync(pilot, -1, 1300, null, default, clock.GetUtcNow());
+        Assert.That(owner.CurrentHitPoints(pilot), Is.EqualTo(990));
+
+        await owner.TickRadiationAsync(pilot.MapId, default);
+        Assert.That(owner.CurrentHitPoints(pilot), Is.EqualTo(990));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await owner.TickRadiationAsync(pilot.MapId, default);
+        Assert.That(owner.CurrentHitPoints(pilot), Is.EqualTo(980));
+
+        var replica = new WorldSessionStore(cache, clock: clock);
+        pilot = await replica.EnterAsync(pilot, default);
+        await replica.TickRadiationAsync(pilot.MapId, default);
+        Assert.That(replica.CurrentHitPoints(pilot), Is.EqualTo(980));
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await replica.TickRadiationAsync(pilot.MapId, default);
+        await replica.RecoverHullAsync(pilot.MapId, default);
+        Assert.That(replica.CurrentHitPoints(pilot), Is.EqualTo(970));
+
+        await replica.MoveAsync(pilot, 100, 1300, null, default, clock.GetUtcNow());
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await replica.TickRadiationAsync(pilot.MapId, default);
+        Assert.That(replica.CurrentHitPoints(pilot), Is.EqualTo(970));
+    }
+
     [TestCase(3000, true)]
     [TestCase(3001, false)]
     public async Task StationRepair_UsesInclusiveRadiusAndRequiresStoppedTravel(int x, bool inside)
