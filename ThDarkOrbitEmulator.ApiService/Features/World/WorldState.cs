@@ -1052,17 +1052,16 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             var result = WorldMovement.Begin(pilot, previous, targetX, targetY, speed, now);
             var next = WorldMovement.Travel(pilot, previous, result, speed, now);
             travel[pilot.UserId] = next;
-            var warning = result.RadiationWarning || (RadiationWarning(pilot.UserId)
-                && !WorldMovement.IsInsideBoundary(CurrentPosition(pilot, now),
-                    WorldMapInstance.Starter(pilot.MapId)));
+            var atBoundary = !WorldMovement.IsInsideBoundary(CurrentPosition(pilot, now),
+                WorldMapInstance.Starter(pilot.MapId));
+            var warning = atBoundary;
             radiationWarnings[pilot.UserId] = warning;
             if (warning) repairBots[pilot.UserId] = false;
             configurations[pilot.UserId] = selected;
             await cache.SetStringAsync(Key(pilot.UserId), JsonSerializer.Serialize(next),
                 new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
             await PersistRuntimeAsync(pilot, ct);
-            if (warning && !WorldMovement.IsInsideBoundary(CurrentPosition(pilot, now),
-                    WorldMapInstance.Starter(pilot.MapId)))
+            if (warning && atBoundary)
                 await ApplyBoundaryDamageAsync(pilot, now, ct);
             else await RepairAtBaseAsync(pilot, now, ct);
             return result with { RadiationWarning = warning };

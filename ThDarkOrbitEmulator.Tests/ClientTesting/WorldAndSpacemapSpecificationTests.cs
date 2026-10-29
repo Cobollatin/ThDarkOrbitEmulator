@@ -1210,13 +1210,16 @@ public sealed class WorldAndSpacemapSpecificationTests
         }, default);
 
         var move = await store.MoveAsync(pilot, -1, 1300, null, default, clock.GetUtcNow());
-        Assert.That(move.RadiationWarning, Is.True);
+        Assert.That(move.RadiationWarning, Is.False);
+        Assert.That(store.RadiationWarning(pilot.UserId), Is.False);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(1000));
         clock.Advance(TimeSpan.FromMilliseconds(500));
         await store.TickRadiationAsync(pilot.MapId, default);
+        Assert.That(store.RadiationWarning(pilot.UserId), Is.False);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(1000));
         clock.Advance(TimeSpan.FromMilliseconds(500));
         await store.TickRadiationAsync(pilot.MapId, default);
+        Assert.That(store.RadiationWarning(pilot.UserId), Is.True);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(990));
     }
 

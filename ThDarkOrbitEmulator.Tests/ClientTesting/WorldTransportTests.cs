@@ -1610,7 +1610,7 @@ public class WorldTransportTests
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
         var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
         var pilot = await store.EnterAsync(new WorldPilot(88, "mmo", 1, 1, "ship", 0, 0)
-            { X = 0, Y = 0, Stats = new WorldShipStats(100, 1, 0, 0, 0, []),
+            { X = 0, Y = 0, Stats = new WorldShipStats(100, 1000, 0, 0, 0, []),
                 ConfigurationTwoSpeed = 200 }, CancellationToken.None);
         var now = DateTimeOffset.UtcNow;
         var edge = await store.MoveAsync(pilot, -100, 15000, null, CancellationToken.None, now);
@@ -1620,13 +1620,13 @@ public class WorldTransportTests
         Assert.That((await store.MoveAsync(pilot, 21001, 0, null, CancellationToken.None, now))
             .RadiationWarning, Is.True);
         Assert.That((await store.MoveAsync(pilot, 21000, 13100, null, CancellationToken.None, now))
-            .RadiationWarning, Is.False);
+            .RadiationWarning, Is.True);
         Assert.ThrowsAsync<InvalidDataException>(async () =>
             await store.MoveAsync(pilot, 0, 0, 3, CancellationToken.None, now));
     }
 
     [Test]
-    public async Task Loopback_MoveRequest_BroadcastsClampedDestinationAndWarning()
+    public async Task Loopback_MoveRequest_BroadcastsClampedDestinationWithoutPrematureWarning()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
         var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
@@ -1656,22 +1656,8 @@ public class WorldTransportTests
                 WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r)));
             Assert.That(values, Is.EqualTo((89L, 21000, 1300, 190000)));
             Assert.That((await input.ReadAsync())!.Value.Command,
-                Is.EqualTo(WorldCommandId.RadiationWarningCommand));
-            await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
-            {
-                WorldPayload.WriteInt32(w, 0); WorldPayload.WriteInt32(w, 1300);
-                WorldPayload.WriteInt32(w, 22000); WorldPayload.WriteInt32(w, 0);
-            }));
-            Assert.That((await input.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.MoveCommand));
-            await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
-            {
-                WorldPayload.WriteInt32(w, 0); WorldPayload.WriteInt32(w, 1300);
-                WorldPayload.WriteInt32(w, 21000); WorldPayload.WriteInt32(w, 0);
-            }));
-            Assert.That((await input.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.MoveCommand));
-            var cleared = (await input.ReadAsync())!.Value;
-            Assert.That(cleared.Command, Is.EqualTo(WorldCommandId.RadiationWarningCommand));
-            Assert.That(cleared.Payload.ToArray(), Is.EqualTo(new byte[] { 0 }));
+                Is.EqualTo(WorldCommandId.SafeZoneCommand));
+            Assert.That(store.RadiationWarning(pilot.UserId), Is.False);
             client.Client.Shutdown(SocketShutdown.Send);
             await worker;
         }

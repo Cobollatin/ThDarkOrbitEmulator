@@ -1662,7 +1662,7 @@ public sealed class WorldHttpBridgeTests
             Assert.That(result.RootElement.GetProperty("pilot").GetProperty("targetX").GetInt32(), Is.EqualTo(21000));
             Assert.That(result.RootElement.GetProperty("pilot").GetProperty("targetY").GetInt32(), Is.Zero);
             Assert.That(result.RootElement.GetProperty("pilot").GetProperty("configuration").GetInt32(), Is.EqualTo(2));
-            Assert.That(result.RootElement.GetProperty("pilot").GetProperty("radiationWarning").GetBoolean(), Is.True);
+            Assert.That(result.RootElement.GetProperty("pilot").GetProperty("radiationWarning").GetBoolean(), Is.False);
         });
     }
 
