@@ -1639,11 +1639,14 @@ public sealed class WorldAndSpacemapSpecificationTests
             Assert.That((restored.X, restored.Y), Is.Not.EqualTo((1000, 1000)));
     }
 
-    [TestCase(WorldRespawnLocation.Base, 0)]
-    [TestCase(WorldRespawnLocation.DeathLocation, 300)]
-    [TestCase(WorldRespawnLocation.NearestPortal, 200)]
+    [TestCase(WorldRespawnLocation.Base, 0, false)]
+    [TestCase(WorldRespawnLocation.DeathLocation, 300, false)]
+    [TestCase(WorldRespawnLocation.NearestPortal, 200, false)]
+    [TestCase(WorldRespawnLocation.Base, 0, true)]
+    [TestCase(WorldRespawnLocation.DeathLocation, 300, true)]
+    [TestCase(WorldRespawnLocation.NearestPortal, 200, true)]
     public async Task PilotDestruction_ReentryFinishesStagedRepairAfterCacheLoss(
-        WorldRespawnLocation location, int price)
+        WorldRespawnLocation location, int price, bool restoreStaleRuntime)
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
         var cache = services.GetRequiredService<IDistributedCache>();
@@ -1653,18 +1656,23 @@ public sealed class WorldAndSpacemapSpecificationTests
             Stats = new WorldShipStats(300, 1000, 100, 0, 100, []) };
         var first = new WorldSessionStore(cache, repairWallet: wallet);
         pilot = await first.EnterAsync(pilot, default);
+        first.SetRadiationWarning(pilot.UserId, true);
         await first.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0);
+        var staleRuntime = await cache.GetStringAsync($"world:runtime:{pilot.UserId}");
         Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await first.RespawnAsync(pilot, location, default));
         await cache.RemoveAsync($"world:runtime:{pilot.UserId}");
         await cache.RemoveAsync($"world:death:{pilot.UserId}");
         await cache.RemoveAsync($"world:position:{pilot.UserId}");
+        if (restoreStaleRuntime)
+            await cache.SetStringAsync($"world:runtime:{pilot.UserId}", staleRuntime!);
 
         var replica = new WorldSessionStore(cache, repairWallet: wallet);
         var restored = await replica.EnterAsync(pilot, default);
         Assert.That(replica.CurrentHitPoints(restored), Is.GreaterThan(0));
         Assert.That(restored.MapId, Is.EqualTo(location == WorldRespawnLocation.Base ? 1 : 2));
         Assert.That(restored.Uridium, Is.EqualTo(1000 - price));
+        Assert.That(replica.RadiationWarning(pilot.UserId), Is.False);
         Assert.That(await wallet.FindPendingDeathAsync(pilot.AccountId, default), Is.Null);
         Assert.That(wallet.Keys, Has.Count.EqualTo(price == 0 ? 0 : 1));
         await cache.RemoveAsync($"world:runtime:{pilot.UserId}");

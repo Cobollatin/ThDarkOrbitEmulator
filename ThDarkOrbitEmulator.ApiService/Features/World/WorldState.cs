@@ -559,7 +559,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 pilot = pilot with { MapId = repair.MapId, X = repair.X, Y = repair.Y };
                 hitPoints[pilot.UserId] = Math.Clamp(repair.HitPoints, 1, ActiveStats(pilot).MaxHitPoints);
                 shields[pilot.UserId] = Math.Clamp(repair.Shield, 0, ActiveStats(pilot).MaxShield);
-                travel.TryRemove(pilot.UserId, out _);
+                await ClearRepairRuntimeAsync(pilot.UserId, ct);
                 var paid = false;
                 foreach (var paidLocation in new[]
                          { WorldRespawnLocation.DeathLocation, WorldRespawnLocation.NearestPortal })
@@ -1239,6 +1239,17 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         finally { gate.Release(); }
     }
 
+    private async Task ClearRepairRuntimeAsync(long userId, CancellationToken ct)
+    {
+        travel.TryRemove(userId, out _);
+        radiationWarnings.TryRemove(userId, out _);
+        lastHazards.TryRemove(userId, out _);
+        repairBots.TryRemove(userId, out _);
+        await cache.RemoveAsync(CombatKey(userId), ct);
+        await cache.RemoveAsync(HullRecoveryKey(userId), ct);
+        await cache.RemoveAsync(ShieldRecoveryKey(userId), ct);
+    }
+
     public Task<WorldPilot?> RespawnAtBaseAsync(WorldPilot pilot, CancellationToken ct,
         WorldLeaseFence? fence = null) => RespawnAsync(pilot, WorldRespawnLocation.Base, ct, fence);
 
@@ -1318,12 +1329,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             };
             hitPoints[pilot.UserId] = Math.Max(1, ActiveStats(pilot).MaxHitPoints / 10);
             shields[pilot.UserId] = 0;
-            travel.TryRemove(pilot.UserId, out _);
-            radiationWarnings.TryRemove(pilot.UserId, out _);
-            repairBots.TryRemove(pilot.UserId, out _);
-            await cache.RemoveAsync(CombatKey(pilot.UserId), ct);
-            await cache.RemoveAsync(HullRecoveryKey(pilot.UserId), ct);
-            await cache.RemoveAsync(ShieldRecoveryKey(pilot.UserId), ct);
+            await ClearRepairRuntimeAsync(pilot.UserId, ct);
             var repairedDeathId = repairWallet is not null && pilot.AccountId != Guid.Empty
                 ? await DeathIdAsync(pilot.UserId, ct, pilot.AccountId) : null;
             if (repairedDeathId is not null)
