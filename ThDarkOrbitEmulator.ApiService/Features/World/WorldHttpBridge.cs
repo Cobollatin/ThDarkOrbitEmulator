@@ -638,6 +638,8 @@ public static class WorldHttpBridge
             ? await gateCombat.VisibleAsync(pilot, ct)
             : npcs is null ? [] : await npcs.VisibleForObserversAsync(pilot.MapId, ct);
         var gateState = gateCombat is null ? null : await gateCombat.StateAsync(pilot, ct);
+        var launcher = gateCombat is not null || npcs is null ? null
+            : await npcs.LauncherStatusAsync(pilot.UserId, ct);
         var adminEvents = context.RequestServices?.GetService<Admin.WorldAdminEvents>();
         var announcement = adminEvents is null ? null : await adminEvents.LatestAsync(ct);
         await context.Response.WriteAsJsonAsync(new
@@ -647,6 +649,7 @@ public static class WorldHttpBridge
                 : $"{WorldMapInstance.GateId(map.MapId)} gate", map.Width, map.Height,
                 station = map.HomeStation, portals = map.Portals },
             gate = gateState,
+            launcher,
             jump = jump is null ? null : new { jump.PortalId, jump.TargetNodeId, jump.TargetTcpHostPort },
             pilots = occupants.Select(item => new { id = item.UserId, name = item.UserName,
                 x = item.X, y = item.Y }).ToArray(),

@@ -451,14 +451,21 @@ public sealed class WorldHttpBridgeTests
         var auth = new Auth(); var resolver = new Resolver(100);
         await SendAsync("POST", "target", $"{{\"npcId\":{npc.Id}}}", auth, resolver, a, services: appServices);
 
+        var before = await SendAsync("GET", "state", null, auth, resolver, a, services: appServices);
         var request = $"{{\"npcId\":{npc.Id},\"weapon\":\"launcher\"}}";
         var first = await SendAsync("POST", "fire", request, auth, resolver, a, services: appServices);
+        var after = await SendAsync("GET", "state", null, auth, resolver, b, services: appServices);
         var second = await SendAsync("POST", "fire", request, auth, resolver, b, services: appServices);
+        using var initial = JsonDocument.Parse(Body(before));
+        using var spent = JsonDocument.Parse(Body(after));
         using var hit = JsonDocument.Parse(Body(first));
         using var empty = JsonDocument.Parse(Body(second));
         Assert.Multiple(() =>
         {
             Assert.That(first.Response.StatusCode, Is.EqualTo(200));
+            Assert.That(initial.RootElement.GetProperty("launcher").GetProperty("loaded").GetInt32(), Is.EqualTo(2));
+            Assert.That(spent.RootElement.GetProperty("launcher").GetProperty("loaded").GetInt32(), Is.Zero);
+            Assert.That(spent.RootElement.GetProperty("launcher").GetProperty("reloadRemainingMs").GetInt32(), Is.InRange(1, 30_000));
             Assert.That(hit.RootElement.GetProperty("damage").GetInt32(), Is.EqualTo(20));
             Assert.That(second.Response.StatusCode, Is.EqualTo(409));
             Assert.That(empty.RootElement.GetProperty("status").GetString(), Is.EqualTo("reloading"));

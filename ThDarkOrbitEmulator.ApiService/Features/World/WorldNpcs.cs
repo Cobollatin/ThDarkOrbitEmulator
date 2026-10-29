@@ -14,6 +14,7 @@ public sealed record WorldNpcReward(int Credits, int Uridium, int Experience, in
 public sealed record WorldNpcAttack(string Status, WorldNpc? Target = null, int Damage = 0,
     bool Destroyed = false, WorldNpcReward? Reward = null);
 public sealed record WorldNpcPulse(string Status, IReadOnlyList<WorldNpcAttack> Hits);
+public sealed record WorldLauncherStatus(int Loaded, int Capacity, long ReloadRemainingMs);
 public sealed record WorldNpcTemplate(string Kind, string ShipId, int Count, int Hp, int Shield,
     int Credits, int Uridium, int Experience, int Honor, int Speed, bool Aggressive = true);
 public sealed class WorldNpcOptions
@@ -93,6 +94,22 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
     private sealed record ActiveLaser(int MapId, int NpcId, long Cycle, long NextShotUnixMs);
     private sealed record LauncherLoad(int Count, long UpdatedAtUnixMs);
     private static DistributedCacheEntryOptions Expiry => new();
+
+    public async Task<WorldLauncherStatus> LauncherStatusAsync(long userId, CancellationToken ct)
+    {
+        var capacity = Math.Clamp(settings.LauncherCapacity, 1, 20);
+        var stored = await cache.GetStringAsync($"world:launcher:{userId}", ct);
+        if (stored is null) return new(capacity, capacity, 0);
+        var load = JsonSerializer.Deserialize<LauncherLoad>(stored)!;
+        var nowMs = clock.GetUtcNow().ToUnixTimeMilliseconds();
+        var reloadMs = Math.Max(1, settings.LauncherReloadSeconds) * 1000L;
+        var elapsed = Math.Max(0, nowMs - load.UpdatedAtUnixMs);
+        var loaded = Math.Clamp(load.Count, 0, capacity);
+        var added = Math.Min(capacity - loaded, elapsed / reloadMs);
+        loaded += (int)added;
+        var remaining = loaded == capacity ? 0 : reloadMs - (elapsed % reloadMs);
+        return new(loaded, capacity, remaining);
+    }
 
     public IReadOnlyList<WorldNpc> Spawn(int mapId, DateTimeOffset at,
         IReadOnlyDictionary<string, int>? countOverrides = null)

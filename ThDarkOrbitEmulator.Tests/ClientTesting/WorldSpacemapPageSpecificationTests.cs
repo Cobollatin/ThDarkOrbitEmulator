@@ -171,7 +171,10 @@ public sealed class WorldSpacemapPageSpecificationTests
     {
         Assert.Multiple(() =>
         {
-            Assert.That(Html, Does.Contain("document.getElementById('launcher').disabled=p.hp<=0||state.map.id>=101||!selected||launcherPending"));
+            Assert.That(Html, Does.Contain("id=\"launcherLoad\" role=\"status\""));
+            Assert.That(Html, Does.Contain("state.launcher.loaded+'/'+state.launcher.capacity"));
+            Assert.That(Html, Does.Contain("Math.ceil(state.launcher.reloadRemainingMs/1000)+'s'"));
+            Assert.That(Html, Does.Contain("document.getElementById('launcher').disabled=p.hp<=0||state.map.id>=101||!selected||state.launcher?.loaded===0||launcherPending"));
             Assert.That(Html, Does.Contain("if(!state||document.getElementById('launcher').disabled)return"));
             Assert.That(Html, Does.Contain("e.status==='reloading'?'Launcher is reloading.'"));
             Assert.That(Html, Does.Contain("epoch!==mapEpoch||sequence!==moveSequence||targetId!==npcId"));

@@ -2727,11 +2727,17 @@ public sealed class WorldAndSpacemapSpecificationTests
             Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
         }, default);
 
+        var initialLoad = await replica.LauncherStatusAsync(pilot.UserId, default);
         var full = await npcs.AttackAsync(pilot, spawn.Id, sessions, default, launcher: true);
+        var spentLoad = await replica.LauncherStatusAsync(pilot.UserId, default);
         var empty = await replica.AttackAsync(pilot, spawn.Id, sessions, default, launcher: true);
         clock.Advance(TimeSpan.FromSeconds(2));
+        var oneLoaded = await npcs.LauncherStatusAsync(pilot.UserId, default);
         var single = await replica.AttackAsync(pilot, spawn.Id, sessions, default, launcher: true);
-        clock.Advance(TimeSpan.FromSeconds(6));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var halfway = await npcs.LauncherStatusAsync(pilot.UserId, default);
+        clock.Advance(TimeSpan.FromSeconds(5));
+        var fullyLoaded = await replica.LauncherStatusAsync(pilot.UserId, default);
         var refilled = await npcs.AttackAsync(pilot, spawn.Id, sessions, default, launcher: true);
         options.RocketMissChance = 1;
         clock.Advance(TimeSpan.FromSeconds(2));
@@ -2739,6 +2745,11 @@ public sealed class WorldAndSpacemapSpecificationTests
 
         Assert.Multiple(() =>
         {
+            Assert.That(initialLoad, Is.EqualTo(new WorldLauncherStatus(3, 3, 0)));
+            Assert.That(spentLoad, Is.EqualTo(new WorldLauncherStatus(0, 3, 2000)));
+            Assert.That(oneLoaded, Is.EqualTo(new WorldLauncherStatus(1, 3, 2000)));
+            Assert.That(halfway, Is.EqualTo(new WorldLauncherStatus(0, 3, 1000)));
+            Assert.That(fullyLoaded, Is.EqualTo(new WorldLauncherStatus(3, 3, 0)));
             Assert.That(full.Damage, Is.EqualTo(30));
             Assert.That(empty.Status, Is.EqualTo("reloading"));
             Assert.That(single.Damage, Is.EqualTo(10));
