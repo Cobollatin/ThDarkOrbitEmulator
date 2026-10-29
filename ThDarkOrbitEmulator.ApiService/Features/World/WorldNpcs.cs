@@ -14,7 +14,7 @@ public sealed record WorldNpcReward(int Credits, int Uridium, int Experience, in
 public sealed record WorldNpcAttack(string Status, WorldNpc? Target = null, int Damage = 0,
     bool Destroyed = false, WorldNpcReward? Reward = null);
 public sealed record WorldNpcPulse(string Status, IReadOnlyList<WorldNpcAttack> Hits);
-public sealed record WorldLauncherStatus(int Loaded, int Capacity, long ReloadRemainingMs);
+public sealed record WorldLauncherStatus(int Loaded, int Capacity, long ReloadRemainingMs, bool AutoFire = false);
 public sealed record WorldNpcTemplate(string Kind, string ShipId, int Count, int Hp, int Shield,
     int Credits, int Uridium, int Experience, int Honor, int Speed, bool Aggressive = true);
 public sealed class WorldNpcOptions
@@ -94,7 +94,21 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
     private static string LaserKey(long userId) => $"world:npc:laser:{userId}";
     private sealed record ActiveLaser(int MapId, int NpcId, long Cycle, long NextShotUnixMs);
     private sealed record LauncherLoad(int Count, long UpdatedAtUnixMs);
+    private static string LauncherAutoKey(long userId) => $"world:launcher:auto:{userId}";
     private static DistributedCacheEntryOptions Expiry => new();
+
+    public async Task<bool> SetAutoLauncherAsync(long userId, bool enabled, CancellationToken ct)
+    {
+        await using var held = await mutex.AcquireAsync(ct);
+        await cache.SetStringAsync(LauncherAutoKey(userId), enabled ? "1" : "0", Expiry, ct);
+        return enabled;
+    }
+
+    private async Task<bool> AutoLauncherEnabledAsync(long userId, CancellationToken ct)
+    {
+        var stored = await cache.GetStringAsync(LauncherAutoKey(userId), ct);
+        return stored is null ? settings.AutoLauncherOnLaser : stored == "1";
+    }
 
     public async Task<WorldLauncherStatus> LauncherStatusAsync(long userId, CancellationToken ct)
     {
@@ -115,7 +129,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         var added = Math.Min(capacity - loaded, elapsed / reloadMs);
         loaded += (int)added;
         var remaining = loaded == capacity ? 0 : reloadMs - (elapsed % reloadMs);
-        return new(loaded, capacity, remaining);
+        return new(loaded, capacity, remaining, await AutoLauncherEnabledAsync(userId, ct));
     }
 
     public IReadOnlyList<WorldNpc> Spawn(int mapId, DateTimeOffset at,
@@ -226,7 +240,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
     public async Task StartLaserAsync(WorldPilot pilot, int npcId, CancellationToken ct)
     {
         await using var held = await mutex.AcquireAsync(ct);
-        if (settings.AutoLauncherOnLaser)
+        if (await AutoLauncherEnabledAsync(pilot.UserId, ct))
         {
             var loadKey = $"world:launcher:{pilot.UserId}";
             if (await cache.GetStringAsync(loadKey, ct) is null)
@@ -277,7 +291,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 await StopLaserAsync(pilot.UserId, ct);
                 continue;
             }
-            if (settings.AutoLauncherOnLaser &&
+            if (await AutoLauncherEnabledAsync(pilot.UserId, ct) &&
                 (await LauncherStatusAsync(pilot.UserId, ct)).Loaded == Math.Clamp(settings.LauncherCapacity, 1, 20))
             {
                 var volley = await AttackAsync(pilot, active.NpcId, sessions, ct, fence, mapId,

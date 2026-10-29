@@ -2771,7 +2771,13 @@ public sealed class WorldAndSpacemapSpecificationTests
         clock.Advance(TimeSpan.FromSeconds(1));
         await first.TickLasersAsync(pilot.MapId, sessions, default);
         var partial = await first.LauncherStatusAsync(pilot.UserId, default);
+        await first.SetAutoLauncherAsync(pilot.UserId, false, default);
         clock.Advance(TimeSpan.FromSeconds(2));
+        await second.TickLasersAsync(pilot.MapId, sessions, default);
+        var disabled = await second.LauncherStatusAsync(pilot.UserId, default);
+        var beforeVolley = (await first.VisibleAsync(pilot.MapId, default)).Single(n => n.Id == spawn.Id);
+        await first.SetAutoLauncherAsync(pilot.UserId, true, default);
+        clock.Advance(TimeSpan.FromSeconds(1));
         await second.TickLasersAsync(pilot.MapId, sessions, default);
         var spent = await first.LauncherStatusAsync(pilot.UserId, default);
         var afterVolley = (await first.VisibleAsync(pilot.MapId, default)).Single(n => n.Id == spawn.Id);
@@ -2781,9 +2787,39 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.Multiple(() =>
         {
             Assert.That(partial.Loaded, Is.EqualTo(1));
+            Assert.That(disabled.Loaded, Is.EqualTo(2));
+            Assert.That(beforeVolley.Hp, Is.EqualTo(997));
             Assert.That(spent.Loaded, Is.Zero);
-            Assert.That(afterVolley.Hp, Is.EqualTo(977));
+            Assert.That(afterVolley.Hp, Is.EqualTo(976));
             Assert.That(afterDuplicateTick.Hp, Is.EqualTo(afterVolley.Hp));
+        });
+    }
+
+    [Test]
+    public async Task AutoLauncher_PilotToggleIsSharedAndOverridesServerDefault()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var options = Options.Create(new WorldNpcOptions { AutoLauncherOnLaser = true });
+        var clock = new AdvancingClock();
+        var first = new WorldNpcs(cache, mutex, new TestRewards(), options, clock);
+        var second = new WorldNpcs(cache, mutex, new TestRewards(), options, clock);
+
+        var initial = await first.LauncherStatusAsync(71, default);
+        await first.SetAutoLauncherAsync(71, false, default);
+        var disabled = await second.LauncherStatusAsync(71, default);
+        var otherPilot = await second.LauncherStatusAsync(72, default);
+        await second.SetAutoLauncherAsync(71, true, default);
+        var enabled = await first.LauncherStatusAsync(71, default);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(initial.AutoFire, Is.True);
+            Assert.That(disabled.AutoFire, Is.False);
+            Assert.That(otherPilot.AutoFire, Is.True);
+            Assert.That(enabled.AutoFire, Is.True);
+            Assert.That(enabled.Loaded, Is.EqualTo(initial.Loaded));
         });
     }
 

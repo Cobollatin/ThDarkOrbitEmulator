@@ -480,6 +480,36 @@ public sealed class WorldHttpBridgeTests
     }
 
     [Test]
+    public async Task BrowserLauncherAutoToggle_UsesAuthenticatedPilotAndSharedSetting()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new NpcMutex();
+        var clock = new ManualClock();
+        var options = Options.Create(new WorldNpcOptions());
+        var first = new WorldNpcs(cache, mutex, new NpcRewards(), options, clock);
+        var second = new WorldNpcs(cache, mutex, new NpcRewards(), options, clock);
+        using var appServices = new ServiceCollection().AddSingleton(first).BuildServiceProvider();
+        var a = new WorldSessionStore(cache, mutex);
+        var b = new WorldSessionStore(cache, mutex);
+        var auth = new Auth(); var resolver = new Resolver(100);
+
+        var invalid = await SendAsync("POST", "launcher-auto", "{\"enabled\":1}", auth, resolver, a, services: appServices);
+        var enabled = await SendAsync("POST", "launcher-auto", "{\"enabled\":true}", auth, resolver, a, services: appServices);
+        var shared = await second.LauncherStatusAsync(Session.GameUserId, default);
+        var state = await SendAsync("GET", "state", null, auth, resolver, b, services: appServices);
+        using var result = JsonDocument.Parse(Body(state));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(invalid.Response.StatusCode, Is.EqualTo(400));
+            Assert.That(enabled.Response.StatusCode, Is.EqualTo(200));
+            Assert.That(shared.AutoFire, Is.True);
+            Assert.That(result.RootElement.GetProperty("launcher").GetProperty("autoFire").GetBoolean(), Is.True);
+        });
+    }
+
+    [Test]
     [Explicit("Runs the shipped Spacemap page against live Kestrel pickup endpoints.")]
     public async Task SpacemapClient_UsesLivePickupRadius_BeforeReachingDefaultRange()
     {
@@ -1912,6 +1942,8 @@ public sealed class WorldHttpBridgeTests
             case "target": await WorldHttpBridge.TargetAsync(context, auth, resolver, store,
                 services!.GetRequiredService<WorldNpcs>(), default); break;
             case "fire": await WorldHttpBridge.FireAsync(context, auth, resolver, store,
+                services!.GetRequiredService<WorldNpcs>(), default); break;
+            case "launcher-auto": await WorldHttpBridge.LauncherAutoAsync(context, auth, resolver, store,
                 services!.GetRequiredService<WorldNpcs>(), default); break;
             case "admin/command": await WorldHttpBridge.AdminCommandAsync(context, auth, resolver,
                 store, dispatcher!, default); break;

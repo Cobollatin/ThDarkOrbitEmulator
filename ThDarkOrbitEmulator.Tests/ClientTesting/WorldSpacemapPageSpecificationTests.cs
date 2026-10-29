@@ -178,6 +178,9 @@ public sealed class WorldSpacemapPageSpecificationTests
             Assert.That(Html, Does.Contain("if(!state||document.getElementById('launcher').disabled)return"));
             Assert.That(Html, Does.Contain("e.status==='reloading'?'Launcher is reloading.'"));
             Assert.That(Html, Does.Contain("epoch!==mapEpoch||sequence!==moveSequence||targetId!==npcId"));
+            Assert.That(Html, Does.Contain("id=\"launcherAuto\" type=\"button\" aria-pressed=\"false\""));
+            Assert.That(Html, Does.Contain("request('launcher-auto','POST',{enabled:!state.launcher.autoFire})"));
+            Assert.That(Html, Does.Contain("String(state.launcher?.autoFire===true)"));
         });
     }
 
