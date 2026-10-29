@@ -451,14 +451,15 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             var hasMapOwner = int.TryParse(mapText, out var ownerMap);
             if (hasMapOwner && ownerMap != mapId) continue;
             var saved = await cache.GetStringAsync(Key(pilot.UserId), ct);
-            if (hasMapOwner && saved is not null)
+            if (saved is not null)
             {
                 try
                 {
-                    if (JsonSerializer.Deserialize<WorldPosition>(saved)?.MapId != mapId)
+                    var position = JsonSerializer.Deserialize<WorldPosition>(saved);
+                    if (position is null || (hasMapOwner && position.MapId != mapId))
                         saved = null;
                 }
-                catch (JsonException) { }
+                catch (JsonException) { saved = null; }
             }
             var hasSavedPosition = false;
             if (saved is not null)
@@ -1191,14 +1192,15 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             // A local socket can lag a transfer performed on another node. Check the
             // shared position even for that socket before announcing map membership.
             var saved = await cache.GetStringAsync(Key(userId));
-            if (hasMapOwner && saved is not null)
+            if (saved is not null)
             {
                 try
                 {
-                    if (JsonSerializer.Deserialize<WorldPosition>(saved)?.MapId != mapId)
+                    var position = JsonSerializer.Deserialize<WorldPosition>(saved);
+                    if (position is null || (hasMapOwner && position.MapId != mapId))
                         saved = null;
                 }
-                catch (JsonException) { }
+                catch (JsonException) { saved = null; }
             }
             if (saved is null)
             {

@@ -3775,6 +3775,28 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task StalePresenceAfterTransfer_WithInvalidPosition_UsesRuntimeMapForObservers()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var first = new WorldSessionStore(cache, mutex);
+        var second = new WorldSessionStore(cache, mutex);
+        var pilot = await first.EnterAsync(Pilot() with { AccountId = Guid.NewGuid() }, default);
+        var oldRoster = await cache.GetStringAsync("world:presence:map:1");
+
+        await second.TeleportAsync(pilot.UserId, 2, 3000, 1300, false, default);
+        await cache.SetStringAsync("world:presence:map:1", oldRoster!);
+        await cache.SetStringAsync($"world:position:{pilot.UserId}", "{invalid");
+        await cache.RemoveAsync($"world:map:{pilot.UserId}");
+
+        Assert.That(await first.ConnectedAsync(1, default), Is.Empty);
+        Assert.That(await first.VisiblePilotsAsync(1, default), Is.Empty);
+        Assert.That((await second.VisiblePilotsAsync(2, default)).Single().UserId,
+            Is.EqualTo(pilot.UserId));
+    }
+
+    [Test]
     public async Task StaleLocalSocketAfterTransfer_WithRestoredOldPosition_IsRemovedByHeartbeat()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
