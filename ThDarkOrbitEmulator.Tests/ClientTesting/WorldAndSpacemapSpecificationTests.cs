@@ -3768,6 +3768,10 @@ public sealed class WorldAndSpacemapSpecificationTests
 
         Assert.That(await cache.GetStringAsync($"world:map:{pilot.UserId}"), Is.EqualTo("2"));
         Assert.That(first.ActivePilotCount, Is.EqualTo(1));
+        Assert.That(await first.ConnectedAsync(1, default), Is.Empty);
+        Assert.That(await first.VisiblePilotsAsync(1, default), Is.Empty);
+        Assert.That((await second.ConnectedAsync(2, default)).Single().UserId, Is.EqualTo(pilot.UserId));
+        Assert.That((await second.VisiblePilotsAsync(2, default)).Single().UserId, Is.EqualTo(pilot.UserId));
         await first.RefreshLocalPresenceAsync(default);
 
         Assert.That(first.ActivePilotCount, Is.Zero);

@@ -443,7 +443,21 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         foreach (var entry in live)
         {
             var pilot = entry.Pilot;
+            // A restored position can predate a completed transfer. The independent
+            // map entry is written with each position under the transfer lock.
+            var mapText = await cache.GetStringAsync(MapKey(pilot.UserId), ct);
+            var hasMapOwner = int.TryParse(mapText, out var ownerMap);
+            if (hasMapOwner && ownerMap != mapId) continue;
             var saved = await cache.GetStringAsync(Key(pilot.UserId), ct);
+            if (hasMapOwner && saved is not null)
+            {
+                try
+                {
+                    if (JsonSerializer.Deserialize<WorldPosition>(saved)?.MapId != mapId)
+                        saved = null;
+                }
+                catch (JsonException) { }
+            }
             var hasSavedPosition = false;
             if (saved is not null)
             {
@@ -483,9 +497,6 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 }
                 catch (JsonException) { }
             }
-            if (!hasSavedPosition && runtime is null
-                && await cache.GetStringAsync(MapKey(pilot.UserId), ct) is { } mapText
-                && int.TryParse(mapText, out var ownerMap) && ownerMap != mapId) continue;
             result.Add(pilot);
         }
         return result;
@@ -1172,9 +1183,21 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         foreach (var presence in (await ReadPresenceAsync(mapId, CancellationToken.None)).Values)
         {
             var userId = presence.Pilot.UserId;
+            var mapText = await cache.GetStringAsync(MapKey(userId));
+            var hasMapOwner = int.TryParse(mapText, out var ownerMap);
+            if (hasMapOwner && ownerMap != mapId) continue;
             // A local socket can lag a transfer performed on another node. Check the
             // shared position even for that socket before announcing map membership.
             var saved = await cache.GetStringAsync(Key(userId));
+            if (hasMapOwner && saved is not null)
+            {
+                try
+                {
+                    if (JsonSerializer.Deserialize<WorldPosition>(saved)?.MapId != mapId)
+                        saved = null;
+                }
+                catch (JsonException) { }
+            }
             if (saved is null)
             {
                 var runtime = await cache.GetStringAsync(RuntimeKey(userId));
@@ -1187,8 +1210,6 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                     }
                     catch (JsonException) { }
                 }
-                else if (await cache.GetStringAsync(MapKey(userId)) is { } mapText
-                    && int.TryParse(mapText, out var ownerMap) && ownerMap != mapId) continue;
             }
             entries.Add(new(presence, saved));
         }
