@@ -1743,6 +1743,43 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task NpcPulse_StartedRewardRetryCompletesAfterPilotLeavesMap()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var clock = new AdvancingClock();
+        var options = Options.Create(new WorldNpcOptions
+        {
+            PulseRange = 10000,
+            Templates = [new("Scout", "npc_scout", 2, 1, 0, 5, 0, 0, 0, 0)]
+        });
+        var rewards = new TestRewards { FailFirstCredit = true };
+        var inventory = new TestPulseInventory(1);
+        var first = new WorldNpcs(cache, mutex, rewards, options, clock, pulseInventory: inventory);
+        var second = new WorldNpcs(cache, mutex, rewards, options, clock, pulseInventory: inventory);
+        var spawn = first.Spawn(1, clock.GetUtcNow())[0];
+        var sessions = new WorldSessionStore(cache, mutex);
+        var pilot = await sessions.EnterAsync(Pilot() with
+        {
+            AccountId = Guid.NewGuid(), X = spawn.X, Y = spawn.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+        var actionId = Guid.NewGuid();
+        Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await first.PulseAsync(pilot, sessions, default, actionId: actionId));
+        await sessions.LeaveAsync(pilot, null, default);
+        Assert.That(await sessions.VisiblePilotsAsync(pilot.MapId, default), Is.Empty);
+
+        await second.ReconcileStartedPulsesAsync(pilot.MapId, sessions, default);
+        Assert.That(inventory.Completed, Is.EqualTo(1));
+        Assert.That(inventory.Remaining, Is.Zero);
+        Assert.That(rewards.Calls, Is.EqualTo(3));
+        Assert.That(await cache.GetStringAsync($"world:npc:v2:1:{spawn.Id}"),
+            Does.Not.Contain(actionId.ToString()));
+    }
+
+    [Test]
     public async Task NpcPulse_RetrySkipsTargetThatRespawnedAfterPlanWasStored()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
@@ -1908,6 +1945,7 @@ public sealed class WorldAndSpacemapSpecificationTests
         public int Completed { get; private set; }
         private readonly HashSet<Guid> actions = [];
         private readonly Dictionary<Guid, PulseActionPlan> plans = [];
+        private readonly Dictionary<Guid, Guid> owners = [];
 
         public void Refill(int amount) => Remaining += amount;
 
@@ -1917,6 +1955,7 @@ public sealed class WorldAndSpacemapSpecificationTests
             if (Remaining == 0) return Task.FromResult(PulseChargeResult.Unavailable);
             Remaining--;
             actions.Add(actionId);
+            owners[actionId] = accountId;
             return Task.FromResult(PulseChargeResult.Consumed);
         }
 
@@ -1931,9 +1970,10 @@ public sealed class WorldAndSpacemapSpecificationTests
         public Task<PulseActionPlan?> PlanAsync(Guid accountId, Guid actionId, CancellationToken ct) =>
             Task.FromResult(plans.GetValueOrDefault(actionId));
 
-        public Task<IReadOnlyList<Guid>> StartedAsync(Guid accountId, int mapId, CancellationToken ct) =>
-            Task.FromResult<IReadOnlyList<Guid>>(plans.Where(entry => entry.Value.Status == "started" &&
-                entry.Value.MapId == mapId).Select(entry => entry.Key).ToArray());
+        public Task<IReadOnlyList<StartedPulseAction>> StartedOnMapAsync(int mapId, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<StartedPulseAction>>(plans.Where(entry =>
+                entry.Value.Status == "started" && entry.Value.MapId == mapId)
+                .Select(entry => new StartedPulseAction(owners[entry.Key], entry.Key)).ToArray());
 
         public Task CompleteAsync(Guid accountId, Guid actionId, CancellationToken ct)
         {

@@ -255,12 +255,12 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         await using (var held = await mutex.AcquireAsync(ct))
         {
             await WorldSessionStore.CheckLeaseAsync(pilot.MapId, fence, ct);
-            pilot = await sessions.RestoreAsync(pilot, ct);
-            if (expectedMapId is not null && pilot.MapId != expectedMapId)
-                throw new WorldMapChangedException();
             var actionKey = $"world:npc:pulse:action:{pilot.UserId}:{pulseActionId:N}";
             var plan = pulseInventory is null ? null
                 : await pulseInventory.PlanAsync(pilot.AccountId, pulseActionId, ct);
+            if (plan is null) pilot = await sessions.RestoreAsync(pilot, ct);
+            if (expectedMapId is not null && pilot.MapId != expectedMapId)
+                throw new WorldMapChangedException();
             if (plan is not null)
             {
                 if (plan.Status == "charged")
@@ -332,20 +332,18 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         return new("hit", hits);
     }
 
-    // The lease owner resumes durable actions for pilots still present on this map.
-    // PulseAsync reuses the saved target plan and never consumes another charge.
+    // The map owner resumes saved effects even after a pilot disconnects or changes maps.
+    // The plan fixes the original targets and account; no new charge or range check occurs.
     public async Task ReconcileStartedPulsesAsync(int mapId, WorldSessionStore sessions,
         CancellationToken ct, WorldLeaseFence? fence = null)
     {
         if (pulseInventory is null || WorldMapInstance.IsGate(mapId)) return;
-        foreach (var pilot in await sessions.VisiblePilotsAsync(mapId, ct))
+        foreach (var action in await pulseInventory.StartedOnMapAsync(mapId, ct))
         {
-            if (pilot.AccountId == Guid.Empty) continue;
-            foreach (var actionId in await pulseInventory.StartedAsync(pilot.AccountId, mapId, ct))
-            {
-                await WorldSessionStore.CheckLeaseAsync(mapId, fence, ct);
-                await PulseAsync(pilot, sessions, ct, fence, mapId, actionId);
-            }
+            await WorldSessionStore.CheckLeaseAsync(mapId, fence, ct);
+            var actor = new WorldPilot(0, string.Empty, mapId, 0, string.Empty, 0, 0)
+                { AccountId = action.AccountId };
+            await PulseAsync(actor, sessions, ct, fence, mapId, action.ActionId);
         }
     }
 
@@ -386,7 +384,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         {
             await WorldSessionStore.CheckLeaseAsync(pilot.MapId, fence, ct);
             var mapId = pilot.MapId;
-            pilot = await sessions.RestoreAsync(pilot, ct);
+            if (!resumePulse) pilot = await sessions.RestoreAsync(pilot, ct);
             if (expectedMapId is not null && pilot.MapId != expectedMapId)
                 throw new WorldMapChangedException();
             if (fence is not null && pilot.MapId != mapId) throw new WorldLeaseLostException();
@@ -444,7 +442,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 var shield = Math.Max(0, vital.Shield - absorbed);
                 var hp = Math.Max(0, vital.Hp - (damage - absorbed));
                 dead = hp == 0;
-                await sessions.MarkCombatAsync(pilot, ct);
+                if (!resumePulse) await sessions.MarkCombatAsync(pilot, ct);
                 if (dead)
                 {
                     var adjusted = await RewardAdjustedAsync(npc, ct);
@@ -474,7 +472,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         {
             await rewards.CreditAsync(pilot.AccountId, ApplyReward(npc!, reward!), $"{key}:{savedGeneration}", ct);
         }
-        await sessions.BroadcastNpcDamageAsync(pilot, target!, damage, dead, reward, ct, rocket);
+        if (!resumePulse) await sessions.BroadcastNpcDamageAsync(pilot, target!, damage, dead, reward, ct, rocket);
         return new("hit", target, damage, dead, reward);
     }
 
