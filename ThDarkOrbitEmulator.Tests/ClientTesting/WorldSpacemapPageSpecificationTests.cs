@@ -111,9 +111,15 @@ public sealed class WorldSpacemapPageSpecificationTests
         {
             Assert.That(Html, Does.Contain("id=\"respawnPortal\" type=\"button\" hidden"));
             Assert.That(Html, Does.Contain("['respawnPortal','portal','nearest gate']"));
-            Assert.That(Html, Does.Contain("document.getElementById('respawnPortal').hidden=p.hp>0||state.map.id>=101||!state.map.portals.length"));
+            Assert.That(Html, Does.Contain("document.getElementById('respawnPortal').hidden=p.hp>0||state.map.id>=101||!state.map.portals.some(gate=>gate.working)"));
             Assert.That(Html, Does.Contain("request('respawn','POST',{location})"));
         });
+    }
+
+    [Test]
+    public void Page_JumpTargetsOnlyOperationalPortals()
+    {
+        Assert.That(Html, Does.Contain("state.map.portals.filter(gate=>gate.working).reduce("));
     }
 
     [Test]
@@ -314,7 +320,7 @@ public sealed class WorldSpacemapPageSpecificationTests
         Assert.Multiple(() =>
         {
             Assert.That(Html, Does.Contain(
-                "gate=state.map.portals.reduce((best,item)=>!best||Math.hypot(item.x-p.x,item.y-p.y)<Math.hypot(best.x-p.x,best.y-p.y)?item:best,null);if(!gate)return;"));
+                "gate=state.map.portals.filter(gate=>gate.working).reduce((best,item)=>!best||Math.hypot(item.x-p.x,item.y-p.y)<Math.hypot(best.x-p.x,best.y-p.y)?item:best,null);if(!gate)return;"));
             Assert.That(Html, Does.Contain("if(!state||jumpPending)return;"));
             Assert.That(Html, Does.Contain("finally{jumpPending=false;button.disabled=false;}"));
         });
