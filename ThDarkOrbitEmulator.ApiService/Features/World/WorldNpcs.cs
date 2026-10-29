@@ -63,7 +63,8 @@ public sealed class WorldNpcRewards(EconomyStore economy) : IWorldNpcRewards
 
 public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
     IWorldNpcRewards rewards, IOptions<WorldNpcOptions> options, TimeProvider clock,
-    IRuntimeVariableRegistry? variables = null, WorldAdminEvents? adminEvents = null)
+    IRuntimeVariableRegistry? variables = null, WorldAdminEvents? adminEvents = null,
+    IWorldPulseInventory? pulseInventory = null)
 {
     private readonly WorldNpcOptions settings = options.Value;
     public static readonly TimeSpan ObserverSnapshotTtl = TimeSpan.FromMilliseconds(500);
@@ -263,6 +264,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             var saved = await cache.GetStringAsync(key, ct);
             if (long.TryParse(saved, out var last) && now - last < Math.Max(1, settings.PulseCooldownSeconds) * 1000L)
                 return new("cooldown", []);
+            if (pulseInventory is not null && !await pulseInventory.ConsumeAsync(pilot.AccountId, ct))
+                return new("out_of_ammo", []);
             await cache.SetStringAsync(key, now.ToString(), new DistributedCacheEntryOptions
             { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(Math.Max(1, settings.PulseCooldownSeconds)) }, ct);
         }

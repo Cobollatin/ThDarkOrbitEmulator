@@ -1618,8 +1618,11 @@ public sealed class WorldAndSpacemapSpecificationTests
             PulseRange = 1000, PulseCooldownSeconds = 30,
             Templates = [new("Scout", "npc_scout", 2, 100, 0, 5, 0, 0, 0, 0)]
         });
-        var npcs = new WorldNpcs(cache, mutex, new TestRewards(), options, clock);
-        var replica = new WorldNpcs(cache, mutex, new TestRewards(), options, clock);
+        var inventory = new TestPulseInventory(2);
+        var npcs = new WorldNpcs(cache, mutex, new TestRewards(), options, clock,
+            pulseInventory: inventory);
+        var replica = new WorldNpcs(cache, mutex, new TestRewards(), options, clock,
+            pulseInventory: inventory);
         var npc = npcs.Spawn(1, clock.GetUtcNow()).First();
         var sessions = new WorldSessionStore(cache, mutex);
         var pilot = await sessions.EnterAsync(Pilot() with
@@ -1633,9 +1636,18 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(first.Hits.Single().Target!.Hp, Is.EqualTo(80));
         Assert.That((await npcs.VisibleAsync(1, default)).Single(other => other.Id != npc.Id).Hp, Is.EqualTo(100));
         Assert.That((await replica.PulseAsync(pilot, sessions, default)).Status, Is.EqualTo("cooldown"));
+        Assert.That(inventory.Remaining, Is.EqualTo(1));
         clock.Advance(TimeSpan.FromSeconds(30));
         var second = await replica.PulseAsync(pilot, sessions, default);
         Assert.That(second.Hits.Single().Target!.Hp, Is.EqualTo(64));
+        Assert.That(inventory.Remaining, Is.Zero);
+        clock.Advance(TimeSpan.FromSeconds(30));
+        Assert.That((await npcs.PulseAsync(pilot, sessions, default)).Status, Is.EqualTo("out_of_ammo"));
+        Assert.That((await npcs.VisibleAsync(1, default)).Single(other => other.Id == npc.Id).Hp,
+            Is.EqualTo(64));
+        inventory.Refill(1);
+        Assert.That((await replica.PulseAsync(pilot, sessions, default)).Hits.Single().Target!.Hp,
+            Is.EqualTo(52));
         var station = WorldMapInstance.Starter(1).HomeStation;
         var stationPilot = await sessions.EnterAsync(pilot with
         { UserId = 8, AccountId = Guid.NewGuid(), X = station.X, Y = station.Y }, default);
@@ -1760,6 +1772,20 @@ public sealed class WorldAndSpacemapSpecificationTests
             WriteCalls++;
             if (WriteCalls == 1) throw new IOException("Simulated socket write failure.");
             return base.WriteAsync(buffer, cancellationToken);
+        }
+    }
+
+    private sealed class TestPulseInventory(int remaining) : IWorldPulseInventory
+    {
+        public int Remaining { get; private set; } = remaining;
+
+        public void Refill(int amount) => Remaining += amount;
+
+        public Task<bool> ConsumeAsync(Guid accountId, CancellationToken ct)
+        {
+            if (Remaining == 0) return Task.FromResult(false);
+            Remaining--;
+            return Task.FromResult(true);
         }
     }
 

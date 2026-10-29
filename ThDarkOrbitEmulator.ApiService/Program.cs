@@ -69,6 +69,7 @@ builder.Services.AddSingleton<IWorldRewardWallet, WorldRewardWallet>();
 builder.Services.AddSingleton<WorldCollectibles>();
 builder.Services.Configure<WorldNpcOptions>(builder.Configuration.GetSection(WorldNpcOptions.SectionName));
 builder.Services.AddSingleton<IWorldNpcRewards, WorldNpcRewards>();
+builder.Services.AddSingleton<IWorldPulseInventory, WorldPulseInventory>();
 builder.Services.AddSingleton<WorldNpcs>();
 builder.Services.AddSingleton<WorldGateCombat>();
 builder.Services.AddHostedService<WorldNpcSimulationService>();

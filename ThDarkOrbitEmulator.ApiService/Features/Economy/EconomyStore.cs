@@ -883,6 +883,21 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
         return true;
     }
 
+    public async Task<bool> ConsumeItemAsync(Guid accountId, string itemId, CancellationToken ct)
+    {
+        if (accountId == Guid.Empty || string.IsNullOrWhiteSpace(itemId)) return false;
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand("""
+            UPDATE economy.inventory SET quantity=quantity-1
+            WHERE account_id=@a AND item_id=@i AND quantity>0
+            RETURNING quantity
+            """, db);
+        cmd.Parameters.AddWithValue("a", accountId);
+        cmd.Parameters.AddWithValue("i", itemId);
+        return await cmd.ExecuteScalarAsync(ct) is not null;
+    }
+
     public async Task<IReadOnlyList<EconomyRecipe>> RecipesAsync(CancellationToken ct)
     {
         await using var db = Connection(); await db.OpenAsync(ct);

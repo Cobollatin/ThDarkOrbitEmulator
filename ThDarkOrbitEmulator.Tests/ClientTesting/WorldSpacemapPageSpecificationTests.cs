@@ -153,6 +153,7 @@ public sealed class WorldSpacemapPageSpecificationTests
             Assert.That(Html, Does.Contain("if(!state||pulsePending||document.getElementById('pulse').disabled)return"));
             Assert.That(Html, Does.Contain("result.hits.length?'Pulse hit '"));
             Assert.That(Html, Does.Contain("e.status==='cooldown'?'Pulse is recharging.'"));
+            Assert.That(Html, Does.Contain("e.status==='out_of_ammo'?'Buy pulse charges in the shop.'"));
         });
     }
 

@@ -20,6 +20,35 @@ public class EconomyPostgresTests
 {
     [Test]
     [Category("Integration")]
+    public async Task PulseCharge_ConsumesDurableInventoryOnceAcrossConcurrentStores()
+    {
+        var ct = TestContext.CurrentContext.CancellationToken;
+        await using var postgres = new PostgreSqlBuilder("postgres:16-alpine")
+            .WithDatabase("thdarkorbit").WithUsername("app").WithPassword("app").Build();
+        await postgres.StartAsync(ct);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["ConnectionStrings:identity-write"] = postgres.GetConnectionString() }).Build();
+        await new SqlMigrationHostedService(config, Options.Create(new IdentityDatabaseOptions
+        { AutoMigrate = true, BackupBeforeMigration = false, Schema = "identity" }),
+            NullLogger<SqlMigrationHostedService>.Instance).StartAsync(ct);
+        var account = Guid.NewGuid();
+        await using var db = new NpgsqlConnection(postgres.GetConnectionString());
+        await db.OpenAsync(ct);
+        await using (var create = new NpgsqlCommand(
+            "INSERT INTO identity.accounts(id,username,game_user_id) VALUES (@a,'pulse-pilot',4022)", db))
+        { create.Parameters.AddWithValue("a", account); await create.ExecuteNonQueryAsync(ct); }
+        var first = new EconomyStore(config);
+        var second = new EconomyStore(config);
+        Assert.That(await first.GrantItemAsync(account, "pulse_charge", 1, "pulse-test", 0,
+            "test", ct), Is.True);
+        var consumed = await Task.WhenAll(first.ConsumeItemAsync(account, "pulse_charge", ct),
+            second.ConsumeItemAsync(account, "pulse_charge", ct));
+        Assert.That(consumed.Count(value => value), Is.EqualTo(1));
+        Assert.That((await second.InventoryAsync(account, ct))["pulse_charge"], Is.Zero);
+    }
+
+    [Test]
+    [Category("Integration")]
     public async Task LegacyEquipmentImport_CapsShipSlotsAndKeepsRemainderTransferable()
     {
         var ct = TestContext.CurrentContext.CancellationToken;
