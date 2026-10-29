@@ -767,6 +767,10 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 ? npc.X + (npc.X < map.Width / 2 ? -1 : 1) * (int)Math.Round(step)
                 : npc.X + (int)Math.Round(dx * step / distance);
             var rawY = distance == 0 ? npc.Y : npc.Y + (int)Math.Round(dy * step / distance);
+            // Keep accumulating elapsed time when a real step is too small to
+            // change either integer coordinate. Otherwise fast ticks can
+            // prevent a slow NPC from ever moving.
+            var subpixelStep = step != 0 && rawX == npc.X && rawY == npc.Y;
             var x = Math.Clamp(rawX, 0, map.Width);
             var y = Math.Clamp(rawY, 0, map.Height);
             if (step < 0 && distance > 0 && (rawX != x || rawY != y))
@@ -796,7 +800,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 Math.Max(1, settings.NpcFireCooldownSeconds) * 1000L;
             vital = vital with { X = x, Y = y, TargetUserId = target.Pilot.UserId,
                 Retaliating = vital.Retaliating && vital.TargetUserId == target.Pilot.UserId,
-                LastStepUnixMs = now.ToUnixTimeMilliseconds(),
+                LastStepUnixMs = subpixelStep ? vital.LastStepUnixMs : nowMs,
                 LastFireUnixMs = fire ? now.ToUnixTimeMilliseconds() : vital.LastFireUnixMs,
                 PatrolOriginX = vital.PatrolOriginX ?? spawn.X,
                 PatrolOriginY = vital.PatrolOriginY ?? spawn.Y };
