@@ -1280,6 +1280,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 return null;
             // A debit may have committed before the previous request could restore world state.
             // Resume that paid choice even when the retry asks for a different repair location.
+            var chargedForThisDeath = false;
             if (repairWallet is not null && pilot.AccountId != Guid.Empty)
             {
                 var deathId = await DeathIdAsync(pilot.UserId, ct, pilot.AccountId);
@@ -1292,17 +1293,25 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                             is not null)
                         {
                             location = paidLocation;
+                            chargedForThisDeath = true;
                             break;
                         }
                     }
                 }
             }
             var cooldown = RespawnCooldown(location);
-            if (cooldown > TimeSpan.Zero)
+            if (cooldown > TimeSpan.Zero && !chargedForThisDeath)
             {
-                var saved = await cache.GetStringAsync(RespawnCooldownKey(pilot.UserId, location), ct);
-                if (long.TryParse(saved, out var milliseconds)
-                    && combatClock.GetUtcNow() - DateTimeOffset.FromUnixTimeMilliseconds(milliseconds) < cooldown)
+                var last = repairWallet is not null && pilot.AccountId != Guid.Empty
+                    ? await repairWallet.FindLastRepairAsync(pilot.AccountId, location, ct)
+                    : null;
+                if (last is null)
+                {
+                    var saved = await cache.GetStringAsync(RespawnCooldownKey(pilot.UserId, location), ct);
+                    if (long.TryParse(saved, out var milliseconds))
+                        last = DateTimeOffset.FromUnixTimeMilliseconds(milliseconds);
+                }
+                if (last is not null && combatClock.GetUtcNow() - last.Value < cooldown)
                     return null;
             }
             if (cooldown > TimeSpan.Zero && repairWallet is not null)
@@ -1335,7 +1344,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             if (repairedDeathId is not null)
                 await repairWallet!.StageRepairAsync(pilot.AccountId, repairedDeathId,
                     new WorldRepairOutcome(respawned.MapId, respawned.X, respawned.Y,
-                        CurrentHitPoints(pilot), CurrentShield(pilot)), ct);
+                        CurrentHitPoints(pilot), CurrentShield(pilot)), location, combatClock.GetUtcNow(), ct);
             await PersistAsync(respawned, ct);
             if (location is WorldRespawnLocation.Base)
                 await cache.RemoveAsync(DeathKey(pilot.UserId), ct);

@@ -13,7 +13,9 @@ public interface IWorldRepairWallet
     Task<string?> FindPendingDeathAsync(Guid accountId, CancellationToken ct);
     Task<WorldPosition?> FindPendingDeathPositionAsync(Guid accountId, CancellationToken ct);
     Task<WorldRepairOutcome?> FindPendingRepairAsync(Guid accountId, CancellationToken ct);
-    Task StageRepairAsync(Guid accountId, string deathId, WorldRepairOutcome outcome, CancellationToken ct);
+    Task<DateTimeOffset?> FindLastRepairAsync(Guid accountId, WorldRespawnLocation location, CancellationToken ct);
+    Task StageRepairAsync(Guid accountId, string deathId, WorldRepairOutcome outcome,
+        WorldRespawnLocation location, DateTimeOffset at, CancellationToken ct);
     Task CompleteDeathAsync(Guid accountId, string deathId, CancellationToken ct);
     Task<WorldRepairPayment> ChargeAsync(Guid accountId, WorldRespawnLocation location,
         string deathId, CancellationToken ct);
@@ -40,8 +42,13 @@ public sealed class WorldRepairWallet(EconomyStore economy) : IWorldRepairWallet
         var json = await economy.FindPendingWorldRepairAsync(accountId, ct);
         return json is null ? null : System.Text.Json.JsonSerializer.Deserialize<WorldRepairOutcome>(json);
     }
-    public Task StageRepairAsync(Guid accountId, string deathId, WorldRepairOutcome outcome, CancellationToken ct) =>
-        economy.StageWorldRepairAsync(accountId, deathId, System.Text.Json.JsonSerializer.Serialize(outcome), ct);
+    public Task<DateTimeOffset?> FindLastRepairAsync(Guid accountId, WorldRespawnLocation location, CancellationToken ct) =>
+        economy.FindLastWorldRepairAsync(accountId, location is WorldRespawnLocation.DeathLocation, ct);
+    public Task StageRepairAsync(Guid accountId, string deathId, WorldRepairOutcome outcome,
+        WorldRespawnLocation location, DateTimeOffset at, CancellationToken ct) =>
+        economy.StageWorldRepairAsync(accountId, deathId, System.Text.Json.JsonSerializer.Serialize(outcome),
+            location is WorldRespawnLocation.DeathLocation, location is WorldRespawnLocation.NearestPortal,
+            at, ct);
     public Task CompleteDeathAsync(Guid accountId, string deathId, CancellationToken ct) =>
         economy.CompleteWorldDeathAsync(accountId, deathId, ct);
     public static int Price(WorldRespawnLocation location) => location switch

@@ -1541,15 +1541,38 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
         return await cmd.ExecuteScalarAsync(ct) as string;
     }
 
-    public async Task StageWorldRepairAsync(Guid accountId, string deathId, string outcome, CancellationToken ct)
+    public async Task<DateTimeOffset?> FindLastWorldRepairAsync(Guid accountId, bool atDeathLocation, CancellationToken ct)
+    {
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(atDeathLocation
+            ? "SELECT death_repair_at FROM economy.world_deaths WHERE account_id=@a"
+            : "SELECT portal_repair_at FROM economy.world_deaths WHERE account_id=@a", db);
+        cmd.Parameters.AddWithValue("a", accountId);
+        return await cmd.ExecuteScalarAsync(ct) switch
+        {
+            DateTime at => new DateTimeOffset(at),
+            DateTimeOffset at => at,
+            _ => null
+        };
+    }
+
+    public async Task StageWorldRepairAsync(Guid accountId, string deathId, string outcome,
+        bool atDeathLocation, bool atPortal, DateTimeOffset at, CancellationToken ct)
     {
         await using var db = Connection();
         await db.OpenAsync(ct);
         await using var cmd = new NpgsqlCommand(
-            "UPDATE economy.world_deaths SET repair_outcome=@o WHERE account_id=@a AND death_id=@d AND pending", db);
+            "UPDATE economy.world_deaths SET repair_outcome=@o, " +
+            "death_repair_at=CASE WHEN @death AND repair_outcome IS NULL THEN @at ELSE death_repair_at END, " +
+            "portal_repair_at=CASE WHEN @portal AND repair_outcome IS NULL THEN @at ELSE portal_repair_at END " +
+            "WHERE account_id=@a AND death_id=@d AND pending", db);
         cmd.Parameters.AddWithValue("a", accountId);
         cmd.Parameters.AddWithValue("d", deathId);
         cmd.Parameters.AddWithValue("o", outcome);
+        cmd.Parameters.AddWithValue("death", atDeathLocation);
+        cmd.Parameters.AddWithValue("portal", atPortal);
+        cmd.Parameters.AddWithValue("at", at);
         if (await cmd.ExecuteNonQueryAsync(ct) != 1)
             throw new InvalidOperationException("The destroyed life changed before repair could be saved.");
     }

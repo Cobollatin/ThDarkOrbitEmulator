@@ -1410,6 +1410,61 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(replica.CurrentHitPoints(second!), Is.EqualTo(100));
     }
 
+    [TestCase(WorldRespawnLocation.DeathLocation, 30)]
+    [TestCase(WorldRespawnLocation.NearestPortal, 15)]
+    public async Task PilotDestruction_PaidRepairCooldownSurvivesCacheLoss(
+        WorldRespawnLocation location, int cooldownSeconds)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingClock();
+        var wallet = new TestRepairWallet { CanPay = true };
+        var firstStore = new WorldSessionStore(cache, clock: clock, repairWallet: wallet);
+        var pilot = await firstStore.EnterAsync(Pilot() with
+        {
+            UserId = 1200 + cooldownSeconds, AccountId = Guid.NewGuid(), MapId = 2,
+            FactionId = 1, X = 5000, Y = 5000, Uridium = 1000,
+            Stats = new WorldShipStats(300, 1000, 100, 0, 100, [])
+        }, default);
+        await firstStore.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0);
+        var repaired = await firstStore.RespawnAsync(pilot, location, default);
+        Assert.That(repaired, Is.Not.Null);
+        await cache.RemoveAsync($"world:respawn-cooldown:{pilot.UserId}:{location}");
+        var replica = new WorldSessionStore(cache, clock: clock, repairWallet: wallet);
+        await replica.ApplyNpcDamageAsync(repaired!, 1, 1200, default, shieldAbsorption: 0);
+        Assert.That(await replica.RespawnAsync(repaired!, location, default), Is.Null);
+        clock.Advance(TimeSpan.FromSeconds(cooldownSeconds));
+        var second = await replica.RespawnAsync(repaired!, location, default);
+        Assert.That(second, Is.Not.Null);
+        Assert.That(wallet.Keys, Has.Count.EqualTo(2));
+        await cache.RemoveAsync($"world:respawn-cooldown:{pilot.UserId}:{location}");
+        await replica.ApplyNpcDamageAsync(second!, 1, 1200, default, shieldAbsorption: 0);
+        Assert.That(await replica.RespawnAsync(second!, location, default), Is.Null);
+    }
+
+    [TestCase(WorldRespawnLocation.DeathLocation)]
+    [TestCase(WorldRespawnLocation.NearestPortal)]
+    public async Task PilotDestruction_StagedPaidRepairRetryBypassesItsOwnCooldown(
+        WorldRespawnLocation location)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var wallet = new TestRepairWallet { CanPay = true, ThrowAfterStageOnce = true };
+        var store = new WorldSessionStore(cache, repairWallet: wallet);
+        var pilot = await store.EnterAsync(Pilot() with
+        {
+            UserId = 1260 + (int)location, AccountId = Guid.NewGuid(), MapId = 2,
+            FactionId = 1, X = 5000, Y = 5000, Uridium = 1000,
+            Stats = new WorldShipStats(300, 1000, 100, 0, 100, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0);
+        Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await store.RespawnAsync(pilot, location, default));
+        var replica = new WorldSessionStore(cache, repairWallet: wallet);
+        Assert.That(await replica.RespawnAsync(pilot, location, default), Is.Not.Null);
+        Assert.That(wallet.Keys, Has.Count.EqualTo(1));
+    }
+
     [TestCase(WorldRespawnLocation.DeathLocation, 30, 300)]
     [TestCase(WorldRespawnLocation.NearestPortal, 15, 200)]
     public async Task PilotDestruction_PaidRepairRequiresFundsAndChargesOncePerLife(
@@ -2371,6 +2426,7 @@ public sealed class WorldAndSpacemapSpecificationTests
     {
         public bool CanPay { get; set; }
         public bool ThrowAfterChargeOnce { get; set; }
+        public bool ThrowAfterStageOnce { get; set; }
         public bool ThrowAfterCompleteOnce { get; set; }
         public List<string> Keys { get; } = [];
         private readonly Dictionary<string, int> prices = [];
@@ -2378,6 +2434,7 @@ public sealed class WorldAndSpacemapSpecificationTests
         private readonly Dictionary<Guid, WorldPosition> deathPositions = [];
         private readonly HashSet<Guid> pendingDeaths = [];
         private readonly Dictionary<Guid, WorldRepairOutcome> outcomes = [];
+        private readonly Dictionary<(Guid, WorldRespawnLocation), DateTimeOffset> lastRepairs = [];
         public Task RecordDeathAsync(Guid accountId, string deathId, WorldPosition position, CancellationToken ct)
         {
             deaths[accountId] = deathId;
@@ -2394,11 +2451,22 @@ public sealed class WorldAndSpacemapSpecificationTests
             Task.FromResult(pendingDeaths.Contains(accountId) ? deathPositions.GetValueOrDefault(accountId) : null);
         public Task<WorldRepairOutcome?> FindPendingRepairAsync(Guid accountId, CancellationToken ct) =>
             Task.FromResult(pendingDeaths.Contains(accountId) ? outcomes.GetValueOrDefault(accountId) : null);
-        public Task StageRepairAsync(Guid accountId, string deathId, WorldRepairOutcome outcome, CancellationToken ct)
+        public Task<DateTimeOffset?> FindLastRepairAsync(Guid accountId, WorldRespawnLocation location, CancellationToken ct) =>
+            Task.FromResult(lastRepairs.TryGetValue((accountId, location), out var at)
+                ? (DateTimeOffset?)at : null);
+        public Task StageRepairAsync(Guid accountId, string deathId, WorldRepairOutcome outcome,
+            WorldRespawnLocation location, DateTimeOffset at, CancellationToken ct)
         {
             if (!pendingDeaths.Contains(accountId) || deaths.GetValueOrDefault(accountId) != deathId)
                 throw new InvalidOperationException("The destroyed life changed.");
+            if (!outcomes.ContainsKey(accountId) && location is not WorldRespawnLocation.Base)
+                lastRepairs[(accountId, location)] = at;
             outcomes[accountId] = outcome;
+            if (ThrowAfterStageOnce)
+            {
+                ThrowAfterStageOnce = false;
+                throw new InvalidOperationException("Interrupted after durable repair staging.");
+            }
             return Task.CompletedTask;
         }
         public Task CompleteDeathAsync(Guid accountId, string deathId, CancellationToken ct)
