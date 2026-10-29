@@ -442,6 +442,10 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             {
                 try
                 {
+                    // Presence can outlive a transfer if its old roster write is interrupted.
+                    // The saved position is authoritative for map membership.
+                    var location = JsonSerializer.Deserialize<WorldPosition>(saved);
+                    if (location is not null && location.MapId != mapId) continue;
                     var moving = JsonSerializer.Deserialize<WorldTravel>(saved);
                     if (moving?.MapId == mapId && moving.Speed > 0)
                     {
