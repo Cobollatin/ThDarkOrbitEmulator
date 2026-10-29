@@ -1577,6 +1577,33 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(await cache.GetStringAsync($"world:death:{pilot.UserId}"), Is.EqualTo(wallet.Keys[0]));
     }
 
+    [Test]
+    public async Task PilotDestruction_UnpaidDeathSurvivesLossOfBothCacheEntries()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var wallet = new TestRepairWallet();
+        var pilot = Pilot() with { UserId = 2410, AccountId = Guid.NewGuid(),
+            Stats = new WorldShipStats(300, 1000, 100, 0, 100, []) };
+        var store = new WorldSessionStore(cache, repairWallet: wallet);
+        pilot = await store.EnterAsync(pilot, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 1200, default, shieldAbsorption: 0);
+        await cache.RemoveAsync($"world:death:{pilot.UserId}");
+        await cache.RemoveAsync($"world:runtime:{pilot.UserId}");
+
+        var replica = new WorldSessionStore(cache, repairWallet: wallet);
+        var dead = await replica.EnterAsync(pilot, default);
+        Assert.That(replica.CurrentHitPoints(dead), Is.Zero);
+        Assert.That(await wallet.FindPendingDeathAsync(pilot.AccountId, default), Is.Not.Null);
+        var restored = await replica.RespawnAtBaseAsync(dead, default);
+        Assert.That(restored, Is.Not.Null);
+        Assert.That(await wallet.FindPendingDeathAsync(pilot.AccountId, default), Is.Null);
+        await cache.RemoveAsync($"world:runtime:{pilot.UserId}");
+        var next = new WorldSessionStore(cache, repairWallet: wallet);
+        var entered = await next.EnterAsync(restored!, default);
+        Assert.That(next.CurrentHitPoints(entered), Is.GreaterThan(0));
+    }
+
     [TestCase("0", 0)]
     [TestCase("1000000", 1000000)]
     [TestCase("-1", 150)]
@@ -2271,13 +2298,22 @@ public sealed class WorldAndSpacemapSpecificationTests
         public List<string> Keys { get; } = [];
         private readonly Dictionary<string, int> prices = [];
         private readonly Dictionary<Guid, string> deaths = [];
+        private readonly HashSet<Guid> pendingDeaths = [];
         public Task RecordDeathAsync(Guid accountId, string deathId, CancellationToken ct)
         {
             deaths[accountId] = deathId;
+            pendingDeaths.Add(accountId);
             return Task.CompletedTask;
         }
         public Task<string?> FindDeathAsync(Guid accountId, CancellationToken ct) =>
             Task.FromResult(deaths.GetValueOrDefault(accountId));
+        public Task<string?> FindPendingDeathAsync(Guid accountId, CancellationToken ct) =>
+            Task.FromResult(pendingDeaths.Contains(accountId) ? deaths.GetValueOrDefault(accountId) : null);
+        public Task CompleteDeathAsync(Guid accountId, string deathId, CancellationToken ct)
+        {
+            if (deaths.GetValueOrDefault(accountId) == deathId) pendingDeaths.Remove(accountId);
+            return Task.CompletedTask;
+        }
         public Task<WorldRepairPayment> ChargeAsync(Guid accountId, WorldRespawnLocation location,
             string deathId, CancellationToken ct)
         {

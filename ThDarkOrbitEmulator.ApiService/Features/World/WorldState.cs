@@ -543,23 +543,12 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     public async Task<WorldPilot> EnterAsync(WorldPilot pilot, CancellationToken ct)
     {
         pilot = await RefreshAsync(pilot, ct);
-        // A lost runtime snapshot also loses the zero-hull marker. A committed repair
-        // for the latest durable death is enough to resume the paid world transition.
+        // The durable pending death preserves zero hull when both cache entries are lost.
         if (CurrentHitPoints(pilot) > 0 && repairWallet is not null && pilot.AccountId != Guid.Empty
             && await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct) is null)
         {
-            var savedDeath = await repairWallet.FindDeathAsync(pilot.AccountId, ct);
-            if (savedDeath is not null)
-            {
-                foreach (var paidLocation in new[]
-                         { WorldRespawnLocation.DeathLocation, WorldRespawnLocation.NearestPortal })
-                {
-                    if (await repairWallet.FindChargeAsync(pilot.AccountId, paidLocation, savedDeath, ct)
-                        is null) continue;
-                    hitPoints[pilot.UserId] = 0;
-                    break;
-                }
-            }
+            if (await repairWallet.FindPendingDeathAsync(pilot.AccountId, ct) is not null)
+                hitPoints[pilot.UserId] = 0;
         }
         if (CurrentHitPoints(pilot) == 0 && repairWallet is not null && pilot.AccountId != Guid.Empty)
         {
@@ -1301,10 +1290,14 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             await cache.RemoveAsync(CombatKey(pilot.UserId), ct);
             await cache.RemoveAsync(HullRecoveryKey(pilot.UserId), ct);
             await cache.RemoveAsync(ShieldRecoveryKey(pilot.UserId), ct);
+            var repairedDeathId = repairWallet is not null && pilot.AccountId != Guid.Empty
+                ? await DeathIdAsync(pilot.UserId, ct, pilot.AccountId) : null;
             await PersistAsync(respawned, ct);
             if (location is WorldRespawnLocation.Base)
                 await cache.RemoveAsync(DeathKey(pilot.UserId), ct);
             await PersistRuntimeAsync(respawned, ct, clearDeathId: location is WorldRespawnLocation.Base);
+            if (repairedDeathId is not null)
+                await repairWallet!.CompleteDeathAsync(pilot.AccountId, repairedDeathId, ct);
             if (cooldown > TimeSpan.Zero)
                 await cache.SetStringAsync(RespawnCooldownKey(pilot.UserId, location),
                     combatClock.GetUtcNow().ToUnixTimeMilliseconds().ToString(),

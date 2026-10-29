@@ -1494,7 +1494,7 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
         await using var db = Connection();
         await db.OpenAsync(ct);
         await using var cmd = new NpgsqlCommand(
-            "INSERT INTO economy.world_deaths(account_id,death_id) VALUES (@a,@d) ON CONFLICT (account_id) DO UPDATE SET death_id=EXCLUDED.death_id", db);
+            "INSERT INTO economy.world_deaths(account_id,death_id,pending) VALUES (@a,@d,true) ON CONFLICT (account_id) DO UPDATE SET death_id=EXCLUDED.death_id,pending=true", db);
         cmd.Parameters.AddWithValue("a", accountId);
         cmd.Parameters.AddWithValue("d", deathId);
         await cmd.ExecuteNonQueryAsync(ct);
@@ -1508,6 +1508,27 @@ public sealed partial class EconomyStore(IConfiguration configuration, IRuntimeV
             "SELECT death_id FROM economy.world_deaths WHERE account_id=@a", db);
         cmd.Parameters.AddWithValue("a", accountId);
         return (string?)await cmd.ExecuteScalarAsync(ct);
+    }
+
+    public async Task<string?> FindPendingWorldDeathAsync(Guid accountId, CancellationToken ct)
+    {
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(
+            "SELECT death_id FROM economy.world_deaths WHERE account_id=@a AND pending", db);
+        cmd.Parameters.AddWithValue("a", accountId);
+        return (string?)await cmd.ExecuteScalarAsync(ct);
+    }
+
+    public async Task CompleteWorldDeathAsync(Guid accountId, string deathId, CancellationToken ct)
+    {
+        await using var db = Connection();
+        await db.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(
+            "UPDATE economy.world_deaths SET pending=false WHERE account_id=@a AND death_id=@d", db);
+        cmd.Parameters.AddWithValue("a", accountId);
+        cmd.Parameters.AddWithValue("d", deathId);
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 
     public async Task<WorldRepairPayment> ChargeRepairAsync(Guid accountId, int price, string key, CancellationToken ct)
