@@ -263,6 +263,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
 
     public async Task MarkCombatAsync(WorldPilot pilot, CancellationToken ct)
     {
+        // Combat can arrive with a target captured before a map transfer.
+        pilot = await RefreshAsync(pilot, ct);
         await cache.SetStringAsync(CombatKey(pilot.UserId), combatClock.GetUtcNow().ToUnixTimeMilliseconds().ToString(),
             new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);
         await SetRepairBotAsync(pilot, false, ct);

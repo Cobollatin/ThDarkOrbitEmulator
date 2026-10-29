@@ -3542,6 +3542,34 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task CombatDecloak_WithStalePilot_DoesNotRestorePresenceOnPreviousMap()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var combatNode = new WorldSessionStore(cache, mutex);
+        var transferNode = new WorldSessionStore(cache, mutex);
+        var stale = await combatNode.EnterAsync(Pilot() with
+        {
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+        stale = await combatNode.SetCloakAsync(stale, true, default);
+
+        var transferred = await transferNode.TeleportAsync(stale.UserId, 2, 3000, 1300, false, default);
+        Assert.That(transferred?.IsInvisible, Is.True);
+        await combatNode.MarkCombatAsync(stale, default);
+
+        Assert.That(await transferNode.ConnectedAsync(1, default), Is.Empty);
+        var current = (await transferNode.ConnectedAsync(2, default)).Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That(current.IsInvisible, Is.False);
+            Assert.That((current.X, current.Y), Is.EqualTo((3000, 1300)));
+        });
+        Assert.That((await combatNode.RestoreAsync(stale, default)).MapId, Is.EqualTo(2));
+    }
+
+    [Test]
     public async Task CloakCooldown_SurvivesCooldownKeyEvictionAcrossWorldInstances()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
