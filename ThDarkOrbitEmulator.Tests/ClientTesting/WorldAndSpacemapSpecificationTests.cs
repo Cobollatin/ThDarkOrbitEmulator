@@ -1707,6 +1707,34 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(another.CurrentHitPoints(again), Is.Zero);
     }
 
+    [Test]
+    public async Task PilotDestruction_GameplayRestoreRecoversDeathPositionAfterCacheLoss()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var wallet = new TestRepairWallet { ThrowAfterRecordOnce = true };
+        var original = Pilot() with { UserId = 2413, AccountId = Guid.NewGuid(),
+            MapId = 1, X = 1000, Y = 1000,
+            Stats = new WorldShipStats(300, 1000, 100, 0, 100, []) };
+        var first = new WorldSessionStore(cache, repairWallet: wallet);
+        await first.EnterAsync(original, default);
+        var moved = original with { X = 5000, Y = 5000 };
+        await first.PersistAsync(moved, default);
+        first.SetCurrentShield(moved, 0);
+        Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await first.ApplyNpcDamageAsync(moved, 1, 1200, default, shieldAbsorption: 0));
+        await cache.RemoveAsync($"world:position:{original.UserId}");
+
+        var replica = new WorldSessionStore(cache, repairWallet: wallet);
+        var restored = await replica.RestoreAsync(original, default);
+        Assert.That((restored.X, restored.Y), Is.EqualTo((5000, 5000)));
+        Assert.That(replica.CurrentHitPoints(restored), Is.Zero);
+        var another = new WorldSessionStore(cache, repairWallet: wallet);
+        var again = await another.RestoreAsync(original, default);
+        Assert.That((again.X, again.Y), Is.EqualTo((5000, 5000)));
+        Assert.That(another.CurrentHitPoints(again), Is.Zero);
+    }
+
     [TestCase(WorldRespawnLocation.DeathLocation, 300)]
     [TestCase(WorldRespawnLocation.NearestPortal, 200)]
     public async Task PilotDestruction_PaidRepairUsesDurableDeathPositionAfterCacheLoss(

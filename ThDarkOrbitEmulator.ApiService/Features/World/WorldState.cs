@@ -543,12 +543,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     public async Task<WorldPilot> EnterAsync(WorldPilot pilot, CancellationToken ct)
     {
         pilot = await RefreshAsync(pilot, ct);
-        if (repairWallet is not null && pilot.AccountId != Guid.Empty
-            && await repairWallet.FindPendingDeathPositionAsync(pilot.AccountId, ct) is { } deathPosition
-            && WorldMapInstance.Starter(deathPosition.MapId) is { } deathMap
-            && deathPosition.X >= 0 && deathPosition.X <= deathMap.Width
-            && deathPosition.Y >= 0 && deathPosition.Y <= deathMap.Height)
-            pilot = pilot with { MapId = deathPosition.MapId, X = deathPosition.X, Y = deathPosition.Y };
+        pilot = await RestorePendingDeathPositionAsync(pilot, ct);
         if (repairWallet is not null && pilot.AccountId != Guid.Empty
             && await repairWallet.FindPendingRepairAsync(pilot.AccountId, ct) is { } repair)
         {
@@ -607,8 +602,25 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     public async Task<WorldPilot> RestoreAsync(WorldPilot pilot, CancellationToken ct)
     {
         pilot = await RefreshAsync(pilot, ct);
+        var deathPosition = await RestorePendingDeathPositionAsync(pilot, ct);
+        if (deathPosition != pilot)
+        {
+            pilot = deathPosition;
+            await PersistAsync(pilot, ct);
+        }
         await ReconcilePendingDeathAsync(pilot, ct);
         return pilot;
+    }
+
+    private async Task<WorldPilot> RestorePendingDeathPositionAsync(WorldPilot pilot,
+        CancellationToken ct)
+    {
+        if (repairWallet is null || pilot.AccountId == Guid.Empty
+            || await repairWallet.FindPendingDeathPositionAsync(pilot.AccountId, ct) is not { } position
+            || WorldMapInstance.Starter(position.MapId) is not { } map
+            || position.X < 0 || position.X > map.Width
+            || position.Y < 0 || position.Y > map.Height) return pilot;
+        return pilot with { MapId = position.MapId, X = position.X, Y = position.Y };
     }
 
     private async Task ReconcilePendingDeathAsync(WorldPilot pilot, CancellationToken ct)
