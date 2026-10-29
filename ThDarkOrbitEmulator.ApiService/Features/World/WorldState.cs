@@ -208,6 +208,15 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 }
                 catch (JsonException) { }
             }
+            else if (runtimeJson is null
+                && await cache.GetStringAsync(MapKey(pilot.UserId), ct) is { } mapText
+                && int.TryParse(mapText, out var ownerMap) && ownerMap != pilot.MapId)
+            {
+                if (connected.TryGetValue(pilot.MapId, out var local))
+                    local.TryRemove(pilot.UserId, out _);
+                (absent.TryGetValue(pilot.MapId, out var gone) ? gone : absent[pilot.MapId] = []).Add(pilot.UserId);
+                continue;
+            }
             if (HeartbeatDue(current))
                 (present.TryGetValue(current.MapId, out var due) ? due : present[current.MapId] = []).Add(current);
         }
@@ -216,6 +225,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 absent.GetValueOrDefault(mapId) ?? [], ct);
     }
     private static string Key(long userId) => $"world:position:{userId}";
+    private static string MapKey(long userId) => $"world:map:{userId}";
     private static string RuntimeKey(long userId) => $"world:runtime:{userId}";
     private static string CombatKey(long userId) => $"world:combat:{userId}";
     private static string CloakCooldownKey(long userId) => $"world:cloak-cooldown:{userId}";
@@ -477,6 +487,9 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 }
                 catch (JsonException) { }
             }
+            if (!hasSavedPosition && runtime is null
+                && await cache.GetStringAsync(MapKey(pilot.UserId), ct) is { } mapText
+                && int.TryParse(mapText, out var ownerMap) && ownerMap != mapId) continue;
             result.Add(pilot);
         }
         return result;
@@ -887,9 +900,15 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         await UpdatePresenceAsync(pilot, false, ct);
     }
 
-    public Task PersistAsync(WorldPilot pilot, CancellationToken ct) => cache.SetStringAsync(Key(pilot.UserId),
-        JsonSerializer.Serialize(new WorldPosition(pilot.MapId, pilot.X, pilot.Y)),
-        new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
+    public async Task PersistAsync(WorldPilot pilot, CancellationToken ct)
+    {
+        var options = new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) };
+        await cache.SetStringAsync(Key(pilot.UserId),
+            JsonSerializer.Serialize(new WorldPosition(pilot.MapId, pilot.X, pilot.Y)), options, ct);
+        // Keep map ownership independent of the position and runtime snapshots so
+        // observers can reject an interrupted old-map roster after both are lost.
+        await cache.SetStringAsync(MapKey(pilot.UserId), pilot.MapId.ToString(), options, ct);
+    }
 
     public void Leave(WorldPilot pilot, WorldConnection? connection = null)
     {
@@ -1172,6 +1191,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                     }
                     catch (JsonException) { }
                 }
+                else if (await cache.GetStringAsync(MapKey(userId)) is { } mapText
+                    && int.TryParse(mapText, out var ownerMap) && ownerMap != mapId) continue;
             }
             entries.Add(new(presence, saved));
         }
