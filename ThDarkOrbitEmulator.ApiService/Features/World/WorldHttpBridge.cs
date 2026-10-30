@@ -263,14 +263,15 @@ public static class WorldHttpBridge
         if (mapId != admittedMapId)
         { await MapChangedAsync(context, pilot, sessions, ct); return; }
         await SetMeshHeadersAsync(context, pilot.MapId, ct);
+        bool repaired;
         try
         {
-            await sessions.RepairAtBaseFencedAsync(pilot, DateTimeOffset.UtcNow, ct,
+            repaired = await sessions.RepairAtBaseFencedAsync(pilot, DateTimeOffset.UtcNow, ct,
                 await LeaseFenceAsync(context, pilot.MapId, ct));
         }
         catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
         catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
-        await WriteStateAsync(context, pilot, sessions, ct);
+        await WriteStateAsync(context, pilot, sessions, ct, stationRepairApplied: repaired);
     }
 
     public static async Task ConfigAsync(HttpContext context, IGameAuthSessionStore auth,
@@ -765,7 +766,7 @@ public static class WorldHttpBridge
     }
 
     private static async Task WriteStateAsync(HttpContext context, WorldPilot pilot, WorldSessionStore sessions,
-        CancellationToken ct, WorldJumpResult? jump = null)
+        CancellationToken ct, WorldJumpResult? jump = null, bool? stationRepairApplied = null)
     {
         var map = await sessions.MapAsync(pilot.MapId, ct);
         var runtimeVariables = context.RequestServices?.GetService<Admin.IRuntimeVariableRegistry>();
@@ -810,6 +811,7 @@ public static class WorldHttpBridge
             gate = gateState,
             launcher,
             rocketAuto,
+            stationRepairApplied,
             jump = jump is null ? null : new { jump.PortalId, jump.TargetNodeId, jump.TargetTcpHostPort },
             pilots = occupants.Select(item => new { id = item.UserId, name = item.UserName,
                 x = item.X, y = item.Y }).ToArray(),

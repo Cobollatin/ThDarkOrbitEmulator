@@ -1127,16 +1127,17 @@ public class ApiServiceVerticalSliceTests
         var source = File.ReadAllText(Path.Combine(RepositoryRoot, "ThDarkOrbitEmulator.ApiService",
             "Features", "World", "WorldState.cs"));
         var damage = source[source.IndexOf("private async Task ApplyBoundaryDamageAsync(", StringComparison.Ordinal)..
-            source.IndexOf("public async Task RepairAtBaseAsync(", StringComparison.Ordinal)];
-        var repair = source[source.IndexOf("public async Task RepairAtBaseAsync(", StringComparison.Ordinal)..
-            source.IndexOf("public async Task RepairAtBaseFencedAsync(", StringComparison.Ordinal)];
-        var fenced = source[source.IndexOf("public async Task RepairAtBaseFencedAsync(", StringComparison.Ordinal)..
+            source.IndexOf("public async Task<bool> RepairAtBaseAsync(", StringComparison.Ordinal)];
+        var repair = source[source.IndexOf("public async Task<bool> RepairAtBaseAsync(", StringComparison.Ordinal)..
+            source.IndexOf("public async Task<bool> RepairAtBaseFencedAsync(", StringComparison.Ordinal)];
+        var fenced = source[source.IndexOf("public async Task<bool> RepairAtBaseFencedAsync(", StringComparison.Ordinal)..
             source.IndexOf("public async Task<WorldJumpResult?> JumpAsync(", StringComparison.Ordinal)];
 
         Assert.Multiple(() =>
         {
             Assert.That(damage, Does.Contain("now - last < TimeSpan.FromSeconds(1)"));
-            Assert.That(damage, Does.Contain("Math.Max(1, CurrentHitPoints(pilot) - damage)"));
+            Assert.That(damage, Does.Contain("Math.Max(0, current - damage)"));
+            Assert.That(damage, Does.Contain("RecordDestructionAsync(pilot, ct)"));
             Assert.That(damage, Does.Contain("await PersistRuntimeAsync(pilot, ct)"));
             Assert.That(repair, Does.Contain("position != target || dx * dx + dy * dy > (long)peaceRadius * peaceRadius"));
             Assert.That(repair, Does.Contain("await PersistRuntimeAsync(pilot, ct)"));

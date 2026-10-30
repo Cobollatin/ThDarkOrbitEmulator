@@ -1456,10 +1456,10 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         }), ct);
     }
 
-    public async Task RepairAtBaseAsync(WorldPilot pilot, DateTimeOffset now, CancellationToken ct)
+    public async Task<bool> RepairAtBaseAsync(WorldPilot pilot, DateTimeOffset now, CancellationToken ct)
     {
         var map = WorldMapInstance.Starter(pilot.MapId);
-        if (pilot.FactionId != map.FactionId) return;
+        if (pilot.FactionId != map.FactionId) return false;
         var station = map.HomeStation;
         var position = CurrentPosition(pilot, now);
         var target = Destination(pilot);
@@ -1467,15 +1467,15 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         var dy = (long)position.Y - station.Y;
         var peaceRadius = variables is null ? station.PeaceRadius
             : (int)await variables.NumberAsync("world.station.peace_radius", ct);
-        if (position != target || dx * dx + dy * dy > (long)peaceRadius * peaceRadius) return;
+        if (position != target || dx * dx + dy * dy > (long)peaceRadius * peaceRadius) return false;
         var stats = ActiveStats(pilot);
         var current = CurrentHitPoints(pilot);
-        if (current <= 0) return;
-        if (current >= stats.MaxHitPoints) return;
-        if (await PortalCombatLockedAsync(pilot, ct)) return;
+        if (current <= 0) return false;
+        if (current >= stats.MaxHitPoints) return false;
+        if (await PortalCombatLockedAsync(pilot, ct)) return false;
         var lastRepair = await cache.GetStringAsync(StationRepairKey(pilot.UserId), ct);
         if (long.TryParse(lastRepair, out var lastRepairMs) &&
-            now - DateTimeOffset.FromUnixTimeMilliseconds(lastRepairMs) < TimeSpan.FromSeconds(1)) return;
+            now - DateTimeOffset.FromUnixTimeMilliseconds(lastRepairMs) < TimeSpan.FromSeconds(1)) return false;
         var repair = variables is null ? 0 : (long)await variables.NumberAsync("world.station.repair_hp_per_tick", ct);
         hitPoints[pilot.UserId] = repair > 0
             ? Math.Min(stats.MaxHitPoints, current + repair)
@@ -1483,10 +1483,11 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         await PersistRuntimeAsync(pilot, ct);
         await cache.SetStringAsync(StationRepairKey(pilot.UserId), now.ToUnixTimeMilliseconds().ToString(),
             new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);
+        return true;
     }
 
     // Station activation is serialized with lease reassignment and shared pilot state.
-    public async Task RepairAtBaseFencedAsync(WorldPilot pilot, DateTimeOffset now,
+    public async Task<bool> RepairAtBaseFencedAsync(WorldPilot pilot, DateTimeOffset now,
         CancellationToken ct, WorldLeaseFence? fence)
     {
         var gate = movementGates.GetOrAdd(pilot.UserId, _ => new SemaphoreSlim(1, 1));
@@ -1502,7 +1503,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 if (pilot.MapId != admittedMap) throw new WorldMapChangedException();
             }
             await CheckLeaseAsync(pilot.MapId, fence, ct);
-            await RepairAtBaseAsync(pilot, now, ct);
+            return await RepairAtBaseAsync(pilot, now, ct);
         }
         finally { gate.Release(); }
     }

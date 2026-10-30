@@ -37,6 +37,12 @@ public sealed class WorldHttpBridgeTests
             Stats = new WorldShipStats(370, 1000, 500, 0, 0, [])
         }, default);
         await store.ApplyNpcDamageAsync(pilot, 100, 10, default, shieldAbsorption: 0);
+        var combatDenied = await SendAsync("POST", "station-repair", "{\"mapId\":1}",
+            new Auth(), new Resolver(), store);
+        Assert.That(combatDenied.Response.StatusCode, Is.EqualTo(200));
+        using (var body = JsonDocument.Parse(Body(combatDenied)))
+            Assert.That(body.RootElement.GetProperty("stationRepairApplied").GetBoolean(), Is.False);
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(990));
         clock.Now += TimeSpan.FromSeconds(11);
         var auth = new Auth();
         var resolver = new Resolver();
@@ -54,7 +60,12 @@ public sealed class WorldHttpBridgeTests
 
         var activated = await SendAsync("POST", "station-repair", "{\"mapId\":1}", auth, resolver, store);
         Assert.That(activated.Response.StatusCode, Is.EqualTo(200));
+        using (var body = JsonDocument.Parse(Body(activated)))
+            Assert.That(body.RootElement.GetProperty("stationRepairApplied").GetBoolean(), Is.True);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(1000));
+        var fullHull = await SendAsync("POST", "station-repair", "{\"mapId\":1}", auth, resolver, store);
+        using (var body = JsonDocument.Parse(Body(fullHull)))
+            Assert.That(body.RootElement.GetProperty("stationRepairApplied").GetBoolean(), Is.False);
     }
 
     [TestCase("application/json; charset=utf-8")]
