@@ -727,6 +727,38 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task Movement_FromPreviousMap_DoesNotChangeDestinationTravelOrConfiguration()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var previous = new WorldSessionStore(cache, mutex);
+        var destination = new WorldSessionStore(cache, mutex);
+        var stale = await previous.EnterAsync(Pilot() with
+        {
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+        var current = await destination.TeleportAsync(stale.UserId, 2, 3000, 1300, false, default);
+        Assert.That(current, Is.Not.Null);
+        var moveId = destination.MoveId(current!);
+
+        Assert.ThrowsAsync<WorldMapChangedException>(
+            async () => await previous.MoveAsync(stale, 4000, 1300, null, default));
+        Assert.ThrowsAsync<WorldMapChangedException>(
+            async () => await previous.SwitchAsync(stale, 2, default));
+
+        var saved = (await destination.ConnectedAsync(2, default)).Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That((saved.X, saved.Y), Is.EqualTo((3000, 1300)));
+            Assert.That(destination.MoveId(saved), Is.EqualTo(moveId));
+            Assert.That(destination.Configuration(saved.UserId), Is.EqualTo(1));
+        });
+        Assert.That((await destination.MoveAsync(current!, 4000, 1300, null, default)).X,
+            Is.EqualTo(4000));
+    }
+
+    [Test]
     public async Task PortalJump_RecentNpcCombatBlocksAcrossReplicas_UntilWindowExpires()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
