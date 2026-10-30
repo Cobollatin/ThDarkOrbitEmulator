@@ -1220,14 +1220,24 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                     WorldPayload.WriteInt32(w, remote.Y);
                 }), ct);
             }
-            else if (runtime?.LastHealId is not null)
+            else
             {
-                heals.TryGetValue(remote.UserId, out var announcedHeal);
-                foreach (var heal in UnannouncedHeals(runtime, announcedHeal))
+                await connection.HealDeliveryGate.WaitAsync(ct);
+                try
                 {
-                    await SendHealAsync(connection, remote.UserId, heal, ct);
-                    heals[remote.UserId] = heal.Id;
+                    // Map membership can be cached while the pilot's heal history advances.
+                    var current = await ReadOwnHealRuntimeAsync(remote, ct);
+                    if (current is not null)
+                    {
+                        heals.TryGetValue(remote.UserId, out var announcedHeal);
+                        foreach (var heal in UnannouncedHeals(current, announcedHeal))
+                        {
+                            await SendHealAsync(connection, remote.UserId, heal, ct);
+                            heals[remote.UserId] = heal.Id;
+                        }
+                    }
                 }
+                finally { connection.HealDeliveryGate.Release(); }
             }
             if (!cloaks.TryGetValue(remote.UserId, out var announced) || announced != remote.IsInvisible)
             {
