@@ -1612,6 +1612,38 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task StationRepair_StatePollsShareOneSecondRepairIntervalAcrossReplicas()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingClock();
+        var first = new WorldSessionStore(cache, clock: clock);
+        var pilot = await first.EnterAsync(new WorldPilot(907, "mmo", 1, 1, "ship", 0, 0)
+        {
+            FactionId = 1, Stats = new WorldShipStats(300, 1000, 500, 0, 0, [])
+        }, default);
+        await first.ApplyNpcDamageAsync(pilot, 1, 100, default, shieldAbsorption: 0);
+        first.SetCurrentShield(pilot, 400);
+        clock.Advance(TimeSpan.FromSeconds(10));
+        var now = clock.GetUtcNow();
+
+        await first.RepairAtBaseFencedAsync(pilot, now, default, null);
+        Assert.That(first.CurrentHitPoints(pilot), Is.EqualTo(920));
+        Assert.That(first.CurrentShield(pilot), Is.EqualTo(410));
+        await first.RepairAtBaseFencedAsync(pilot, now, default, null);
+        var second = new WorldSessionStore(cache, clock: clock);
+        var restored = await second.RestoreAsync(pilot, default);
+        await second.RepairAtBaseFencedAsync(restored, now.AddMilliseconds(999), default, null);
+        Assert.That(second.CurrentHitPoints(restored), Is.EqualTo(920));
+        Assert.That(second.CurrentShield(restored), Is.EqualTo(410));
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await second.RepairAtBaseFencedAsync(restored, clock.GetUtcNow(), default, null);
+        Assert.That(second.CurrentHitPoints(restored), Is.EqualTo(940));
+        Assert.That(second.CurrentShield(restored), Is.EqualTo(420));
+    }
+
+    [Test]
     public async Task StationRepair_RechargesShieldWhenHullIsAlreadyFull()
     {
         using var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection()
