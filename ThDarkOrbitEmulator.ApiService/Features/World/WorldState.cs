@@ -1457,6 +1457,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
 
     public async Task<bool> RepairAtBaseAsync(WorldPilot pilot, DateTimeOffset now, CancellationToken ct)
     {
+        if (WorldMapInstance.IsGate(pilot.MapId)) return false;
         var map = WorldMapInstance.Starter(pilot.MapId);
         if (pilot.FactionId != map.FactionId) return false;
         var station = map.HomeStation;

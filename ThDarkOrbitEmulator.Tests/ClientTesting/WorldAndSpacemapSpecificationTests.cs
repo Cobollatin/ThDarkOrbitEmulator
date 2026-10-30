@@ -1672,6 +1672,23 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task StationRepair_RejectsGateMapPlaceholderStation()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var map = WorldMapInstance.Starter(101);
+        var pilot = await store.EnterAsync(new WorldPilot(908, "mmo", 1, 101, "ship", 0, 0)
+        {
+            FactionId = map.FactionId, X = map.HomeStation.X, Y = map.HomeStation.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 100, default, shieldAbsorption: 0);
+
+        Assert.That(await store.RepairAtBaseFencedAsync(pilot, DateTimeOffset.UtcNow.AddMinutes(1), default, null), Is.False);
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(900));
+    }
+
+    [Test]
     public async Task PilotShieldRecovery_WaitsForCombatQuiet_AndPersistsCappedTicks()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
