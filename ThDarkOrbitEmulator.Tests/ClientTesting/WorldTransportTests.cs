@@ -212,6 +212,8 @@ public class WorldTransportTests
             });
             await nodeB.MoveAsync(entered, 4000, 2500, null, CancellationToken.None);
             var packet = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            if (packet.Command == WorldCommandId.CloakStateCommand)
+                packet = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
             Assert.That(packet.Command, Is.EqualTo(WorldCommandId.MoveCommand));
             var move = WorldPayload.Decode(packet.Payload, r =>
                 (Id: WorldPayload.ReadInt64(r), X: WorldPayload.ReadInt32(r),
@@ -276,6 +278,49 @@ public class WorldTransportTests
         await nodeA.ObserveRemoteMovesAsync(observers[0], CancellationToken.None);
         Assert.That(counting.Reads.Count(k => k == "world:presence:map:1"), Is.EqualTo(2),
             "An expired snapshot must re-read shared presence.");
+    }
+
+    [Test]
+    public async Task FailedRemoteMoveWrite_IsRetriedOnce()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var owner = new WorldSessionStore(cache);
+        var observerNode = new WorldSessionStore(cache);
+        var remote = await owner.EnterAsync(new WorldPilot(953, "remote", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
+        var observer = remote with { UserId = 954 };
+        using var wire = new FailNextWriteStream();
+        var connection = new WorldConnection(observer, new WorldPacketWriter(wire));
+        await observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+        await owner.MoveAsync(remote, 4000, 2500, null, default);
+        await Task.Delay(WorldSessionStore.RemoteSnapshotTtl + TimeSpan.FromMilliseconds(100));
+
+        wire.FailNext();
+        foreach (var move in await observerNode.ObserveRemoteMovesAsync(observer, default))
+            await observerNode.SendMoveAsync(connection, move, default);
+        foreach (var move in await observerNode.ObserveRemoteMovesAsync(observer, default))
+            await observerNode.SendMoveAsync(connection, move, default);
+        foreach (var move in await observerNode.ObserveRemoteMovesAsync(observer, default))
+            await observerNode.SendMoveAsync(connection, move, default);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.PilotCreateCommand));
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.CloakStateCommand));
+        var delivered = await reader.ReadAsync();
+        Assert.That(delivered?.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+        var payload = WorldPayload.Decode(delivered!.Value.Payload, r =>
+            (Id: WorldPayload.ReadInt64(r), X: WorldPayload.ReadInt32(r),
+                Y: WorldPayload.ReadInt32(r), Duration: WorldPayload.ReadInt32(r)));
+        Assert.Multiple(() =>
+        {
+            Assert.That(payload.Id, Is.EqualTo(953L));
+            Assert.That(payload.X, Is.EqualTo(4000));
+            Assert.That(payload.Y, Is.EqualTo(2500));
+            Assert.That(payload.Duration, Is.GreaterThan(0));
+        });
+        Assert.That(await reader.ReadAsync(), Is.Null);
     }
 
     [Test]

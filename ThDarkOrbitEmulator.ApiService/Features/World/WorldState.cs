@@ -131,6 +131,7 @@ public sealed class WorldCloakCooldownException(int remainingMs) : Exception("Cl
 public sealed class WorldCloakBlockedException() : Exception("Cloak activation is blocked on this map.");
 
 public sealed record WorldPresence(WorldPilot Pilot, DateTimeOffset SeenAtUtc);
+public sealed record WorldRemoteMove(WorldMoveResult Move, WorldTravel? Travel);
 
 public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex? meshMutex = null,
     IRuntimeVariableRegistry? variables = null, TimeProvider? clock = null, EconomyStore? economy = null,
@@ -1303,13 +1304,13 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     }
 
     // Pilots whose sockets live on another node reach this observer through shared presence and travel.
-    public async Task<IReadOnlyList<WorldMoveResult>> ObserveRemoteMovesAsync(WorldPilot observer,
+    public async Task<IReadOnlyList<WorldRemoteMove>> ObserveRemoteMovesAsync(WorldPilot observer,
         CancellationToken ct)
     {
         var seen = remoteAnnounced.GetOrAdd(observer.UserId, _ => new());
         var positions = remotePositions.GetOrAdd(observer.UserId, _ => new());
         var now = DateTimeOffset.UtcNow;
-        var moves = new List<WorldMoveResult>();
+        var moves = new List<WorldRemoteMove>();
         foreach (var (entry, saved, _) in (await RemoteSnapshotAsync(observer.MapId, ct)).Entries)
         {
             var remote = entry.Pilot with { MapId = observer.MapId };
@@ -1330,9 +1331,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                             && positions.TryGetValue(remote.UserId, out var announced)
                             && announced != (stationary.X, stationary.Y))
                         {
-                            positions[remote.UserId] = (stationary.X, stationary.Y);
-                            moves.Add(new WorldMoveResult(remote.UserId, stationary.X,
-                                stationary.Y, 0, false));
+                            moves.Add(new WorldRemoteMove(new WorldMoveResult(remote.UserId,
+                                stationary.X, stationary.Y, 0, false), null));
                         }
                     }
                     catch (JsonException) { }
@@ -1340,22 +1340,29 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 continue;
             }
             if (seen.TryGetValue(remote.UserId, out var previous) && previous == current) continue;
-            seen[remote.UserId] = current;
-            positions[remote.UserId] = (current.TargetX, current.TargetY);
             var position = current.PositionAt(now);
             var distance = Math.Sqrt(Math.Pow(current.TargetX - position.X, 2)
                 + Math.Pow(current.TargetY - position.Y, 2));
             if (distance > 0)
-                moves.Add(new WorldMoveResult(remote.UserId, current.TargetX, current.TargetY,
-                    WorldMovement.DurationMilliseconds(distance, current.Speed), false));
+                moves.Add(new WorldRemoteMove(new WorldMoveResult(remote.UserId,
+                    current.TargetX, current.TargetY,
+                    WorldMovement.DurationMilliseconds(distance, current.Speed), false), current));
         }
         return moves;
     }
 
-    public async Task SendMoveAsync(WorldConnection observer, WorldMoveResult move, CancellationToken ct)
+    public async Task SendMoveAsync(WorldConnection observer, WorldRemoteMove remoteMove, CancellationToken ct)
     {
-        try { await observer.SendAsync(WorldCommandId.MoveCommand, MovePayload(move), ct); }
-        catch (IOException) { /* A disconnected observer is removed by its handler. */ }
+        try
+        {
+            await observer.SendAsync(WorldCommandId.MoveCommand, MovePayload(remoteMove.Move), ct);
+            var observerId = observer.Pilot.UserId;
+            if (remoteMove.Travel is { } travel)
+                remoteAnnounced.GetOrAdd(observerId, _ => new())[remoteMove.Move.UserId] = travel;
+            remotePositions.GetOrAdd(observerId, _ => new())[remoteMove.Move.UserId] =
+                (remoteMove.Move.X, remoteMove.Move.Y);
+        }
+        catch (IOException) { /* The next observer poll retries an undelivered move. */ }
     }
 
     private static byte[] MovePayload(WorldMoveResult move) => WorldPayload.Encode(w =>
