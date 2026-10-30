@@ -153,6 +153,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private readonly ConcurrentDictionary<long, ConcurrentDictionary<long, byte>> remoteVisible = new();
     private readonly ConcurrentDictionary<long, ConcurrentDictionary<long, bool>> remoteCloaks = new();
     private readonly ConcurrentDictionary<long, ConcurrentDictionary<long, string>> remoteHeals = new();
+    private readonly ConcurrentDictionary<long, string> announcedOwnHeals = new();
     private readonly ConcurrentDictionary<long, bool> announcedRepairBots = new();
     // Map-level fanout: every idle observer on this node shares one presence + saved-state read per map.
     public static readonly TimeSpan RemoteSnapshotTtl = TimeSpan.FromMilliseconds(500);
@@ -430,6 +431,39 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         }), ct);
         announcedRepairBots[pilot.UserId] = runtime.RepairBotActive;
         repairBots[pilot.UserId] = runtime.RepairBotActive;
+    }
+
+    public async Task PrimeOwnHealAsync(WorldPilot pilot, CancellationToken ct)
+    {
+        var runtime = await ReadOwnHealRuntimeAsync(pilot, ct);
+        if (runtime?.LastHealId is { } id) announcedOwnHeals[pilot.UserId] = id;
+        else announcedOwnHeals.TryRemove(pilot.UserId, out _);
+    }
+
+    public async Task ObserveOwnHealAsync(WorldPilot pilot, WorldConnection connection, CancellationToken ct)
+    {
+        var runtime = await ReadOwnHealRuntimeAsync(pilot, ct);
+        if (runtime?.LastHealId is not { } id ||
+            announcedOwnHeals.TryGetValue(pilot.UserId, out var announced) && announced == id) return;
+        await connection.SendAsync(WorldCommandId.ShipHealCommand, WorldPayload.Encode(w =>
+        {
+            WorldPayload.WriteInt64(w, pilot.UserId);
+            WorldPayload.WriteInt64(w, runtime.LastHealAmount);
+            WorldPayload.WriteInt64(w, runtime.LastHealHull);
+        }), ct);
+        announcedOwnHeals[pilot.UserId] = id;
+    }
+
+    private async Task<WorldRuntimeSnapshot?> ReadOwnHealRuntimeAsync(WorldPilot pilot, CancellationToken ct)
+    {
+        var saved = await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct);
+        if (saved is null) return null;
+        try
+        {
+            var runtime = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(saved);
+            return runtime?.MapId == pilot.MapId ? runtime : null;
+        }
+        catch (JsonException) { return null; }
     }
 
     // The map owner continues the hazard while the pilot remains at the boundary.
@@ -1007,6 +1041,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         remoteVisible.TryRemove(pilot.UserId, out _);
         remoteCloaks.TryRemove(pilot.UserId, out _);
         remoteHeals.TryRemove(pilot.UserId, out _);
+        announcedOwnHeals.TryRemove(pilot.UserId, out _);
         announcedRepairBots.TryRemove(pilot.UserId, out _);
         remotePositions.TryRemove(pilot.UserId, out _);
         configurations.TryRemove(pilot.UserId, out _);
@@ -1544,13 +1579,16 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         return true;
     }
 
-    private Task AnnounceHullHealAsync(WorldPilot pilot, long amount, CancellationToken ct) =>
-        BroadcastAsync(pilot, WorldCommandId.ShipHealCommand, WorldPayload.Encode(w =>
+    private async Task AnnounceHullHealAsync(WorldPilot pilot, long amount, CancellationToken ct)
+    {
+        await BroadcastAsync(pilot, WorldCommandId.ShipHealCommand, WorldPayload.Encode(w =>
         {
             WorldPayload.WriteInt64(w, pilot.UserId);
             WorldPayload.WriteInt64(w, amount);
             WorldPayload.WriteInt64(w, hitPoints[pilot.UserId]);
         }), ct);
+        if (connections.ContainsKey(pilot.UserId)) await PrimeOwnHealAsync(pilot, ct);
+    }
 
     // Station activation is serialized with lease reassignment and shared pilot state.
     public async Task<bool> RepairAtBaseFencedAsync(WorldPilot pilot, DateTimeOffset now,

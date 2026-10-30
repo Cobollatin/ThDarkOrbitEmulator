@@ -396,6 +396,69 @@ public class WorldTransportTests
         Assert.That(await reader.ReadAsync(), Is.Null);
     }
 
+    [Test]
+    public async Task RemoteHullHeal_ReachesOwningPilotOnceAfterEntry()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingWorldClock();
+        var mapOwner = new WorldSessionStore(cache, clock: clock);
+        var socketNode = new WorldSessionStore(cache, clock: clock);
+        var pilot = await mapOwner.EnterAsync(new WorldPilot(923, "pilot", 1, 1, "ship", 0, 0)
+        {
+            FactionId = 1, X = 2000, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await mapOwner.ApplyNpcDamageAsync(pilot, 1, 100, default, shieldAbsorption: 0);
+        await socketNode.EnterAsync(pilot, default);
+        await socketNode.PrimeOwnHealAsync(pilot, default);
+        using var wire = new MemoryStream();
+        var connection = new WorldConnection(pilot, new WorldPacketWriter(wire));
+        socketNode.Attach(connection);
+
+        await socketNode.ObserveOwnHealAsync(pilot, connection, default);
+        Assert.That(wire.Length, Is.Zero);
+        clock.Advance(TimeSpan.FromSeconds(10));
+        Assert.That(await mapOwner.RepairAtBaseAsync(pilot, clock.GetUtcNow(), default), Is.True);
+        await socketNode.ObserveOwnHealAsync(pilot, connection, default);
+        await socketNode.ObserveOwnHealAsync(pilot, connection, default);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        var heal = await reader.ReadAsync();
+        Assert.That(heal?.Command, Is.EqualTo(WorldCommandId.ShipHealCommand));
+        Assert.That(WorldPayload.Decode(heal!.Value.Payload, r =>
+            (WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r))),
+            Is.EqualTo((923L, 100L, 1000L)));
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
+    public async Task LocalHullHeal_DoesNotReplayToOwningPilot()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var clock = new AdvancingWorldClock();
+        var sessions = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), clock: clock);
+        var pilot = await sessions.EnterAsync(new WorldPilot(924, "pilot", 1, 1, "ship", 0, 0)
+        {
+            FactionId = 1, X = 2000, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await sessions.ApplyNpcDamageAsync(pilot, 1, 100, default, shieldAbsorption: 0);
+        await sessions.PrimeOwnHealAsync(pilot, default);
+        using var wire = new MemoryStream();
+        var connection = new WorldConnection(pilot, new WorldPacketWriter(wire));
+        sessions.Attach(connection);
+        clock.Advance(TimeSpan.FromSeconds(10));
+        Assert.That(await sessions.RepairAtBaseAsync(pilot, clock.GetUtcNow(), default), Is.True);
+        await sessions.ObserveOwnHealAsync(pilot, connection, default);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.ShipHealCommand));
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
     private sealed class CountingCache(IDistributedCache inner) : IDistributedCache
     {
         public readonly System.Collections.Concurrent.ConcurrentQueue<string> Reads = new();
