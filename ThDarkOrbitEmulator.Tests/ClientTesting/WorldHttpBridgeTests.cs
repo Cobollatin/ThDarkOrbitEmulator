@@ -240,6 +240,33 @@ public sealed class WorldHttpBridgeTests
     }
 
     [Test]
+    public async Task BrowserCollect_WithoutMapIdFromPreviousReplica_DoesNotClaimDestinationBox()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new NpcMutex();
+        var oldMap = new WorldSessionStore(cache, mutex);
+        var destination = new WorldSessionStore(cache, mutex);
+        var wallet = new Wallet();
+        var collectibles = new WorldCollectibles(cache, mutex, wallet, TimeProvider.System);
+        using var appServices = new ServiceCollection().AddSingleton(collectibles).BuildServiceProvider();
+        var auth = new Auth();
+        var resolver = new Resolver();
+        await SendAsync("GET", "enter", null, auth, resolver, oldMap);
+        await destination.TeleportAsync(73, 2, 3000, 1300, false, default);
+        var before = await cache.GetStringAsync("world:position:73");
+
+        var response = await SendAsync("POST", "collect", "{\"boxId\":1001}",
+            auth, resolver, oldMap, services: appServices);
+
+        Assert.That(response.Response.StatusCode, Is.EqualTo(409));
+        using var body = JsonDocument.Parse(Body(response));
+        Assert.That(body.RootElement.GetProperty("status").GetString(), Is.EqualTo("map_changed"));
+        Assert.That(wallet.Calls, Is.Zero);
+        Assert.That(await cache.GetStringAsync("world:position:73"), Is.EqualTo(before));
+    }
+
+    [Test]
     public async Task BrowserCollect_RefreshUnderMutexRejectsMapChangedByOtherReplica()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

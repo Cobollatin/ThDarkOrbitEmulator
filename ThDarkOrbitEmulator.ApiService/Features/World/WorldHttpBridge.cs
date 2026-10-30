@@ -447,7 +447,10 @@ public static class WorldHttpBridge
         if (!JsonRequest(context)) { context.Response.StatusCode = 415; return; }
         var pilot = await PilotAsync(context, auth, resolver, sessions, ct);
         if (pilot is null) return;
+        var admittedMapId = pilot.MapId;
         pilot = await sessions.GetOrEnterAsync(pilot, ct);
+        if (pilot.MapId != admittedMapId)
+        { await MapChangedAsync(context, pilot, sessions, ct); return; }
         if (WorldMapInstance.IsGate(pilot.MapId)) { context.Response.StatusCode = 409; return; }
         await SetMeshHeadersAsync(context, pilot.MapId, ct);
         int id;
@@ -462,10 +465,13 @@ public static class WorldHttpBridge
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         { context.Response.StatusCode = 400; return; }
         if (expectedMapId is <= 0) { context.Response.StatusCode = 400; return; }
-        await sessions.RestoreAsync(pilot, ct);
+        pilot = await sessions.RestoreAsync(pilot, ct);
+        if (pilot.MapId != admittedMapId)
+        { await MapChangedAsync(context, pilot, sessions, ct); return; }
         if (sessions.CurrentHitPoints(pilot) <= 0)
         { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "destroyed_pilot" }, ct); return; }
-        if (expectedMapId is not null && expectedMapId != pilot.MapId)
+        expectedMapId ??= admittedMapId;
+        if (expectedMapId != pilot.MapId)
         { await MapChangedAsync(context, pilot, sessions, ct); return; }
         WorldCollectResult result;
         try { result = await collectibles.CollectAsync(pilot, id, sessions, ct,
