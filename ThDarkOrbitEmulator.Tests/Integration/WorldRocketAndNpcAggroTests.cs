@@ -33,7 +33,7 @@ public sealed class WorldRocketAndNpcAggroTests
         clock.Advance(TimeSpan.FromSeconds(1));
         await npcs.TickLasersAsync(1, sessions, default);
         Assert.That((await npcs.VisibleAsync(1, default)).Single().Hp, Is.EqualTo(298));
-        await npcs.StopLaserAsync(pilot.UserId, default);
+        await npcs.StopLaserAsync(pilot, default);
         clock.Advance(TimeSpan.FromSeconds(2));
         await npcs.TickLasersAsync(1, sessions, default);
         Assert.That((await npcs.VisibleAsync(1, default)).Single().Hp, Is.EqualTo(298));

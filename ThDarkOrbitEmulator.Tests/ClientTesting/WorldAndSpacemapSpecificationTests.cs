@@ -3019,6 +3019,45 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task LaserStop_FromPreviousMap_DoesNotStopDestinationAttack()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var clock = new AdvancingClock();
+        var options = Options.Create(new WorldNpcOptions
+        {
+            LaserCooldownMilliseconds = 1000,
+            Templates = [new("Scout", "npc_scout", 1, 1000, 0, 0, 0, 0, 0, 0)]
+        });
+        var previous = new WorldNpcs(cache, mutex, new TestRewards(), options, clock);
+        var destination = new WorldNpcs(cache, mutex, new TestRewards(), options, clock);
+        var sessions = new WorldSessionStore(cache, mutex);
+        var stale = await sessions.EnterAsync(Pilot() with
+        {
+            AccountId = Guid.NewGuid(),
+            Stats = new WorldShipStats(300, 1000, 0, 100, 1, [])
+        }, default);
+        var target = destination.Spawn(2, clock.GetUtcNow()).Single();
+        await sessions.TeleportAsync(stale.UserId, 2, target.X, target.Y, false, default);
+        var current = await sessions.RestoreAsync(stale, default);
+        await destination.SelectAsync(current, target.Id, default);
+        await destination.StartLaserAsync(current, target.Id, default);
+
+        await previous.StopLaserAsync(stale, default);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await destination.TickLasersAsync(2, sessions, default);
+        Assert.That((await destination.VisibleAsync(2, default)).Single(n => n.Id == target.Id).Hp,
+            Is.EqualTo(999));
+
+        await destination.StopLaserAsync(current, default);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await previous.TickLasersAsync(2, sessions, default);
+        Assert.That((await destination.VisibleAsync(2, default)).Single(n => n.Id == target.Id).Hp,
+            Is.EqualTo(999));
+    }
+
+    [Test]
     public async Task AutoRocket_UsesSharedCooldownDuringSustainedLaserAcrossReplicas()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
