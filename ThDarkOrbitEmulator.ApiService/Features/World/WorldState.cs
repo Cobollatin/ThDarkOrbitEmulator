@@ -1662,19 +1662,22 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
 
     private async Task AnnounceHullHealAsync(WorldPilot pilot, long amount, CancellationToken ct)
     {
-        await BroadcastAsync(pilot, WorldCommandId.ShipHealCommand, WorldPayload.Encode(w =>
+        var payload = WorldPayload.Encode(w =>
         {
             WorldPayload.WriteInt64(w, pilot.UserId);
             WorldPayload.WriteInt64(w, amount);
             WorldPayload.WriteInt64(w, hitPoints[pilot.UserId]);
-        }), ct);
-        if (connections.ContainsKey(pilot.UserId)) await PrimeOwnHealAsync(pilot, ct);
+        });
         var healId = (await ReadOwnHealRuntimeAsync(pilot, ct))?.LastHealId;
-        if (healId is not null)
-            foreach (var observer in connections.Values.Where(c => c.Pilot.MapId == pilot.MapId
-                && c.Pilot.UserId != pilot.UserId
-                && (!WorldMapInstance.IsGate(pilot.MapId) || c.Pilot.AccountId == pilot.AccountId)))
-                connectedHeals.GetOrAdd(observer.Pilot.UserId, _ => new())[pilot.UserId] = healId;
+        foreach (var observer in connections.Values.Where(c => c.Pilot.MapId == pilot.MapId
+            && (!WorldMapInstance.IsGate(pilot.MapId) || c.Pilot.AccountId == pilot.AccountId)).ToArray())
+        {
+            try { await observer.SendAsync(WorldCommandId.ShipHealCommand, payload, ct); }
+            catch (IOException) { continue; }
+            if (healId is null) continue;
+            if (observer.Pilot.UserId == pilot.UserId) announcedOwnHeals[pilot.UserId] = healId;
+            else connectedHeals.GetOrAdd(observer.Pilot.UserId, _ => new())[pilot.UserId] = healId;
+        }
     }
 
     // Station activation is serialized with lease reassignment and shared pilot state.

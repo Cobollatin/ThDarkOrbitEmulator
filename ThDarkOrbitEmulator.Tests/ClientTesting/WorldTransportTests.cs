@@ -572,6 +572,51 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task FailedLocalHealWrites_ReplayToPilotAndObserver()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var clock = new AdvancingWorldClock();
+        var sessions = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), clock: clock);
+        var pilot = await sessions.EnterAsync(new WorldPilot(932, "pilot", 1, 1, "ship", 0, 0)
+        {
+            FactionId = 1, X = 2000, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await sessions.ApplyNpcDamageAsync(pilot, 1, 100, default, shieldAbsorption: 0);
+        var observer = await sessions.EnterAsync(pilot with { UserId = 933 }, default);
+        using var pilotWire = new FailFirstHealWriteStream();
+        using var observerWire = new FailFirstHealWriteStream();
+        var pilotConnection = new WorldConnection(pilot, new WorldPacketWriter(pilotWire));
+        var observerConnection = new WorldConnection(observer, new WorldPacketWriter(observerWire));
+        sessions.Attach(pilotConnection);
+        sessions.Attach(observerConnection);
+        await sessions.PrimeOwnHealAsync(pilot, default);
+        await sessions.ObserveRemotePilotsAsync(observer, observerConnection, default);
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        Assert.That(await sessions.RepairAtBaseAsync(pilot, clock.GetUtcNow(), default), Is.True);
+        Assert.That(pilotWire.Length, Is.Zero);
+        Assert.That(observerWire.Length, Is.Zero);
+        await sessions.ObserveOwnHealAsync(pilot, pilotConnection, default);
+        await Task.Delay(WorldSessionStore.RemoteSnapshotTtl + TimeSpan.FromMilliseconds(100));
+        await sessions.ObserveRemotePilotsAsync(observer, observerConnection, default);
+        await sessions.ObserveOwnHealAsync(pilot, pilotConnection, default);
+        await sessions.ObserveRemotePilotsAsync(observer, observerConnection, default);
+
+        foreach (var wire in new MemoryStream[] { pilotWire, observerWire })
+        {
+            wire.Position = 0;
+            var reader = new WorldPacketReader(wire);
+            var heal = await reader.ReadAsync();
+            Assert.That(heal?.Command, Is.EqualTo(WorldCommandId.ShipHealCommand));
+            Assert.That(WorldPayload.Decode(heal!.Value.Payload, r =>
+                (WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r))),
+                Is.EqualTo((932L, 100L, 1000L)));
+            Assert.That(await reader.ReadAsync(), Is.Null);
+        }
+    }
+
+    [Test]
     public async Task LocalHullHeal_DoesNotReplayToConnectedObserver()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
@@ -3116,6 +3161,21 @@ public class WorldTransportTests
     {
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
             base.ReadAsync(buffer[..Math.Min(buffer.Length, chunkSize)], cancellationToken);
+    }
+
+    private sealed class FailFirstHealWriteStream : MemoryStream
+    {
+        private bool failed;
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            if (!failed)
+            {
+                failed = true;
+                throw new IOException("Simulated heal delivery failure.");
+            }
+            return base.WriteAsync(buffer, cancellationToken);
+        }
     }
 
     private sealed class AdvancingWorldClock : TimeProvider
