@@ -678,6 +678,7 @@ public static class WorldHttpBridge
             await sessions.RepairAtBaseFencedAsync(pilot, DateTimeOffset.UtcNow, ct, fence);
         }
         catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
+        catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
         await WriteStateAsync(context, pilot, sessions, ct);
     }
 

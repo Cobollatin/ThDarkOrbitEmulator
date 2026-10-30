@@ -1391,7 +1391,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             {
                 var admittedMap = pilot.MapId;
                 pilot = await RefreshAsync(pilot, ct);
-                if (pilot.MapId != admittedMap) throw new WorldLeaseLostException();
+                if (pilot.MapId != admittedMap) throw new WorldMapChangedException();
             }
             await CheckLeaseAsync(pilot.MapId, fence, ct);
             var previous = travel.GetValueOrDefault(pilot.UserId);
@@ -1499,7 +1499,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             {
                 var admittedMap = pilot.MapId;
                 pilot = await RefreshAsync(pilot, ct);
-                if (pilot.MapId != admittedMap) throw new WorldLeaseLostException();
+                if (pilot.MapId != admittedMap) throw new WorldMapChangedException();
             }
             await CheckLeaseAsync(pilot.MapId, fence, ct);
             await RepairAtBaseAsync(pilot, now, ct);

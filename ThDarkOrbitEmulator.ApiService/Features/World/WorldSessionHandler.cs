@@ -246,7 +246,7 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                                     var move = await sessions.RetimeForLiveSpeedAsync(connected, ct, fence);
                                     if (move is not null) await sessions.BroadcastMoveAsync(connected, move, ct);
                                 }
-                                catch (WorldLeaseLostException)
+                                catch (Exception e) when (e is WorldLeaseLostException or WorldMapChangedException)
                                 {
                                     await RouteChangedAsync();
                                     readStop.Cancel();

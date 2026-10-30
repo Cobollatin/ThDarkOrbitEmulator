@@ -783,6 +783,32 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task StatePoll_FromPreviousMap_DoesNotRetimeOrRepairDestination()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var previous = new WorldSessionStore(cache, mutex);
+        var destination = new WorldSessionStore(cache, mutex);
+        var stale = await previous.EnterAsync(Pilot() with
+        {
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+        var current = await destination.TeleportAsync(stale.UserId, 2, 3000, 1300, false, default);
+        Assert.That(current, Is.Not.Null);
+        var moveId = destination.MoveId(current!);
+
+        Assert.ThrowsAsync<WorldMapChangedException>(
+            async () => await previous.RetimeForLiveSpeedAsync(stale, default));
+        Assert.ThrowsAsync<WorldMapChangedException>(
+            async () => await previous.RepairAtBaseFencedAsync(stale, DateTimeOffset.UtcNow, default, null));
+
+        var saved = (await destination.ConnectedAsync(2, default)).Single();
+        Assert.That((saved.X, saved.Y, destination.MoveId(saved)),
+            Is.EqualTo((3000, 1300, moveId)));
+    }
+
+    [Test]
     public async Task PortalJump_RecentNpcCombatBlocksAcrossReplicas_UntilWindowExpires()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
