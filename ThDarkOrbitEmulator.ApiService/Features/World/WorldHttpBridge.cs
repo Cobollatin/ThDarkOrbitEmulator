@@ -303,6 +303,7 @@ public static class WorldHttpBridge
         if (!JsonRequest(context)) { context.Response.StatusCode = 415; return; }
         var pilot = await PilotAsync(context, auth, resolver, sessions, ct);
         if (pilot is null) return;
+        var admittedMapId = pilot.MapId;
         MoveRequest request;
         try
         {
@@ -326,7 +327,8 @@ public static class WorldHttpBridge
         { context.Response.StatusCode = 400; return; }
         pilot = await sessions.GetOrEnterAsync(pilot, ct);
         await SetMeshHeadersAsync(context, pilot.MapId, ct);
-        if (request.MapId is not null && request.MapId != pilot.MapId)
+        var expectedMapId = request.MapId ?? admittedMapId;
+        if (expectedMapId != pilot.MapId)
         { await MapChangedAsync(context, pilot, sessions, ct); return; }
         WorldLeaseFence? fence;
         try { fence = await LeaseFenceAsync(context, pilot.MapId, ct); }
@@ -335,7 +337,7 @@ public static class WorldHttpBridge
         {
             WorldSwitchResult change;
             try { change = await sessions.SwitchAsync(pilot, newConfiguration, ct, fence: fence,
-                expectedMapId: request.MapId, expectedMoveId: request.ExpectedMoveId); }
+                expectedMapId: expectedMapId, expectedMoveId: request.ExpectedMoveId); }
             catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
             catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
             catch (WorldMoveChangedException) { await MoveChangedAsync(context, ct); return; }
@@ -356,7 +358,7 @@ public static class WorldHttpBridge
         }
         WorldMoveResult move;
         try { move = await sessions.MoveAsync(pilot, request.X, request.Y, null, ct,
-            fence: fence, expectedMapId: request.MapId, expectedMoveId: request.ExpectedMoveId); }
+            fence: fence, expectedMapId: expectedMapId, expectedMoveId: request.ExpectedMoveId); }
         catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
         catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
         catch (WorldMoveChangedException) { await MoveChangedAsync(context, ct); return; }

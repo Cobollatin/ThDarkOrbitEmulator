@@ -133,6 +133,28 @@ public sealed class WorldHttpBridgeTests
         Assert.That(saved, Does.Contain("\"MapId\":2"));
     }
 
+    [TestCase("{\"x\":8000,\"y\":5000}")]
+    [TestCase("{\"x\":8000,\"y\":5000,\"configuration\":2}")]
+    public async Task BrowserMove_WithoutMapIdFromPreviousReplica_DoesNotMoveDestination(string request)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new NpcMutex();
+        var oldMap = new WorldSessionStore(cache, mutex);
+        var destination = new WorldSessionStore(cache, mutex);
+        await SendAsync("GET", "enter", null, new Auth(), new Resolver(), oldMap);
+        await destination.TeleportAsync(73, 2, 3000, 1300, false, default);
+        var before = await cache.GetStringAsync("world:position:73");
+
+        var response = await SendAsync("POST", "move", request,
+            new Auth(), new Resolver(), oldMap);
+
+        Assert.That(response.Response.StatusCode, Is.EqualTo(409));
+        using var body = JsonDocument.Parse(Body(response));
+        Assert.That(body.RootElement.GetProperty("status").GetString(), Is.EqualTo("map_changed"));
+        Assert.That(await cache.GetStringAsync("world:position:73"), Is.EqualTo(before));
+    }
+
     [Test]
     public async Task BrowserJump_FromPreviousMap_IsRejectedWithoutChangingSavedMap()
     {
