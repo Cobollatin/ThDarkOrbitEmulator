@@ -762,7 +762,7 @@ public class WorldTransportTests
     }
 
     [Test]
-    public async Task FirstConnectedObserverPoll_DeliversHealAfterMapEntryOnce()
+    public async Task FirstConnectedObserverPoll_DeliversAllHealsAfterMapEntryOnce()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
         var cache = services.GetRequiredService<IDistributedCache>();
@@ -785,6 +785,8 @@ public class WorldTransportTests
 
         clock.Advance(TimeSpan.FromSeconds(10));
         await mapOwner.RecoverHullAsync(pilot.MapId, default);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await mapOwner.RecoverHullAsync(pilot.MapId, default);
         await socketNode.ObserveRemotePilotsAsync(observer, observerConnection, default);
         await socketNode.ObserveRemotePilotsAsync(observer, observerConnection, default);
 
@@ -795,6 +797,11 @@ public class WorldTransportTests
         Assert.That(WorldPayload.Decode(heal!.Value.Payload, r =>
             (WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r))),
             Is.EqualTo((940L, 25L, 925L)));
+        var second = await reader.ReadAsync();
+        Assert.That(second?.Command, Is.EqualTo(WorldCommandId.ShipHealCommand));
+        Assert.That(WorldPayload.Decode(second!.Value.Payload, r =>
+            (WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r))),
+            Is.EqualTo((940L, 25L, 950L)));
         Assert.That(await reader.ReadAsync(), Is.Null);
     }
 

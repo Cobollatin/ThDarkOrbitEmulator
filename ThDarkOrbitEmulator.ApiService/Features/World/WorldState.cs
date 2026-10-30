@@ -1281,7 +1281,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 var runtime = await ReadOwnHealRuntimeAsync(target, ct);
                 if (runtime is null) continue;
                 present.Add(target.UserId);
-                if (!announced.TryGetValue(target.UserId, out var last) && runtime.LastHealId is null)
+                if (!announced.TryGetValue(target.UserId, out var last))
                     announced.TryAdd(target.UserId, last = string.Empty);
                 foreach (var heal in UnannouncedHeals(runtime, last))
                 {
