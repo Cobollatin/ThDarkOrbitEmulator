@@ -435,6 +435,39 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task LaterLocalRepairBotChange_ReplaysEarlierFailedChange()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var clock = new AdvancingWorldClock();
+        var sessions = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), clock: clock);
+        var pilot = await sessions.EnterAsync(new WorldPilot(936, "pilot", 1, 1, "ship", 0, 0)
+        {
+            FactionId = 1, X = 5000, Y = 5000,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await sessions.ApplyNpcDamageAsync(pilot, 1, 100, default, shieldAbsorption: 0);
+        await sessions.PrimeOwnRepairBotAsync(pilot, default);
+        using var wire = new FailFirstHealWriteStream();
+        sessions.Attach(new WorldConnection(pilot, new WorldPacketWriter(wire)));
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await sessions.RecoverHullAsync(pilot.MapId, default);
+        await sessions.MarkCombatAsync(pilot, default);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.ShipHealCommand));
+        foreach (var active in new[] { true, false })
+        {
+            var packet = await reader.ReadAsync();
+            Assert.That(packet?.Command, Is.EqualTo(WorldCommandId.RepairBotStateCommand));
+            Assert.That(WorldPayload.Decode(packet!.Value.Payload, r =>
+                (WorldPayload.ReadInt64(r), r.ReadBoolean())), Is.EqualTo((pilot.UserId, active)));
+        }
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
     public async Task RemoteHullHeal_ReachesOwningPilotOnceAfterEntry()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

@@ -404,15 +404,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         await PersistRuntimeAsync(pilot, ct, repairBotEventId: eventId);
         if (connections.TryGetValue(pilot.UserId, out var connection) && connection.Pilot.MapId == pilot.MapId)
         {
-            try
-            {
-                await connection.SendAsync(WorldCommandId.RepairBotStateCommand, WorldPayload.Encode(w =>
-                {
-                    WorldPayload.WriteInt64(w, pilot.UserId);
-                    w.Write(active);
-                }), ct);
-                announcedRepairBots[pilot.UserId] = eventId;
-            }
+            try { await ObserveOwnRepairBotAsync(pilot, connection, ct); }
             catch (IOException) { }
         }
     }
