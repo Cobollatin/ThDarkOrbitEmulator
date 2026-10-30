@@ -719,6 +719,44 @@ public sealed class WorldHttpBridgeTests
         });
     }
 
+    [TestCase("launcher-auto")]
+    [TestCase("rocket-auto")]
+    public async Task BrowserAutoWeaponToggle_FromPreviousReplica_DoesNotChangeSharedSetting(string route)
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new NpcMutex();
+        var oldMap = new WorldSessionStore(cache, mutex);
+        var destination = new WorldSessionStore(cache, mutex);
+        var npcs = new WorldNpcs(cache, mutex, new NpcRewards(),
+            Options.Create(new WorldNpcOptions()), TimeProvider.System);
+        using var appServices = new ServiceCollection().AddSingleton(npcs).BuildServiceProvider();
+        var auth = new Auth(); var resolver = new Resolver(100);
+        await SendAsync("GET", "enter", null, auth, resolver, oldMap);
+        await destination.TeleportAsync(73, 2, 3000, 1300, false, default);
+
+        var stale = await SendAsync("POST", route, "{\"enabled\":true}",
+            auth, resolver, oldMap, services: appServices);
+
+        Assert.That(stale.Response.StatusCode, Is.EqualTo(409));
+        using var body = JsonDocument.Parse(Body(stale));
+        Assert.That(body.RootElement.GetProperty("status").GetString(), Is.EqualTo("map_changed"));
+        Assert.That((await npcs.LauncherStatusAsync(Session.GameUserId, default)).AutoFire, Is.False);
+        Assert.That(await npcs.AutoRocketEnabledAsync(Session.GameUserId, default), Is.False);
+
+        var admittedPilot = (await resolver.ResolveAsync(73, Session.Dosid, default)).Pilot!;
+        if (route == "launcher-auto")
+            Assert.ThrowsAsync<WorldMapChangedException>(async () =>
+                await npcs.SetAutoLauncherAsync(admittedPilot, true, oldMap, default, admittedPilot.MapId));
+        else
+            Assert.ThrowsAsync<WorldMapChangedException>(async () =>
+                await npcs.SetAutoRocketAsync(admittedPilot, true, oldMap, default, admittedPilot.MapId));
+
+        var accepted = await SendAsync("POST", route, "{\"enabled\":true}",
+            auth, resolver, destination, services: appServices);
+        Assert.That(accepted.Response.StatusCode, Is.EqualTo(200));
+    }
+
     [Test]
     public async Task BrowserCloakAction_ReportsBlockedMap()
     {

@@ -529,7 +529,10 @@ public static class WorldHttpBridge
         if (!JsonRequest(context)) { context.Response.StatusCode = 415; return; }
         var pilot = await PilotAsync(context, auth, resolver, sessions, ct);
         if (pilot is null) return;
+        var admittedMapId = pilot.MapId;
         pilot = await sessions.GetOrEnterAsync(pilot, ct);
+        if (pilot.MapId != admittedMapId)
+        { await MapChangedAsync(context, pilot, sessions, ct); return; }
         if (WorldMapInstance.IsGate(pilot.MapId))
         { context.Response.StatusCode = 409; return; }
         bool enabled;
@@ -542,7 +545,8 @@ public static class WorldHttpBridge
         }
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         { context.Response.StatusCode = 400; return; }
-        await npcs.SetAutoLauncherAsync(pilot.UserId, enabled, ct);
+        try { await npcs.SetAutoLauncherAsync(pilot, enabled, sessions, ct, admittedMapId); }
+        catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
         context.Response.Headers.CacheControl = "no-store";
         await context.Response.WriteAsJsonAsync(await npcs.LauncherStatusAsync(pilot.UserId, ct), ct);
     }
@@ -553,7 +557,10 @@ public static class WorldHttpBridge
         if (!JsonRequest(context)) { context.Response.StatusCode = 415; return; }
         var pilot = await PilotAsync(context, auth, resolver, sessions, ct);
         if (pilot is null) return;
+        var admittedMapId = pilot.MapId;
         pilot = await sessions.GetOrEnterAsync(pilot, ct);
+        if (pilot.MapId != admittedMapId)
+        { await MapChangedAsync(context, pilot, sessions, ct); return; }
         if (WorldMapInstance.IsGate(pilot.MapId))
         { context.Response.StatusCode = 409; return; }
         bool enabled;
@@ -566,7 +573,8 @@ public static class WorldHttpBridge
         }
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         { context.Response.StatusCode = 400; return; }
-        await npcs.SetAutoRocketAsync(pilot.UserId, enabled, ct);
+        try { await npcs.SetAutoRocketAsync(pilot, enabled, sessions, ct, admittedMapId); }
+        catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
         context.Response.Headers.CacheControl = "no-store";
         await context.Response.WriteAsJsonAsync(new { autoFire = enabled }, ct);
     }

@@ -108,6 +108,16 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         return enabled;
     }
 
+    public async Task<bool> SetAutoLauncherAsync(WorldPilot pilot, bool enabled,
+        WorldSessionStore sessions, CancellationToken ct, int expectedMapId)
+    {
+        await using var held = await mutex.AcquireAsync(ct);
+        pilot = await sessions.RestoreAsync(pilot, ct);
+        if (pilot.MapId != expectedMapId) throw new WorldMapChangedException();
+        await cache.SetStringAsync(LauncherAutoKey(pilot.UserId), enabled ? "1" : "0", Expiry, ct);
+        return enabled;
+    }
+
     private async Task<bool> AutoLauncherEnabledAsync(long userId, CancellationToken ct)
     {
         var stored = await cache.GetStringAsync(LauncherAutoKey(userId), ct);
@@ -118,6 +128,16 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
     {
         await using var held = await mutex.AcquireAsync(ct);
         await cache.SetStringAsync(RocketAutoKey(userId), enabled ? "1" : "0", Expiry, ct);
+        return enabled;
+    }
+
+    public async Task<bool> SetAutoRocketAsync(WorldPilot pilot, bool enabled,
+        WorldSessionStore sessions, CancellationToken ct, int expectedMapId)
+    {
+        await using var held = await mutex.AcquireAsync(ct);
+        pilot = await sessions.RestoreAsync(pilot, ct);
+        if (pilot.MapId != expectedMapId) throw new WorldMapChangedException();
+        await cache.SetStringAsync(RocketAutoKey(pilot.UserId), enabled ? "1" : "0", Expiry, ct);
         return enabled;
     }
 
