@@ -1531,11 +1531,12 @@ public sealed class WorldAndSpacemapSpecificationTests
     {
         using var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection()
             .AddDistributedMemoryCache().BuildServiceProvider();
-        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var clock = new AdvancingClock();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), clock: clock);
         var pilot = new WorldPilot(902, "mmo", 1, 1, "ship", 0, 0)
             { X = x, Y = 1300, Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
         await store.EnterAsync(pilot, default);
-        var now = DateTimeOffset.FromUnixTimeMilliseconds(200_000);
+        var now = clock.GetUtcNow();
         await store.MoveAsync(pilot, -1, 1300, null, default, now);
         await store.ApplyNpcDamageAsync(pilot, 1, 10, default, shieldAbsorption: 0);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(990));
@@ -1543,6 +1544,9 @@ public sealed class WorldAndSpacemapSpecificationTests
         await store.MoveAsync(pilot, x, 1300, null, default, now);
         Assert.That(store.CurrentPosition(pilot, now), Is.EqualTo((x, 1300)));
         Assert.That(store.Destination(pilot), Is.EqualTo((x, 1300)));
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(990));
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await store.RepairAtBaseAsync(pilot, clock.GetUtcNow(), default);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(inside ? 1000 : 990));
     }
 
@@ -1551,19 +1555,27 @@ public sealed class WorldAndSpacemapSpecificationTests
     {
         using var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection()
             .AddDistributedMemoryCache().BuildServiceProvider();
-        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingClock();
+        var store = new WorldSessionStore(cache, clock: clock);
         var pilot = new WorldPilot(903, "mmo", 1, 1, "ship", 0, 0)
             { Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
         await store.EnterAsync(pilot, default);
-        var now = DateTimeOffset.FromUnixTimeMilliseconds(300_000);
+        var now = clock.GetUtcNow();
         await store.MoveAsync(pilot, -1, 1300, null, default, now);
         await store.ApplyNpcDamageAsync(pilot, 1, 10, default, shieldAbsorption: 0);
         await store.MoveAsync(pilot, 2100, 1300, null, default, now);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(990));
         await store.RepairAtBaseAsync(pilot, now.AddMilliseconds(100), default);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(990));
-        await store.RepairAtBaseAsync(pilot, now.AddSeconds(1), default);
-        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(1000));
+        clock.Advance(TimeSpan.FromSeconds(9));
+        await store.RepairAtBaseAsync(pilot, clock.GetUtcNow(), default);
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(990));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var replica = new WorldSessionStore(cache, clock: clock);
+        var restored = await replica.RestoreAsync(pilot, default);
+        await replica.RepairAtBaseAsync(restored, clock.GetUtcNow(), default);
+        Assert.That(replica.CurrentHitPoints(restored), Is.EqualTo(1000));
     }
 
     [Test]
@@ -1571,17 +1583,24 @@ public sealed class WorldAndSpacemapSpecificationTests
     {
         using var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection()
             .AddDistributedMemoryCache().BuildServiceProvider();
-        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingClock();
+        var store = new WorldSessionStore(cache, clock: clock);
         var pilot = new WorldPilot(904, "mmo", 1, 1, "ship_pusat-plus", 0, 0)
             { Stats = new WorldShipStats(300, 1000, 500, 0, 0, []) };
         await store.EnterAsync(pilot, default);
         store.SetCurrentShield(pilot, 400);
 
-        await store.RepairAtBaseAsync(pilot, DateTimeOffset.UtcNow, default);
+        await store.MarkCombatAsync(pilot, default);
+        clock.Advance(TimeSpan.FromSeconds(9));
+        await store.RepairAtBaseAsync(pilot, clock.GetUtcNow(), default);
+        Assert.That(store.CurrentShield(pilot), Is.EqualTo(400));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await store.RepairAtBaseAsync(pilot, clock.GetUtcNow(), default);
 
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(1000));
         Assert.That(store.CurrentShield(pilot), Is.EqualTo(410));
-        var replica = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var replica = new WorldSessionStore(cache, clock: clock);
         var restored = await replica.RestoreAsync(pilot, default);
         Assert.That(restored.ShipId, Is.EqualTo("ship_pusat-plus"));
         Assert.That(replica.CurrentShield(restored), Is.EqualTo(410));

@@ -1472,6 +1472,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         if (current <= 0) return;
         var shield = CurrentShield(pilot);
         if (current >= stats.MaxHitPoints && shield >= stats.MaxShield) return;
+        if (await PortalCombatLockedAsync(pilot, ct)) return;
         if (current < stats.MaxHitPoints)
         {
             var repair = variables is null ? 0 : (long)await variables.NumberAsync("world.station.repair_hp_per_tick", ct);
