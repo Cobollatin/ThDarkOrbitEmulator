@@ -612,7 +612,10 @@ public static class WorldHttpBridge
         if (!JsonRequest(context)) { context.Response.StatusCode = 415; return; }
         var pilot = await PilotAsync(context, auth, resolver, sessions, ct);
         if (pilot is null) return;
+        var admittedMapId = pilot.MapId;
         pilot = await sessions.GetOrEnterAsync(pilot, ct);
+        if (pilot.MapId != admittedMapId)
+        { await MapChangedAsync(context, pilot, sessions, ct); return; }
         await SetMeshHeadersAsync(context, pilot.MapId, ct);
         bool active;
         try

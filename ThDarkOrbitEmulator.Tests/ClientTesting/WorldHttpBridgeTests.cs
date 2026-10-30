@@ -555,6 +555,27 @@ public sealed class WorldHttpBridgeTests
     }
 
     [Test]
+    public async Task BrowserCloakAction_FromPreviousMap_DoesNotCloakDestination()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new NpcMutex();
+        var oldMap = new WorldSessionStore(cache, mutex);
+        var destination = new WorldSessionStore(cache, mutex);
+        await SendAsync("GET", "enter", null, new Auth(), new Resolver(100), oldMap);
+        await destination.TeleportAsync(73, 2, 3000, 1300, false, default);
+
+        var response = await SendAsync("POST", "cloak", "{\"active\":true}",
+            new Auth(), new Resolver(100), oldMap);
+
+        Assert.That(response.Response.StatusCode, Is.EqualTo(409));
+        using var body = JsonDocument.Parse(Body(response));
+        Assert.That(body.RootElement.GetProperty("status").GetString(), Is.EqualTo("map_changed"));
+        Assert.That((await destination.ConnectedAsync(2, default)).Single().IsInvisible, Is.False);
+        Assert.That(await destination.CloakCooldownRemainingMsAsync(73, default), Is.Zero);
+    }
+
+    [Test]
     public async Task BrowserCloakAction_ValidatesBooleanAndSharesState()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
