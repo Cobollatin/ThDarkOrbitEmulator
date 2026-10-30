@@ -444,7 +444,7 @@ This is command-boundary fencing, not an atomic epoch check inside each distribu
 
 The emulator now reads shared runtime overrides during movement, configuration switching, portal jumping, base repair, radiation damage, NPC attack/reward handling, and collectible pickup. These values are emulator-defined balancing settings; no native Unity packet field for changing them has been confirmed. A changed movement multiplier applies on the next move or configuration switch. An already running travel trajectory retains its saved speed until then.
 
-The default value `0` for `world.radiation.damage_per_attempt` and `world.station.repair_hp_per_tick` preserves the prior percent-of-hull calculation; a positive value supplies an absolute amount. Runtime ship base-speed changes affect the next movement command for an already connected pilot. Browser world state reports the current speed, damage, station radius, and portal radius.
+The default value `0` for `world.radiation.damage_per_attempt` uses the percent-of-hull calculation; a positive value supplies an absolute amount. The default `0` for `world.station.repair_hp_per_tick` fills the eligible pilot's hull, while a positive value supplies a capped amount per check. Runtime ship base-speed changes affect the next movement command for an already connected pilot. Browser world state reports the current speed, damage, station radius, and portal radius.
 
 The provisional TCP entry packet now includes the effective station peace radius and ship speed/damage on connection or map entry. Changes made during an open socket are read at the next relevant command; no new native push packet for an admin change has been identified.
 

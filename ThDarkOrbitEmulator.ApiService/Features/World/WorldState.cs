@@ -1479,8 +1479,9 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         if (long.TryParse(lastRepair, out var lastRepairMs) &&
             now - DateTimeOffset.FromUnixTimeMilliseconds(lastRepairMs) < TimeSpan.FromSeconds(1)) return;
         var repair = variables is null ? 0 : (long)await variables.NumberAsync("world.station.repair_hp_per_tick", ct);
-        hitPoints[pilot.UserId] = Math.Min(stats.MaxHitPoints,
-            current + (repair > 0 ? repair : Math.Max(1, stats.MaxHitPoints / 50)));
+        hitPoints[pilot.UserId] = repair > 0
+            ? Math.Min(stats.MaxHitPoints, current + repair)
+            : stats.MaxHitPoints;
         await PersistRuntimeAsync(pilot, ct);
         await cache.SetStringAsync(StationRepairKey(pilot.UserId), now.ToUnixTimeMilliseconds().ToString(),
             new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);

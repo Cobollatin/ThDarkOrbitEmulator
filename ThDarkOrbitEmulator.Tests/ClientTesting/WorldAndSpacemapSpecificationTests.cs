@@ -1612,7 +1612,7 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
-    public async Task StationRepair_StatePollsShareOneSecondRepairIntervalAcrossReplicas()
+    public async Task StationRepair_HealsFullHullOnceAndPersistsAcrossReplicas()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
         var cache = services.GetRequiredService<IDistributedCache>();
@@ -1628,18 +1628,18 @@ public sealed class WorldAndSpacemapSpecificationTests
         var now = clock.GetUtcNow();
 
         await first.RepairAtBaseFencedAsync(pilot, now, default, null);
-        Assert.That(first.CurrentHitPoints(pilot), Is.EqualTo(920));
+        Assert.That(first.CurrentHitPoints(pilot), Is.EqualTo(1000));
         Assert.That(first.CurrentShield(pilot), Is.EqualTo(400));
         await first.RepairAtBaseFencedAsync(pilot, now, default, null);
         var second = new WorldSessionStore(cache, clock: clock);
         var restored = await second.RestoreAsync(pilot, default);
         await second.RepairAtBaseFencedAsync(restored, now.AddMilliseconds(999), default, null);
-        Assert.That(second.CurrentHitPoints(restored), Is.EqualTo(920));
+        Assert.That(second.CurrentHitPoints(restored), Is.EqualTo(1000));
         Assert.That(second.CurrentShield(restored), Is.EqualTo(400));
 
         clock.Advance(TimeSpan.FromSeconds(1));
         await second.RepairAtBaseFencedAsync(restored, clock.GetUtcNow(), default, null);
-        Assert.That(second.CurrentHitPoints(restored), Is.EqualTo(940));
+        Assert.That(second.CurrentHitPoints(restored), Is.EqualTo(1000));
         Assert.That(second.CurrentShield(restored), Is.EqualTo(400));
     }
 
