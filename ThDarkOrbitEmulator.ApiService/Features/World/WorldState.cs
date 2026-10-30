@@ -488,7 +488,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         if (announced is null) return history.Length > 0 ? [history[^1]] : [];
         if (announced.Length == 0) return history;
         var index = Array.FindLastIndex(history, heal => heal.Id == announced);
-        return index >= 0 ? history.Skip(index + 1) : history.Length > 0 ? [history[^1]] : [];
+        return index >= 0 ? history.Skip(index + 1) : history;
     }
 
     private static Task SendHealAsync(WorldConnection connection, long userId, WorldHealEvent heal,
