@@ -68,6 +68,33 @@ public sealed class WorldHttpBridgeTests
             Assert.That(body.RootElement.GetProperty("stationRepairApplied").GetBoolean(), Is.False);
     }
 
+    [Test]
+    public async Task StationRepair_ConsecutiveActionsApplyConfiguredPartialHeal()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var clock = new ManualClock();
+        var variables = new SpeedVariables { StationRepairAmount = 20 };
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(),
+            clock: clock, variables: variables);
+        var station = WorldMapInstance.Starter(1).HomeStation;
+        var pilot = await store.EnterAsync(new WorldPilot(73, "mmo", 1, 1, "ship_pusat-plus", 0, 0)
+        {
+            FactionId = 1, X = station.X, Y = station.Y,
+            Stats = new WorldShipStats(370, 1000, 500, 0, 0, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 100, 100, default, shieldAbsorption: 0);
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(900));
+        clock.Now += TimeSpan.FromSeconds(11);
+
+        var now = clock.GetUtcNow();
+        var first = await store.RepairAtBaseFencedAsync(pilot, now, default, null);
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(920));
+        var second = await store.RepairAtBaseFencedAsync(pilot, now, default, null);
+        Assert.That(first, Is.True);
+        Assert.That(second, Is.True);
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(940));
+    }
+
     [TestCase("application/json; charset=utf-8")]
     [TestCase("APPLICATION/JSON")]
     public async Task Move_AcceptsExactJsonMediaTypeWithCaseAndParameters(string contentType)
@@ -88,6 +115,7 @@ public sealed class WorldHttpBridgeTests
         public double StreunerCount = 1;
         public double ConfigurationCooldown = 1;
         public double PortalJumpRadius = 1;
+        public double StationRepairAmount = 0;
         public IReadOnlyList<RuntimeVariable> Catalog => [];
         public Task<double> NumberAsync(string key, CancellationToken ct = default) =>
             Task.FromResult(key == "world.movement.speed_multiplier" ? Multiplier :
@@ -100,6 +128,7 @@ public sealed class WorldHttpBridgeTests
                 key == "world.spawn.streuner_count" ? StreunerCount :
                 key == "world.config.switch_cooldown_ms" ? ConfigurationCooldown :
                 key == "world.portal.jump_radius" ? PortalJumpRadius :
+                key == "world.station.repair_hp_per_tick" ? StationRepairAmount :
                 key == "world.spawn.lordakia_count" || key == "world.spawn.saimon_count" ? 0d :
                 key == "economy.credits_reward_multiplier" ? CreditsReward : 1d);
         public Task<IReadOnlyList<RuntimeVariable>> ListAsync(CancellationToken ct = default) => throw new NotSupportedException();

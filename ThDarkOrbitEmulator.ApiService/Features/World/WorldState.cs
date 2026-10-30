@@ -256,7 +256,6 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         $"world:respawn-cooldown:{userId}:{location}";
     private static string ShieldRecoveryKey(long userId) => $"world:shield-recovery:{userId}";
     private static string HullRecoveryKey(long userId) => $"world:hull-recovery:{userId}";
-    private static string StationRepairKey(long userId) => $"world:station-repair:{userId}";
     private static string PresenceKey(int mapId) => $"world:presence:map:{mapId}";
     private static readonly TimeSpan PortalCombatWindow = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan CloakActivationCooldown = TimeSpan.FromSeconds(20);
@@ -1473,16 +1472,11 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         if (current <= 0) return false;
         if (current >= stats.MaxHitPoints) return false;
         if (await PortalCombatLockedAsync(pilot, ct)) return false;
-        var lastRepair = await cache.GetStringAsync(StationRepairKey(pilot.UserId), ct);
-        if (long.TryParse(lastRepair, out var lastRepairMs) &&
-            now - DateTimeOffset.FromUnixTimeMilliseconds(lastRepairMs) < TimeSpan.FromSeconds(1)) return false;
         var repair = variables is null ? 0 : (long)await variables.NumberAsync("world.station.repair_hp_per_tick", ct);
         hitPoints[pilot.UserId] = repair > 0
             ? Math.Min(stats.MaxHitPoints, current + repair)
             : stats.MaxHitPoints;
         await PersistRuntimeAsync(pilot, ct);
-        await cache.SetStringAsync(StationRepairKey(pilot.UserId), now.ToUnixTimeMilliseconds().ToString(),
-            new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);
         return true;
     }
 
