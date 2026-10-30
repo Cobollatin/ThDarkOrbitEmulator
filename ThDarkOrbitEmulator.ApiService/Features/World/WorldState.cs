@@ -1259,14 +1259,17 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         {
             var announced = connectedHeals.GetOrAdd(observer.UserId, _ => new());
             var present = new HashSet<long>();
-            foreach (var (entry, _, runtime) in snapshot.Entries)
+            foreach (var (entry, _, _) in snapshot.Entries)
             {
                 var target = entry.Pilot;
                 if (target.UserId == observer.UserId
                     || !connections.TryGetValue(target.UserId, out var local)
-                    || local.Pilot.MapId != observer.MapId || runtime?.MapId != observer.MapId
+                    || local.Pilot.MapId != observer.MapId
                     || WorldMapInstance.IsGate(observer.MapId) && target.AccountId != observer.AccountId)
                     continue;
+                // The map snapshot can predate a heal already delivered by the local socket.
+                var runtime = await ReadOwnHealRuntimeAsync(target, ct);
+                if (runtime is null) continue;
                 present.Add(target.UserId);
                 if (announced.TryAdd(target.UserId, runtime.LastHealId ?? string.Empty)) continue;
                 announced.TryGetValue(target.UserId, out var last);
