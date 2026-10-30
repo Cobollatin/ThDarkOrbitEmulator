@@ -3769,6 +3769,37 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task NpcCommands_RefreshedPilotStillRejectsPreviousAdmissionMap()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var sessions = new WorldSessionStore(cache, mutex);
+        var npcs = new WorldNpcs(cache, mutex, new TestRewards(),
+            Options.Create(new WorldNpcOptions
+            {
+                Templates = [new("Scout", "npc_scout", 1, 100, 0, 0, 0, 0, 0, 0)]
+            }), new TestClock());
+        var admitted = await sessions.EnterAsync(Pilot() with
+        {
+            AccountId = Guid.NewGuid(),
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+        var target = npcs.Spawn(2, DateTimeOffset.UtcNow).Single();
+        await sessions.TeleportAsync(admitted.UserId, 2, target.X, target.Y, false, default);
+        var refreshed = await sessions.RestoreAsync(admitted, default);
+
+        Assert.ThrowsAsync<WorldMapChangedException>(async () =>
+            await npcs.SelectAsync(refreshed, target.Id, default,
+                sessions: sessions, expectedMapId: admitted.MapId));
+        Assert.That(await cache.GetStringAsync($"world:npc:target:{admitted.UserId}"), Is.Null);
+        Assert.ThrowsAsync<WorldMapChangedException>(async () =>
+            await npcs.AttackAsync(refreshed, target.Id, sessions, default,
+                expectedMapId: admitted.MapId));
+        Assert.That((await npcs.VisibleAsync(2, default)).Single().Hp, Is.EqualTo(100));
+    }
+
+    [Test]
     public async Task NpcPulse_FromPreviousMap_DoesNotChargeOrDamageDestinationTargets()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

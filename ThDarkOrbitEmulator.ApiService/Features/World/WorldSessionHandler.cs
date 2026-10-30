@@ -407,11 +407,12 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                     }
                     if (packet.Value.Command == WorldCommandId.SelectShipRequest && (npcs is not null || gates is not null))
                     {
+                        var admittedMapId = connected.MapId;
                         if (npcs is not null) await npcs.StopLaserAsync(connected, ct);
                         var id = WorldPayload.Decode(packet.Value.Payload, WorldPayload.ReadInt32);
                         var target = WorldMapInstance.IsGate(connected.MapId)
-                            ? gates is null ? null : await gates.SelectAsync(connected, id, sessions!, ct)
-                            : npcs is null ? null : await npcs.SelectAsync(connected, id, ct, fence, sessions);
+                            ? gates is null ? null : await gates.SelectAsync(connected, id, sessions!, ct, admittedMapId)
+                            : npcs is null ? null : await npcs.SelectAsync(connected, id, ct, fence, sessions, admittedMapId);
                         selectedNpcId = target?.Id;
                         await connection!.SendAsync(WorldCommandId.TargetLockCommand, WorldPayload.Encode(w =>
                         {
@@ -448,9 +449,9 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                             continue;
                         }
                         var hit = WorldMapInstance.IsGate(connected.MapId)
-                            ? gates is null ? new WorldNpcAttack("missing") : await gates.AttackAsync(connected, id, sessions, ct)
+                            ? gates is null ? new WorldNpcAttack("missing") : await gates.AttackAsync(connected, id, sessions, ct, admittedMapId)
                             : await npcs!.AttackAsync(connected, id, sessions, ct, fence,
-                                rocket: packet.Value.Command == WorldCommandId.RocketFireRequest);
+                                admittedMapId, rocket: packet.Value.Command == WorldCommandId.RocketFireRequest);
                         if (hit.Status != "hit")
                         {
                             await SendLaserFireResultAsync(connection!, id, hit.Status, ct);

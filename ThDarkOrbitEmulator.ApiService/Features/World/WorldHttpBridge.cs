@@ -500,7 +500,7 @@ public static class WorldHttpBridge
         try { target = WorldMapInstance.IsGate(pilot.MapId)
             ? await context.RequestServices.GetRequiredService<WorldGateCombat>().SelectAsync(pilot, id, sessions, ct, admittedMapId)
             : await npcs.SelectAsync(pilot, id, ct,
-                await LeaseFenceAsync(context, pilot.MapId, ct), sessions, expectedMapId); }
+                await LeaseFenceAsync(context, pilot.MapId, ct), sessions, admittedMapId); }
         catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
         catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
         if (target is null) { context.Response.StatusCode = 404; return; }
@@ -597,7 +597,7 @@ public static class WorldHttpBridge
         try { result = WorldMapInstance.IsGate(pilot.MapId)
             ? await context.RequestServices.GetRequiredService<WorldGateCombat>().AttackAsync(pilot, id, sessions, ct, admittedMapId)
             : await npcs.AttackAsync(pilot, id, sessions, ct,
-                await LeaseFenceAsync(context, pilot.MapId, ct), expectedMapId, rocket,
+                await LeaseFenceAsync(context, pilot.MapId, ct), admittedMapId, rocket,
                 launcher: launcher); }
         catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
         catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
