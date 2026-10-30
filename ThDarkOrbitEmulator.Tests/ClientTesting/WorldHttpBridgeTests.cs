@@ -192,6 +192,34 @@ public sealed class WorldHttpBridgeTests
     }
 
     [Test]
+    public async Task BrowserRespawn_FromPreviousReplica_DoesNotUseDestinationRepairChoice()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new NpcMutex();
+        var oldMap = new WorldSessionStore(cache, mutex);
+        var destination = new WorldSessionStore(cache, mutex);
+        var auth = new Auth();
+        var resolver = new Resolver();
+        await SendAsync("GET", "enter", null, auth, resolver, oldMap);
+        var resolved = (await resolver.ResolveAsync(73, Session.Dosid, default)).Pilot!;
+        var stale = await oldMap.GetOrEnterAsync(resolved, default);
+        await oldMap.ApplyNpcDamageAsync(stale, 1, 300000, default);
+        await destination.TeleportAsync(73, 2, 3000, 1300, false, default);
+
+        var response = await SendAsync("POST", "respawn", "{\"location\":\"base\"}",
+            auth, resolver, oldMap);
+
+        Assert.That(response.Response.StatusCode, Is.EqualTo(409));
+        using var body = JsonDocument.Parse(Body(response));
+        Assert.That(body.RootElement.GetProperty("status").GetString(), Is.EqualTo("map_changed"));
+        Assert.That(await destination.SavedMapAsync(73, default), Is.EqualTo(2));
+        var current = await destination.GetOrEnterAsync(resolved, default);
+        Assert.That(destination.CurrentHitPoints(current), Is.Zero);
+        Assert.That(await destination.RespawnAsync(current, WorldRespawnLocation.Base, default), Is.Not.Null);
+    }
+
+    [Test]
     public async Task BrowserCollect_FromPreviousMap_IsRejectedBeforeReward()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
@@ -2083,6 +2111,7 @@ public sealed class WorldHttpBridgeTests
             case "move": await WorldHttpBridge.MoveAsync(context, auth, resolver, store, default); break;
             case "config": await WorldHttpBridge.ConfigAsync(context, auth, resolver, store, default); break;
             case "jump": await WorldHttpBridge.JumpAsync(context, auth, resolver, store, default); break;
+            case "respawn": await WorldHttpBridge.RespawnAsync(context, auth, resolver, store, default); break;
             case "collect": await WorldHttpBridge.CollectAsync(context, auth, resolver, store,
                 services!.GetRequiredService<WorldCollectibles>(), default); break;
             case "target": await WorldHttpBridge.TargetAsync(context, auth, resolver, store,

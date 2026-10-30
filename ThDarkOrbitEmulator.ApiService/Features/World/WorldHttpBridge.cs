@@ -425,7 +425,10 @@ public static class WorldHttpBridge
         { context.Response.StatusCode = 400; return; }
         var pilot = await PilotAsync(context, auth, resolver, sessions, ct);
         if (pilot is null) return;
+        var admittedMapId = pilot.MapId;
         pilot = await sessions.GetOrEnterAsync(pilot, ct);
+        if (pilot.MapId != admittedMapId)
+        { await MapChangedAsync(context, pilot, sessions, ct); return; }
         await SetMeshHeadersAsync(context, pilot.MapId, ct);
         WorldPilot? respawned;
         try { respawned = await sessions.RespawnAsync(pilot, location, ct,
