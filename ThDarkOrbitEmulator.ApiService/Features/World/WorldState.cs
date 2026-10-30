@@ -1248,12 +1248,12 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             finally { connection.HealDeliveryGate.Release(); }
             if (!cloaks.TryGetValue(remote.UserId, out var announced) || announced != remote.IsInvisible)
             {
-                cloaks[remote.UserId] = remote.IsInvisible;
                 await connection.SendAsync(WorldCommandId.CloakStateCommand, WorldPayload.Encode(w =>
                 {
                     WorldPayload.WriteInt64(w, remote.UserId);
                     w.Write(remote.IsInvisible);
                 }), ct);
+                cloaks[remote.UserId] = remote.IsInvisible;
             }
         }
         foreach (var id in visible.Keys.Where(id => !present.Contains(id)).ToArray())

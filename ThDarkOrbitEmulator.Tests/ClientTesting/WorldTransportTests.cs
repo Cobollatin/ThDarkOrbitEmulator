@@ -320,6 +320,41 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task FailedRemoteCloakWrite_IsRetriedOnce()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var owner = new WorldSessionStore(cache);
+        var observerNode = new WorldSessionStore(cache);
+        var pilot = await owner.EnterAsync(new WorldPilot(949, "remote", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
+        var observer = pilot with { UserId = 950 };
+        using var wire = new FailNextWriteStream();
+        var connection = new WorldConnection(observer, new WorldPacketWriter(wire));
+        await observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+
+        pilot = await owner.SetCloakAsync(pilot, true, default);
+        await Task.Delay(WorldSessionStore.RemoteSnapshotTtl + TimeSpan.FromMilliseconds(100));
+        wire.FailNext();
+        Assert.ThrowsAsync<IOException>(async () =>
+            await observerNode.ObserveRemotePilotsAsync(observer, connection, default));
+        await observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+        await observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.PilotCreateCommand));
+        foreach (var active in new[] { false, true })
+        {
+            var packet = await reader.ReadAsync();
+            Assert.That(packet?.Command, Is.EqualTo(WorldCommandId.CloakStateCommand));
+            Assert.That(WorldPayload.Decode(packet!.Value.Payload, r =>
+                (WorldPayload.ReadInt64(r), r.ReadBoolean())), Is.EqualTo((949L, active)));
+        }
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
     public async Task RemoteStationHeal_ReachesVisibleObserverOnce()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
@@ -3602,6 +3637,22 @@ public class WorldTransportTests
             {
                 failed = true;
                 throw new IOException("Simulated heal delivery failure.");
+            }
+            return base.WriteAsync(buffer, cancellationToken);
+        }
+    }
+
+    private sealed class FailNextWriteStream : MemoryStream
+    {
+        private bool failNext;
+        public void FailNext() => failNext = true;
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            if (failNext)
+            {
+                failNext = false;
+                throw new IOException("Simulated packet delivery failure.");
             }
             return base.WriteAsync(buffer, cancellationToken);
         }
