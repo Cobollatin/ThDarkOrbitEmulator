@@ -427,6 +427,7 @@ public static class WorldHttpBridge
         try { respawned = await sessions.RespawnAsync(pilot, location, ct,
             await LeaseFenceAsync(context, pilot.MapId, ct)); }
         catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
+        catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
         if (respawned is null) { context.Response.StatusCode = 409; return; }
         await SetMeshHeadersAsync(context, respawned.MapId, ct);
         await WriteStateAsync(context, respawned, sessions, ct);

@@ -759,6 +759,30 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task Repair_FromPreviousMap_DoesNotSpendDestinationRepairChoice()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var previous = new WorldSessionStore(cache, mutex);
+        var destination = new WorldSessionStore(cache, mutex);
+        var stale = await previous.EnterAsync(Pilot() with
+        {
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+        await previous.ApplyNpcDamageAsync(stale, 1, 1200, default);
+        var current = await destination.TeleportAsync(stale.UserId, 2, 3000, 1300, false, default);
+        Assert.That(current, Is.Not.Null);
+
+        Assert.ThrowsAsync<WorldMapChangedException>(
+            async () => await previous.RespawnAsync(stale, WorldRespawnLocation.Base, default));
+        Assert.That(await destination.SavedMapAsync(stale.UserId, default), Is.EqualTo(2));
+        var repaired = await destination.RespawnAsync(current!, WorldRespawnLocation.Base, default);
+        Assert.That(repaired?.MapId, Is.EqualTo(1));
+        Assert.That(await destination.RespawnAsync(repaired!, WorldRespawnLocation.Base, default), Is.Null);
+    }
+
+    [Test]
     public async Task PortalJump_RecentNpcCombatBlocksAcrossReplicas_UntilWindowExpires()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

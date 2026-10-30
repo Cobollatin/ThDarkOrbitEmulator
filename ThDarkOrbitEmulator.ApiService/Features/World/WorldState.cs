@@ -1588,7 +1588,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             await CheckLeaseAsync(pilot.MapId, fence, ct);
             var admittedMap = pilot.MapId;
             pilot = await RefreshAsync(pilot, ct);
-            if (pilot.MapId != admittedMap) throw new WorldLeaseLostException();
+            if (pilot.MapId != admittedMap) throw new WorldMapChangedException();
             if (CurrentHitPoints(pilot) > 0)
             {
                 if (repairWallet is null || pilot.AccountId == Guid.Empty
