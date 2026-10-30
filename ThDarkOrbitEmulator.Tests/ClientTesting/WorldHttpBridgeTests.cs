@@ -156,6 +156,32 @@ public sealed class WorldHttpBridgeTests
     }
 
     [Test]
+    public async Task BrowserConfig_WithoutMapIdFromPreviousReplica_DoesNotSwitchDestination()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new NpcMutex();
+        var oldMap = new WorldSessionStore(cache, mutex);
+        var destination = new WorldSessionStore(cache, mutex);
+        var auth = new Auth(); var resolver = new Resolver();
+        await SendAsync("GET", "enter", null, auth, resolver, oldMap);
+        await destination.TeleportAsync(73, 2, 3000, 1300, false, default);
+
+        var stale = await SendAsync("POST", "config", "{\"configuration\":2}",
+            auth, resolver, oldMap);
+
+        Assert.That(stale.Response.StatusCode, Is.EqualTo(409));
+        using var body = JsonDocument.Parse(Body(stale));
+        Assert.That(body.RootElement.GetProperty("status").GetString(), Is.EqualTo("map_changed"));
+        Assert.That(destination.Configuration(73), Is.EqualTo(1));
+
+        var accepted = await SendAsync("POST", "config", "{\"configuration\":2}",
+            auth, resolver, destination);
+        Assert.That(accepted.Response.StatusCode, Is.EqualTo(200));
+        Assert.That(destination.Configuration(73), Is.EqualTo(2));
+    }
+
+    [Test]
     public async Task BrowserJump_FromPreviousMap_IsRejectedWithoutChangingSavedMap()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
