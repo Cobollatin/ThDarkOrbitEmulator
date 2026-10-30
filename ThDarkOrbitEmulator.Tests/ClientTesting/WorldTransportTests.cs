@@ -266,7 +266,8 @@ public class WorldTransportTests
         {
             Assert.That(counting.Reads.Count(k => k == "world:presence:map:1"), Is.EqualTo(1));
             Assert.That(counting.Reads.Count(k => k == "world:position:811"), Is.EqualTo(1));
-            Assert.That(counting.Reads.Count(k => k == "world:runtime:811"), Is.EqualTo(1));
+            Assert.That(counting.Reads.Count(k => k == "world:runtime:811"), Is.EqualTo(4),
+                "Each first visibility poll reads current heal history after the shared snapshot.");
             Assert.That(sent.Count(s => s == WorldCommandId.PilotCreateCommand), Is.EqualTo(3));
             Assert.That(sent.Count(s => s == WorldCommandId.MoveCommand), Is.EqualTo(3));
         });
@@ -752,6 +753,45 @@ public class WorldTransportTests
                 (WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r))),
                 Is.EqualTo((938L, 25L, hull)));
         }
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
+    public async Task FirstRemoteObserverPoll_ReplaysHealNewerThanCachedMapSnapshot()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingWorldClock();
+        var mapOwner = new WorldSessionStore(cache, clock: clock);
+        var socketNode = new WorldSessionStore(cache, clock: clock);
+        var pilot = await mapOwner.EnterAsync(new WorldPilot(944, "pilot", 1, 1, "ship", 0, 0)
+        {
+            FactionId = 1, X = 5000, Y = 5000,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await mapOwner.ApplyNpcDamageAsync(pilot, 1, 100, default, shieldAbsorption: 0);
+        var firstObserver = pilot with { UserId = 945 };
+        using var firstWire = new MemoryStream();
+        await socketNode.ObserveRemotePilotsAsync(firstObserver,
+            new WorldConnection(firstObserver, new WorldPacketWriter(firstWire)), default);
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await mapOwner.RecoverHullAsync(pilot.MapId, default);
+        var secondObserver = pilot with { UserId = 946 };
+        using var wire = new MemoryStream();
+        var connection = new WorldConnection(secondObserver, new WorldPacketWriter(wire));
+        await socketNode.ObserveRemotePilotsAsync(secondObserver, connection, default);
+        await socketNode.ObserveRemotePilotsAsync(secondObserver, connection, default);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.PilotCreateCommand));
+        var heal = await reader.ReadAsync();
+        Assert.That(heal?.Command, Is.EqualTo(WorldCommandId.ShipHealCommand));
+        Assert.That(WorldPayload.Decode(heal!.Value.Payload, r =>
+            (WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r))),
+            Is.EqualTo((944L, 25L, 925L)));
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.CloakStateCommand));
         Assert.That(await reader.ReadAsync(), Is.Null);
     }
 

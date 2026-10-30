@@ -1,4 +1,6 @@
-# Reference parity — iteration 198
+# Reference parity — iteration 199
+
+Iteration 199 delivers a remote pilot's heals on an observer's first visibility poll when the map membership snapshot predates the heal. The observer uses the snapshot's last heal as its baseline, then reads current shared heal history after creating the pilot and sends each newer event once. A focused transport test covers a snapshot cached by another observer, one recovery tick, and duplicate suppression. The older server's heal reporting motivates this local behavior; `Darkorbit-client` supplies no installed Unity heal command or timing.
 
 Iteration 198 replays all 16 retained hull heals when an owning pilot's last delivered event has fallen out of bounded history. The previous fallback sent only the newest event, skipping still available recovery ticks after a slow socket poll. A focused transport test covers rollover order and confirms a second poll sends no duplicate. Older server heal reporting motivates this local behavior; the installed Unity command and timing remain unverified.
 
