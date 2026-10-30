@@ -762,6 +762,43 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task FirstConnectedObserverPoll_DeliversHealAfterMapEntryOnce()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingWorldClock();
+        var mapOwner = new WorldSessionStore(cache, clock: clock);
+        var socketNode = new WorldSessionStore(cache, clock: clock);
+        var pilot = await mapOwner.EnterAsync(new WorldPilot(940, "pilot", 1, 1, "ship", 0, 0)
+        {
+            FactionId = 1, X = 5000, Y = 5000,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await mapOwner.ApplyNpcDamageAsync(pilot, 1, 100, default, shieldAbsorption: 0);
+        await socketNode.EnterAsync(pilot, default);
+        var observer = await socketNode.EnterAsync(pilot with { UserId = 941 }, default);
+        using var pilotWire = new MemoryStream();
+        using var observerWire = new MemoryStream();
+        socketNode.Attach(new WorldConnection(pilot, new WorldPacketWriter(pilotWire)));
+        var observerConnection = new WorldConnection(observer, new WorldPacketWriter(observerWire));
+        socketNode.Attach(observerConnection);
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await mapOwner.RecoverHullAsync(pilot.MapId, default);
+        await socketNode.ObserveRemotePilotsAsync(observer, observerConnection, default);
+        await socketNode.ObserveRemotePilotsAsync(observer, observerConnection, default);
+
+        observerWire.Position = 0;
+        var reader = new WorldPacketReader(observerWire);
+        var heal = await reader.ReadAsync();
+        Assert.That(heal?.Command, Is.EqualTo(WorldCommandId.ShipHealCommand));
+        Assert.That(WorldPayload.Decode(heal!.Value.Payload, r =>
+            (WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r))),
+            Is.EqualTo((940L, 25L, 925L)));
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
     public async Task FailedLocalHealWrites_ReplayToPilotAndObserver()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
