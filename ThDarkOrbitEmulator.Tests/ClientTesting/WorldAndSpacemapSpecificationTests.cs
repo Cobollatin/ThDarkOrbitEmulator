@@ -2533,7 +2533,8 @@ public sealed class WorldAndSpacemapSpecificationTests
         var box = (await collectibles.VisibleAsync(1, default)).First();
         var pilot = await sessions.EnterAsync(Pilot() with
         {
-            AccountId = Guid.NewGuid(), X = box.X, Y = box.Y
+            AccountId = Guid.NewGuid(), X = box.X, Y = box.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
         }, default);
 
         Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -2541,6 +2542,32 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That((await collectibles.VisibleAsync(1, default)).Any(item => item.Id == box.Id), Is.False);
         Assert.That((await collectibles.CollectAsync(pilot, box.Id, sessions, default)).Status,
             Is.EqualTo("claimed"));
+        Assert.That(wallet.CreditCalls, Is.EqualTo(1));
+    }
+
+    [Test]
+    public async Task CollectiblePickup_FromPreviousMap_DoesNotClaimDestinationBox()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var wallet = new FailingCollectibleWallet { ThrowOnCredit = false };
+        var collectibles = new WorldCollectibles(cache, mutex, wallet, new TestClock());
+        var sessions = new WorldSessionStore(cache, mutex);
+        var destination = new WorldSessionStore(cache, mutex);
+        var box = (await collectibles.VisibleAsync(2, default)).First();
+        var stale = await sessions.EnterAsync(Pilot() with
+        {
+            AccountId = Guid.NewGuid(), Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+        var current = await destination.TeleportAsync(stale.UserId, 2, box.X, box.Y, false, default);
+
+        Assert.ThrowsAsync<WorldMapChangedException>(async () =>
+            await collectibles.CollectAsync(stale, box.Id, sessions, default));
+        Assert.That(wallet.CreditCalls, Is.Zero);
+        Assert.That((await collectibles.VisibleAsync(2, default)).Any(item => item.Id == box.Id), Is.True);
+        Assert.That((await collectibles.CollectAsync(current!, box.Id, destination, default)).Status,
+            Is.EqualTo("collected"));
         Assert.That(wallet.CreditCalls, Is.EqualTo(1));
     }
 

@@ -83,6 +83,7 @@ public sealed class WorldCollectibles(IDistributedCache cache, IServerMeshMutex 
         if (fence is not null && pilot.MapId != mapId) throw new WorldLeaseLostException();
         if (expectedMapId is not null && pilot.MapId != expectedMapId)
             throw new WorldMapChangedException();
+        if (pilot.MapId != mapId) throw new WorldMapChangedException();
         if (sessions.CurrentHitPoints(pilot) <= 0) return new("destroyed_pilot");
         var cycle = await CycleAsync(ct);
         var count = variables is null ? 6 : (int)await variables.NumberAsync("world.spawn.bonus_box_count", ct);
