@@ -6,8 +6,9 @@ using ThDarkOrbitEmulator.Identity.Application;
 
 namespace ThDarkOrbitEmulator.ApiService.Features.Resources.Maps;
 
-// Provisional map catalogue: the installed client names MapsPattern.ID and
-// MapsPattern.GameServerIP, but no response body has been captured.
+// Map catalogue in the official shape (<map id="N"><gameserverIP>host:port</gameserverIP></map>),
+// taken from a client-cached maps.xml dated 2026-03-31. The Unity client's MapsPattern.Parse
+// throws NullReferenceException on the attribute-only form.
 public static class LocalMapsXml
 {
     public const string ContentType = "application/xml; charset=utf-8";
@@ -91,8 +92,8 @@ public static class LocalMapsXml
             new XDeclaration("1.0", "utf-8", null),
             new XElement("maps", Maps.Select(map =>
                 new XElement("map",
-                    new XAttribute("ID", map.Id),
-                    new XAttribute("GameServerIP", servers[map.Id])))));
+                    new XAttribute("id", map.Id),
+                    new XElement("gameserverIP", servers[map.Id])))));
         return document.Declaration + document.Root!.ToString(SaveOptions.DisableFormatting);
     }
 }

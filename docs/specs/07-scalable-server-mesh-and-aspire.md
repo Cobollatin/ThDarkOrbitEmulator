@@ -82,7 +82,7 @@ Preconditions are checked against a single snapshot read and are not re-checked 
 
 ## 10. Provisional Map XML Resource
 
-`GET /xml/maps.php` and `GET /xml/maps.xml` are anonymous aliases tagged for `gbl3.darkorbit.com`. Both delegate to `LocalMapsXml.WriteResponseAsync` with the configured world listener and a read-only mesh snapshot; neither uses a game-auth session. Their shape is provisional because no official response body has been captured.
+`GET /xml/maps.php` and `GET /xml/maps.xml` (also served under the client's `/spacemap` basePath) are anonymous aliases tagged for `gbl3.darkorbit.com`. Both delegate to `LocalMapsXml.WriteResponseAsync` with the configured world listener and a read-only mesh snapshot; neither uses a game-auth session. The body follows the official shape `<maps><map id="N"><gameserverIP>host:port</gameserverIP></map></maps>`, taken from a client-cached official `maps.xml` (2026-03-31); the Unity client's `MapsPattern.Parse` throws on the old attribute-only form.
 
 - The XML starts with `<?xml version="1.0" encoding="utf-8"?>`, then a `maps` root with one empty `map` per distinct starter map in `CompanyCatalog`, ordered by numeric ID. Each map has exactly `ID` and `GameServerIP` attributes.
 - With the world listener enabled, the fallback address is `WorldServerOptions.Host:Port`. With it disabled, the fallback is bare `127.0.0.1`. Options are validated before body construction.

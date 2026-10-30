@@ -2202,8 +2202,8 @@ public class WorldTransportTests
         var options = new WorldServerOptions { Enabled = true, Port = 61000 };
         var xml = System.Xml.Linq.XDocument.Parse(LocalMapsXml.XmlFor(options));
         foreach (var company in CompanyCatalog.Companies)
-            Assert.That(xml.Root!.Elements("map").Single(e => (string)e.Attribute("ID")! == company.StarterMap)
-                .Attribute("GameServerIP")!.Value, Is.EqualTo("127.0.0.1:61000"));
+            Assert.That(xml.Root!.Elements("map").Single(e => (string)e.Attribute("id")! == company.StarterMap)
+                .Element("gameserverIP")!.Value, Is.EqualTo("127.0.0.1:61000"));
     }
 
     [TestCase(null, WorldLoginError.UnknownSession)]

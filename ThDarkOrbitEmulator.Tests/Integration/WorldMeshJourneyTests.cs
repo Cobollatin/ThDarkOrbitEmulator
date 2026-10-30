@@ -111,8 +111,8 @@ public sealed class WorldMeshJourneyTests
                 var owner = snapshot.Leases.Single(l => l.MapId == company.Map).NodeId;
                 var nodeIndex = int.Parse(owner[5..]) - 1;
                 var address = xml.Root!.Elements("map")
-                    .Single(e => (int)e.Attribute("ID")! == company.Map)
-                    .Attribute("GameServerIP")!.Value;
+                    .Single(e => (int)e.Attribute("id")! == company.Map)
+                    .Element("gameserverIP")!.Value;
                 Assert.That(address, Is.EqualTo($"127.0.0.1:{((IPEndPoint)listeners[nodeIndex].LocalEndpoint).Port}"));
                 using var client = new TcpClient();
                 await client.ConnectAsync(IPAddress.Loopback,
@@ -199,8 +199,8 @@ public sealed class WorldMeshJourneyTests
         {
             var lease = three.Leases.Single(l => l.MapId == company.Map);
             var node = three.Nodes.Single(n => n.NodeId == lease.NodeId);
-            var address = xml.Root!.Elements("map").Single(e => (int)e.Attribute("ID")! == company.Map)
-                .Attribute("GameServerIP")!.Value;
+            var address = xml.Root!.Elements("map").Single(e => (int)e.Attribute("id")! == company.Map)
+                .Element("gameserverIP")!.Value;
             Assert.That(address, Is.EqualTo($"127.0.0.1:{node.WorldTcpPort}"));
             var entry = await HttpAsync("enter", null, $"fixture-{index}", auth, resolver, stores[index]);
             using var state = JsonDocument.Parse(entry.Body);
