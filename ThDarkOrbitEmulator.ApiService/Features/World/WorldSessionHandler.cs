@@ -436,6 +436,11 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                 await ErrorAsync(writer, WorldLoginError.UnknownCommand, ct);
                 return;
             }
+            if (!versionAccepted && (ushort)packet.Value.Command == UnityWorldModuleId.VersionRequest)
+            {
+                await RunUnityAsync(stream, packet.Value.Payload, ct);
+                return;
+            }
             try
             {
                 switch (packet.Value.Command)
@@ -537,6 +542,31 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
             if (handedOff) sessions.DetachForHandoff(connected, connection);
             else await sessions.LeaveAsync(connected, connection, CancellationToken.None);
         } }
+    }
+
+    // Real Unity client session: recovered module ids and serialization (see UnityWorldProtocol).
+    private async Task RunUnityAsync(Stream stream, ReadOnlyMemory<byte> versionPayload, CancellationToken ct)
+    {
+        var writer = new UnityWorldFrameWriter(stream);
+        var reader = new UnityWorldFrameReader(stream, options.MaximumPacketBytes);
+        var clientVersion = new UnityModuleReader(versionPayload).String();
+        await writer.WriteAsync(UnityWorldModules.Version(clientVersion, true), ct);
+        while (!ct.IsCancellationRequested)
+        {
+            WorldPacket? packet;
+            try { packet = await reader.ReadAsync(ct); }
+            catch (Exception e) when (e is EndOfStreamException or InvalidDataException or IOException) { return; }
+            if (packet is null) return;
+            if ((ushort)packet.Value.Command != UnityWorldModuleId.LoginRequest) continue;
+            UnityLoginRequest login;
+            try { login = UnityLoginRequest.Read(packet.Value.Payload); }
+            catch (EndOfStreamException) { return; }
+            var (pilot, _) = await resolver.ResolveAsync(login.UserId, login.SessionId, ct);
+            if (pilot is null) return;
+            var stats = pilot.Stats;
+            await writer.WriteAsync(UnityWorldModules.ShipInitialization(pilot, stats, stats.MaxShield,
+                stats.MaxHitPoints, pilot.X, pilot.Y), ct);
+        }
     }
 
     private async Task<WorldMapInstance> RuntimeMapAsync(int mapId, CancellationToken ct)
