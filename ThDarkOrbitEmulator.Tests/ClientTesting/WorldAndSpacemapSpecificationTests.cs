@@ -705,6 +705,28 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task PortalJump_FromPreviousMap_DoesNotUseDestinationPortal()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var previous = new WorldSessionStore(cache, mutex);
+        var destination = new WorldSessionStore(cache, mutex);
+        var stale = await previous.EnterAsync(Pilot() with
+        {
+            X = 20000, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, default);
+        var current = await destination.TeleportAsync(stale.UserId, 2, 1500, 1300, false, default);
+
+        Assert.ThrowsAsync<WorldMapChangedException>(
+            async () => await previous.JumpAsync(stale, 201, null, default));
+        Assert.That(await destination.SavedMapAsync(stale.UserId, default), Is.EqualTo(2));
+        Assert.That((await destination.JumpAsync(current!, 201, null, default))?.Pilot.MapId,
+            Is.EqualTo(1));
+    }
+
+    [Test]
     public async Task PortalJump_RecentNpcCombatBlocksAcrossReplicas_UntilWindowExpires()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

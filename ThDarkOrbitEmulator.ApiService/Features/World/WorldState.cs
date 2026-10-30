@@ -1525,7 +1525,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             pilot = await RefreshAsync(pilot, ct);
             if (expectedMapId is not null && pilot.MapId != expectedMapId)
                 throw new WorldMapChangedException();
-            if (pilot.MapId != admittedMap) throw new WorldLeaseLostException();
+            if (pilot.MapId != admittedMap) throw new WorldMapChangedException();
             await CheckLeaseAsync(pilot.MapId, fence, ct);
             if (CurrentHitPoints(pilot) <= 0) throw new WorldPilotDestroyedException();
             var portal = (await MapAsync(pilot.MapId, ct)).Portals.FirstOrDefault(p => p.Id == portalId && p.Working);
