@@ -1477,6 +1477,12 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             ? Math.Min(stats.MaxHitPoints, current + repair)
             : stats.MaxHitPoints;
         await PersistRuntimeAsync(pilot, ct);
+        await BroadcastAsync(pilot, WorldCommandId.ShipHealCommand, WorldPayload.Encode(w =>
+        {
+            WorldPayload.WriteInt64(w, pilot.UserId);
+            WorldPayload.WriteInt64(w, hitPoints[pilot.UserId] - current);
+            WorldPayload.WriteInt64(w, hitPoints[pilot.UserId]);
+        }), ct);
         return true;
     }
 

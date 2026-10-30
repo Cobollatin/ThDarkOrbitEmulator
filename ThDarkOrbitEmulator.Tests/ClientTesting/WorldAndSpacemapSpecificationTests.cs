@@ -1600,6 +1600,41 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task StationRepair_AnnouncesAppliedHullHealOnly()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var clock = new AdvancingClock();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), clock: clock);
+        var pilot = await store.EnterAsync(new WorldPilot(910, "mmo", 1, 1, "ship", 0, 0)
+        {
+            FactionId = 1, X = 2000, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 100, default, shieldAbsorption: 0);
+        using var ownWire = new MemoryStream();
+        using var observerWire = new MemoryStream();
+        store.Attach(new WorldConnection(pilot, new WorldPacketWriter(ownWire)));
+        store.Attach(new WorldConnection(pilot with { UserId = 911 }, new WorldPacketWriter(observerWire)));
+
+        Assert.That(await store.RepairAtBaseAsync(pilot, clock.GetUtcNow(), default), Is.False);
+        clock.Advance(TimeSpan.FromSeconds(10));
+        Assert.That(await store.RepairAtBaseAsync(pilot, clock.GetUtcNow(), default), Is.True);
+        Assert.That(await store.RepairAtBaseAsync(pilot, clock.GetUtcNow(), default), Is.False);
+
+        foreach (var wire in new[] { ownWire, observerWire })
+        {
+            wire.Position = 0;
+            var reader = new WorldPacketReader(wire);
+            var heal = await reader.ReadAsync();
+            Assert.That(heal?.Command, Is.EqualTo(WorldCommandId.ShipHealCommand));
+            Assert.That(WorldPayload.Decode(heal!.Value.Payload, r =>
+                (WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r))),
+                Is.EqualTo((pilot.UserId, 100L, 1000L)));
+            Assert.That(await reader.ReadAsync(), Is.Null);
+        }
+    }
+
+    [Test]
     public async Task StationRepair_OnlyHealsPilotsOfTheMapFaction()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
