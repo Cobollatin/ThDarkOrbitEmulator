@@ -541,6 +541,43 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task ConcurrentHullHealObservations_SendHealOnce()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingWorldClock();
+        var mapOwner = new WorldSessionStore(cache, clock: clock);
+        var socketNode = new WorldSessionStore(cache, clock: clock);
+        var pilot = await mapOwner.EnterAsync(new WorldPilot(938, "pilot", 1, 1, "ship", 0, 0)
+        {
+            FactionId = 1, X = 5000, Y = 5000,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await mapOwner.ApplyNpcDamageAsync(pilot, 1, 100, default, shieldAbsorption: 0);
+        await socketNode.EnterAsync(pilot, default);
+        await socketNode.PrimeOwnHealAsync(pilot, default);
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await mapOwner.RecoverHullAsync(pilot.MapId, default);
+
+        using var wire = new PauseFirstWriteStream();
+        var connection = new WorldConnection(pilot, new WorldPacketWriter(wire));
+        var first = socketNode.ObserveOwnHealAsync(pilot, connection, default);
+        await wire.FirstWriteStarted;
+        var second = socketNode.ObserveOwnHealAsync(pilot, connection, default);
+        wire.Resume();
+        await Task.WhenAll(first, second);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        var packet = await reader.ReadAsync();
+        Assert.That(packet?.Command, Is.EqualTo(WorldCommandId.ShipHealCommand));
+        Assert.That(WorldPayload.Decode(packet!.Value.Payload, r =>
+            (WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r))),
+            Is.EqualTo((pilot.UserId, 25L, 925L)));
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
     public async Task RemoteHullHeals_ReplayEachRecoveryBetweenPolls()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

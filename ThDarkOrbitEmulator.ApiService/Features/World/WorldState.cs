@@ -464,14 +464,19 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
 
     public async Task ObserveOwnHealAsync(WorldPilot pilot, WorldConnection connection, CancellationToken ct)
     {
-        var runtime = await ReadOwnHealRuntimeAsync(pilot, ct);
-        if (runtime is null) return;
-        announcedOwnHeals.TryGetValue(pilot.UserId, out var announced);
-        foreach (var heal in UnannouncedHeals(runtime, announced))
+        await connection.HealDeliveryGate.WaitAsync(ct);
+        try
         {
-            await SendHealAsync(connection, pilot.UserId, heal, ct);
-            announcedOwnHeals[pilot.UserId] = heal.Id;
+            var runtime = await ReadOwnHealRuntimeAsync(pilot, ct);
+            if (runtime is null) return;
+            announcedOwnHeals.TryGetValue(pilot.UserId, out var announced);
+            foreach (var heal in UnannouncedHeals(runtime, announced))
+            {
+                await SendHealAsync(connection, pilot.UserId, heal, ct);
+                announcedOwnHeals[pilot.UserId] = heal.Id;
+            }
         }
+        finally { connection.HealDeliveryGate.Release(); }
     }
 
     private static IEnumerable<WorldHealEvent> UnannouncedHeals(WorldRuntimeSnapshot runtime, string? announced)
@@ -1665,15 +1670,19 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             && (!WorldMapInstance.IsGate(pilot.MapId) || c.Pilot.AccountId == pilot.AccountId)).ToArray())
         {
             var own = observer.Pilot.UserId == pilot.UserId;
+            if (own)
+            {
+                try { await ObserveOwnHealAsync(pilot, observer, ct); }
+                catch (IOException) { }
+                continue;
+            }
             var observed = connectedHeals.GetOrAdd(observer.Pilot.UserId, _ => new());
-            var announced = own ? announcedOwnHeals.GetValueOrDefault(pilot.UserId)
-                : observed.GetValueOrDefault(pilot.UserId);
+            var announced = observed.GetValueOrDefault(pilot.UserId);
             foreach (var heal in UnannouncedHeals(runtime, announced))
             {
                 try { await SendHealAsync(observer, pilot.UserId, heal, ct); }
                 catch (IOException) { break; }
-                if (own) announcedOwnHeals[pilot.UserId] = heal.Id;
-                else observed[pilot.UserId] = heal.Id;
+                observed[pilot.UserId] = heal.Id;
             }
         }
     }
