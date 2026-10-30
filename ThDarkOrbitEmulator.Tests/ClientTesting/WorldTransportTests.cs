@@ -397,6 +397,44 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task RemoteRepairBotChanges_ReplayActivationAndDeactivationBetweenPolls()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingWorldClock();
+        var mapOwner = new WorldSessionStore(cache, clock: clock);
+        var socketNode = new WorldSessionStore(cache, clock: clock);
+        var pilot = await mapOwner.EnterAsync(new WorldPilot(927, "pilot", 1, 1, "ship", 0, 0)
+        {
+            FactionId = 1, X = 5000, Y = 5000,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await mapOwner.ApplyNpcDamageAsync(pilot, 1, 100, default, shieldAbsorption: 0);
+        await socketNode.EnterAsync(pilot, default);
+        await socketNode.PrimeOwnRepairBotAsync(pilot, default);
+        using var wire = new MemoryStream();
+        var connection = new WorldConnection(pilot, new WorldPacketWriter(wire));
+        socketNode.Attach(connection);
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await mapOwner.RecoverHullAsync(pilot.MapId, default);
+        await mapOwner.MarkCombatAsync(pilot, default);
+        await socketNode.ObserveOwnRepairBotAsync(pilot, connection, default);
+        await socketNode.ObserveOwnRepairBotAsync(pilot, connection, default);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        foreach (var active in new[] { true, false })
+        {
+            var packet = await reader.ReadAsync();
+            Assert.That(packet?.Command, Is.EqualTo(WorldCommandId.RepairBotStateCommand));
+            Assert.That(WorldPayload.Decode(packet!.Value.Payload, r =>
+                (WorldPayload.ReadInt64(r), r.ReadBoolean())), Is.EqualTo((pilot.UserId, active)));
+        }
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
     public async Task RemoteHullHeal_ReachesOwningPilotOnceAfterEntry()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

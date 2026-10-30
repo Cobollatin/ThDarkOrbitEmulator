@@ -105,12 +105,13 @@ public static class WorldShipStatCalculator
 
 public sealed record WorldPosition(int MapId, int X, int Y);
 public sealed record WorldHealEvent(string Id, long Amount, long Hull);
+public sealed record WorldRepairBotEvent(string Id, bool Active);
 public sealed record WorldRuntimeSnapshot(int MapId, int Configuration, long Shield,
     long LastSwitchUnixMilliseconds, WorldTravel? Travel, long? HitPoints = null,
     long LastHazardUnixMilliseconds = 0, bool RadiationWarning = false, bool RepairBotActive = false,
     string? DeathId = null, bool IsInvisible = false, long LastCloakActivationUnixMs = 0,
     string? LastHealId = null, long LastHealAmount = 0, long LastHealHull = 0,
-    WorldHealEvent[]? RecentHeals = null);
+    WorldHealEvent[]? RecentHeals = null, WorldRepairBotEvent[]? RecentRepairBotStates = null);
 public sealed record WorldJumpResult(WorldPilot Pilot, int PortalId, string? TargetNodeId,
     string? TargetTcpHostPort);
 public sealed record WorldSwitchResult(bool Changed, int CooldownRemainingMs, WorldMoveResult? Move);
@@ -156,7 +157,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private readonly ConcurrentDictionary<long, ConcurrentDictionary<long, bool>> remoteCloaks = new();
     private readonly ConcurrentDictionary<long, ConcurrentDictionary<long, string>> remoteHeals = new();
     private readonly ConcurrentDictionary<long, string> announcedOwnHeals = new();
-    private readonly ConcurrentDictionary<long, bool> announcedRepairBots = new();
+    private readonly ConcurrentDictionary<long, string> announcedRepairBots = new();
     // Map-level fanout: every idle observer on this node shares one presence + saved-state read per map.
     public static readonly TimeSpan RemoteSnapshotTtl = TimeSpan.FromMilliseconds(500);
     public static readonly TimeSpan PresenceHeartbeatInterval = TimeSpan.FromSeconds(15);
@@ -398,7 +399,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     {
         if (repairBots.GetValueOrDefault(pilot.UserId) == active) return;
         repairBots[pilot.UserId] = active;
-        await PersistRuntimeAsync(pilot, ct);
+        var eventId = Guid.NewGuid().ToString("N");
+        await PersistRuntimeAsync(pilot, ct, repairBotEventId: eventId);
         if (connections.TryGetValue(pilot.UserId, out var connection) && connection.Pilot.MapId == pilot.MapId)
         {
             try
@@ -408,13 +410,19 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                     WorldPayload.WriteInt64(w, pilot.UserId);
                     w.Write(active);
                 }), ct);
-                announcedRepairBots[pilot.UserId] = active;
+                announcedRepairBots[pilot.UserId] = eventId;
             }
             catch (IOException) { }
         }
     }
 
     public bool RepairBotActive(long userId) => repairBots.GetValueOrDefault(userId);
+
+    public async Task PrimeOwnRepairBotAsync(WorldPilot pilot, CancellationToken ct)
+    {
+        var runtime = await ReadOwnHealRuntimeAsync(pilot, ct);
+        announcedRepairBots[pilot.UserId] = runtime?.RecentRepairBotStates?.LastOrDefault()?.Id ?? string.Empty;
+    }
 
     public async Task ObserveOwnRepairBotAsync(WorldPilot pilot, WorldConnection connection, CancellationToken ct)
     {
@@ -424,14 +432,28 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         try { runtime = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(saved); }
         catch (JsonException) { return; }
         if (runtime is null || runtime.MapId != pilot.MapId) return;
-        if (announcedRepairBots.TryGetValue(pilot.UserId, out var announced)
-            && announced == runtime.RepairBotActive) return;
-        await connection.SendAsync(WorldCommandId.RepairBotStateCommand, WorldPayload.Encode(w =>
+        announcedRepairBots.TryGetValue(pilot.UserId, out var announced);
+        var history = runtime.RecentRepairBotStates ?? [];
+        if (history.Length == 0 && repairBots.GetValueOrDefault(pilot.UserId) != runtime.RepairBotActive)
         {
-            WorldPayload.WriteInt64(w, pilot.UserId);
-            w.Write(runtime.RepairBotActive);
-        }), ct);
-        announcedRepairBots[pilot.UserId] = runtime.RepairBotActive;
+            await connection.SendAsync(WorldCommandId.RepairBotStateCommand, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt64(w, pilot.UserId);
+                w.Write(runtime.RepairBotActive);
+            }), ct);
+        }
+        var index = Array.FindLastIndex(history, entry => entry.Id == announced);
+        var pending = announced is null || index < 0 && announced.Length > 0
+            ? history.TakeLast(1) : history.Skip(index + 1);
+        foreach (var entry in pending)
+        {
+            await connection.SendAsync(WorldCommandId.RepairBotStateCommand, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt64(w, pilot.UserId);
+                w.Write(entry.Active);
+            }), ct);
+            announcedRepairBots[pilot.UserId] = entry.Id;
+        }
         repairBots[pilot.UserId] = runtime.RepairBotActive;
     }
 
@@ -1076,7 +1098,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     public void Attach(WorldConnection connection)
     {
         connections[connection.Pilot.UserId] = connection;
-        announcedRepairBots[connection.Pilot.UserId] = RepairBotActive(connection.Pilot.UserId);
+        announcedRepairBots.TryAdd(connection.Pilot.UserId, string.Empty);
     }
 
     public void RefreshConnectedPilot(WorldPilot pilot)
@@ -1522,7 +1544,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
 
     private async Task PersistRuntimeAsync(WorldPilot pilot, CancellationToken ct,
         bool clearDeathId = false, bool? cloakOverride = null, long? cloakActivatedAtUnixMs = null,
-        long healAmount = 0)
+        long healAmount = 0, string? repairBotEventId = null)
     {
         var previousJson = await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct);
         WorldRuntimeSnapshot? previous = null;
@@ -1534,6 +1556,10 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         if (healId is not null)
             recentHeals = [.. recentHeals.TakeLast(15),
                 new WorldHealEvent(healId, healAmount, CurrentHitPoints(pilot))];
+        var recentRepairBotStates = previous?.RecentRepairBotStates ?? [];
+        if (repairBotEventId is not null)
+            recentRepairBotStates = [.. recentRepairBotStates.TakeLast(15),
+                new WorldRepairBotEvent(repairBotEventId, RepairBotActive(pilot.UserId))];
         await cache.SetStringAsync(RuntimeKey(pilot.UserId), JsonSerializer.Serialize(new WorldRuntimeSnapshot(
             pilot.MapId, Configuration(pilot.UserId), CurrentShield(pilot),
             lastSwitches.TryGetValue(pilot.UserId, out var last) ? last.ToUnixTimeMilliseconds() : 0,
@@ -1546,7 +1572,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             healId ?? previous?.LastHealId,
             healAmount > 0 ? healAmount : previous?.LastHealAmount ?? 0,
             healAmount > 0 ? CurrentHitPoints(pilot) : previous?.LastHealHull ?? 0,
-            recentHeals)),
+            recentHeals, recentRepairBotStates)),
             new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
     }
 

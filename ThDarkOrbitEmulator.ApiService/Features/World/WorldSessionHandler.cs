@@ -569,6 +569,7 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                             advertisedStats = (entryStats.Speed, entryStats.LaserDamage);
                             await sessions!.PrimeObservedTravelAsync(connected, ct);
                             await sessions.PrimeOwnHealAsync(connected, ct);
+                            await sessions.PrimeOwnRepairBotAsync(connected, ct);
                         }
                         await WorldEntryPackets.SendAsync(writer, connected, ct, entryStats,
                             sessions?.CurrentShield(connected), sessions?.CurrentPosition(connected),
