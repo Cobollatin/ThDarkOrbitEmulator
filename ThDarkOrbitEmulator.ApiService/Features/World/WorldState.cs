@@ -156,6 +156,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private readonly ConcurrentDictionary<long, ConcurrentDictionary<long, byte>> remoteVisible = new();
     private readonly ConcurrentDictionary<long, ConcurrentDictionary<long, bool>> remoteCloaks = new();
     private readonly ConcurrentDictionary<long, ConcurrentDictionary<long, string>> remoteHeals = new();
+    private readonly ConcurrentDictionary<long, ConcurrentDictionary<long, string>> connectedHeals = new();
     private readonly ConcurrentDictionary<long, string> announcedOwnHeals = new();
     private readonly ConcurrentDictionary<long, string> announcedRepairBots = new();
     // Map-level fanout: every idle observer on this node shares one presence + saved-state read per map.
@@ -1083,6 +1084,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         remoteVisible.TryRemove(pilot.UserId, out _);
         remoteCloaks.TryRemove(pilot.UserId, out _);
         remoteHeals.TryRemove(pilot.UserId, out _);
+        connectedHeals.TryRemove(pilot.UserId, out _);
+        foreach (var heals in connectedHeals.Values) heals.TryRemove(pilot.UserId, out _);
         announcedOwnHeals.TryRemove(pilot.UserId, out _);
         announcedRepairBots.TryRemove(pilot.UserId, out _);
         remotePositions.TryRemove(pilot.UserId, out _);
@@ -1163,12 +1166,14 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     public async Task ObserveRemotePilotsAsync(WorldPilot observer, WorldConnection connection,
         CancellationToken ct)
     {
+        var snapshot = await RemoteSnapshotAsync(observer.MapId, ct);
+        await ObserveConnectedHealsAsync(observer, connection, snapshot, ct);
         var visible = remoteVisible.GetOrAdd(observer.UserId, _ => new());
         var cloaks = remoteCloaks.GetOrAdd(observer.UserId, _ => new());
         var heals = remoteHeals.GetOrAdd(observer.UserId, _ => new());
         var now = DateTimeOffset.UtcNow;
         var present = new HashSet<long>();
-        foreach (var (entry, saved, runtime) in (await RemoteSnapshotAsync(observer.MapId, ct)).Entries)
+        foreach (var (entry, saved, runtime) in snapshot.Entries)
         {
             var remote = entry.Pilot;
             if (remote.UserId == observer.UserId || connections.ContainsKey(remote.UserId)
@@ -1242,6 +1247,32 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             await connection.SendAsync(WorldCommandId.PilotRemoveCommand,
                 WorldPayload.Encode(w => WorldPayload.WriteInt64(w, id)), ct);
         }
+    }
+
+    private async Task ObserveConnectedHealsAsync(WorldPilot observer, WorldConnection connection,
+        RemoteSnapshot snapshot, CancellationToken ct)
+    {
+        var announced = connectedHeals.GetOrAdd(observer.UserId, _ => new());
+        var present = new HashSet<long>();
+        foreach (var (entry, _, runtime) in snapshot.Entries)
+        {
+            var target = entry.Pilot;
+            if (target.UserId == observer.UserId
+                || !connections.TryGetValue(target.UserId, out var local)
+                || local.Pilot.MapId != observer.MapId || runtime?.MapId != observer.MapId
+                || WorldMapInstance.IsGate(observer.MapId) && target.AccountId != observer.AccountId)
+                continue;
+            present.Add(target.UserId);
+            if (announced.TryAdd(target.UserId, runtime.LastHealId ?? string.Empty)) continue;
+            announced.TryGetValue(target.UserId, out var last);
+            foreach (var heal in UnannouncedHeals(runtime, last))
+            {
+                await SendHealAsync(connection, target.UserId, heal, ct);
+                announced[target.UserId] = heal.Id;
+            }
+        }
+        foreach (var id in announced.Keys.Where(id => !present.Contains(id)).ToArray())
+            announced.TryRemove(id, out _);
     }
 
     // Pilots whose sockets live on another node reach this observer through shared presence and travel.
@@ -1638,6 +1669,12 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             WorldPayload.WriteInt64(w, hitPoints[pilot.UserId]);
         }), ct);
         if (connections.ContainsKey(pilot.UserId)) await PrimeOwnHealAsync(pilot, ct);
+        var healId = (await ReadOwnHealRuntimeAsync(pilot, ct))?.LastHealId;
+        if (healId is not null)
+            foreach (var observer in connections.Values.Where(c => c.Pilot.MapId == pilot.MapId
+                && c.Pilot.UserId != pilot.UserId
+                && (!WorldMapInstance.IsGate(pilot.MapId) || c.Pilot.AccountId == pilot.AccountId)))
+                connectedHeals.GetOrAdd(observer.Pilot.UserId, _ => new())[pilot.UserId] = healId;
     }
 
     // Station activation is serialized with lease reassignment and shared pilot state.
