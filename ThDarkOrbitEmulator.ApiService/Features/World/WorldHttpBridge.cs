@@ -374,6 +374,7 @@ public static class WorldHttpBridge
         if (!JsonRequest(context)) { context.Response.StatusCode = 415; return; }
         var pilot = await PilotAsync(context, auth, resolver, sessions, ct);
         if (pilot is null) return;
+        var admittedMapId = pilot.MapId;
         int portalId;
         int? sourceMapId;
         try
@@ -387,12 +388,13 @@ public static class WorldHttpBridge
         if (sourceMapId is <= 0) { context.Response.StatusCode = 400; return; }
         pilot = await sessions.GetOrEnterAsync(pilot, ct);
         await SetMeshHeadersAsync(context, pilot.MapId, ct);
-        if (sourceMapId is not null && sourceMapId != pilot.MapId)
+        var expectedMapId = sourceMapId ?? admittedMapId;
+        if (expectedMapId != pilot.MapId)
         { await MapChangedAsync(context, pilot, sessions, ct); return; }
         var registry = context.RequestServices?.GetService<IServerMeshRegistry>();
         WorldJumpResult? jump;
         try { jump = await sessions.JumpAsync(pilot, portalId, registry, ct,
-            await LeaseFenceAsync(context, pilot.MapId, ct), sourceMapId); }
+            await LeaseFenceAsync(context, pilot.MapId, ct), expectedMapId); }
         catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
         catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
         catch (WorldPilotDestroyedException) { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "destroyed_pilot" }, ct); return; }
