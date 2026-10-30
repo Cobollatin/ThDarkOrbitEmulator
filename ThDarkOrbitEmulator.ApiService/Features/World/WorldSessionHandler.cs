@@ -228,6 +228,7 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                             await sessions.BroadcastMoveAsync(connected, externalMove, ct, localMutation: false);
                         }
                         await sessions.ObserveRemotePilotsAsync(connected, connection, ct);
+                        await sessions.ObserveOwnRepairBotAsync(connected, connection, ct);
                         foreach (var remoteMove in await sessions.ObserveRemoteMovesAsync(connected, ct))
                             await sessions.SendMoveAsync(connection, remoteMove, ct);
                         if (npcs is not null || gates is not null && WorldMapInstance.IsGate(connected.MapId))

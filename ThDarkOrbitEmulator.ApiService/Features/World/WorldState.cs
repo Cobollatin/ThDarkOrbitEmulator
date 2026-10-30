@@ -153,6 +153,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private readonly ConcurrentDictionary<long, ConcurrentDictionary<long, byte>> remoteVisible = new();
     private readonly ConcurrentDictionary<long, ConcurrentDictionary<long, bool>> remoteCloaks = new();
     private readonly ConcurrentDictionary<long, ConcurrentDictionary<long, string>> remoteHeals = new();
+    private readonly ConcurrentDictionary<long, bool> announcedRepairBots = new();
     // Map-level fanout: every idle observer on this node shares one presence + saved-state read per map.
     public static readonly TimeSpan RemoteSnapshotTtl = TimeSpan.FromMilliseconds(500);
     public static readonly TimeSpan PresenceHeartbeatInterval = TimeSpan.FromSeconds(15);
@@ -404,12 +405,32 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                     WorldPayload.WriteInt64(w, pilot.UserId);
                     w.Write(active);
                 }), ct);
+                announcedRepairBots[pilot.UserId] = active;
             }
             catch (IOException) { }
         }
     }
 
     public bool RepairBotActive(long userId) => repairBots.GetValueOrDefault(userId);
+
+    public async Task ObserveOwnRepairBotAsync(WorldPilot pilot, WorldConnection connection, CancellationToken ct)
+    {
+        var saved = await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct);
+        if (saved is null) return;
+        WorldRuntimeSnapshot? runtime;
+        try { runtime = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(saved); }
+        catch (JsonException) { return; }
+        if (runtime is null || runtime.MapId != pilot.MapId) return;
+        if (announcedRepairBots.TryGetValue(pilot.UserId, out var announced)
+            && announced == runtime.RepairBotActive) return;
+        await connection.SendAsync(WorldCommandId.RepairBotStateCommand, WorldPayload.Encode(w =>
+        {
+            WorldPayload.WriteInt64(w, pilot.UserId);
+            w.Write(runtime.RepairBotActive);
+        }), ct);
+        announcedRepairBots[pilot.UserId] = runtime.RepairBotActive;
+        repairBots[pilot.UserId] = runtime.RepairBotActive;
+    }
 
     // The map owner continues the hazard while the pilot remains at the boundary.
     public async Task TickRadiationAsync(int mapId, CancellationToken ct, WorldLeaseFence? fence = null)
@@ -986,6 +1007,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         remoteVisible.TryRemove(pilot.UserId, out _);
         remoteCloaks.TryRemove(pilot.UserId, out _);
         remoteHeals.TryRemove(pilot.UserId, out _);
+        announcedRepairBots.TryRemove(pilot.UserId, out _);
         remotePositions.TryRemove(pilot.UserId, out _);
         configurations.TryRemove(pilot.UserId, out _);
         lastSwitches.TryRemove(pilot.UserId, out _);
@@ -996,7 +1018,11 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         repairBots.TryRemove(pilot.UserId, out _);
     }
 
-    public void Attach(WorldConnection connection) => connections[connection.Pilot.UserId] = connection;
+    public void Attach(WorldConnection connection)
+    {
+        connections[connection.Pilot.UserId] = connection;
+        announcedRepairBots[connection.Pilot.UserId] = RepairBotActive(connection.Pilot.UserId);
+    }
 
     public void RefreshConnectedPilot(WorldPilot pilot)
     {
@@ -1293,6 +1319,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         if (connection is not null)
             ((ICollection<KeyValuePair<long, WorldConnection>>)connections)
                 .Remove(new(pilot.UserId, connection));
+        announcedRepairBots.TryRemove(pilot.UserId, out _);
         if (connected.TryGetValue(pilot.MapId, out var pilots)) pilots.TryRemove(pilot.UserId, out _);
         // The destination node reads the shared position/runtime/presence on reconnect.
     }
