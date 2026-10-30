@@ -33,7 +33,8 @@ EXPECTED_ORIG_METADATA_SHA256 = "a9df074bb27ea58dbd19f322a6c6b45438fe198c74cc2f7
 # so targets are located by their exact original value (see resolve_literal_indices).
 KNOWN_ORIG_METADATA_SHA256: dict[str, str] = {
     EXPECTED_ORIG_METADATA_SHA256: "baseline build (portal literal index 24853)",
-    "a0726c248d765b7782ca5045e17521bfa1477428a06ed84a26707cb9569ba1a2": "2026-03-10 build (portal literal index 24820)",
+    "a0726c248d765b7782ca5045e17521bfa1477428a06ed84a26707cb9569ba1a2": "1.1.92, 2026-03-10 build (portal literal index 24820)",
+    "796e531afd56fbae3bc8ae39c6813d8ded8935346a1bea55b748801e9f6a605c": "1.1.93, 2026-03-31 build (portal literal index 24820)",
 }
 IL2CPP_MAGIC = 0xFAB11BAF
 
