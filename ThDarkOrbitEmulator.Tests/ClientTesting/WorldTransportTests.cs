@@ -885,6 +885,43 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task FailedRemotePilotCreation_IsRetriedBeforeHealDelivery()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingWorldClock();
+        var mapOwner = new WorldSessionStore(cache, clock: clock);
+        var socketNode = new WorldSessionStore(cache, clock: clock);
+        var pilot = await mapOwner.EnterAsync(new WorldPilot(947, "pilot", 1, 1, "ship", 0, 0)
+        {
+            FactionId = 1, X = 5000, Y = 5000,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await mapOwner.ApplyNpcDamageAsync(pilot, 1, 100, default, shieldAbsorption: 0);
+        var observer = pilot with { UserId = 948 };
+        using var wire = new FailFirstHealWriteStream();
+        var connection = new WorldConnection(observer, new WorldPacketWriter(wire));
+
+        Assert.ThrowsAsync<IOException>(async () =>
+            await socketNode.ObserveRemotePilotsAsync(observer, connection, default));
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await mapOwner.RecoverHullAsync(pilot.MapId, default);
+        await socketNode.ObserveRemotePilotsAsync(observer, connection, default);
+        await socketNode.ObserveRemotePilotsAsync(observer, connection, default);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.PilotCreateCommand));
+        var heal = await reader.ReadAsync();
+        Assert.That(heal?.Command, Is.EqualTo(WorldCommandId.ShipHealCommand));
+        Assert.That(WorldPayload.Decode(heal!.Value.Payload, r =>
+            (WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r))),
+            Is.EqualTo((947L, 25L, 925L)));
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.CloakStateCommand));
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
     public async Task FailedLocalHealWrites_ReplayToPilotAndObserver()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

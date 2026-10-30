@@ -1209,16 +1209,26 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             {
                 heals[remote.UserId] = runtime?.LastHealId ?? string.Empty;
                 remotePositions.GetOrAdd(observer.UserId, _ => new())[remote.UserId] = (remote.X, remote.Y);
-                await connection.SendAsync(WorldCommandId.PilotCreateCommand, WorldPayload.Encode(w =>
+                try
                 {
-                    WorldPayload.WriteInt64(w, remote.UserId);
-                    WorldPayload.WriteString(w, remote.UserName);
-                    WorldPayload.WriteString(w, remote.ShipId);
-                    WorldPayload.WriteInt32(w, remote.FactionId);
-                    WorldPayload.WriteInt32(w, remote.MapId);
-                    WorldPayload.WriteInt32(w, remote.X);
-                    WorldPayload.WriteInt32(w, remote.Y);
-                }), ct);
+                    await connection.SendAsync(WorldCommandId.PilotCreateCommand, WorldPayload.Encode(w =>
+                    {
+                        WorldPayload.WriteInt64(w, remote.UserId);
+                        WorldPayload.WriteString(w, remote.UserName);
+                        WorldPayload.WriteString(w, remote.ShipId);
+                        WorldPayload.WriteInt32(w, remote.FactionId);
+                        WorldPayload.WriteInt32(w, remote.MapId);
+                        WorldPayload.WriteInt32(w, remote.X);
+                        WorldPayload.WriteInt32(w, remote.Y);
+                    }), ct);
+                }
+                catch
+                {
+                    visible.TryRemove(remote.UserId, out _);
+                    heals.TryRemove(remote.UserId, out _);
+                    remotePositions.GetOrAdd(observer.UserId, _ => new()).TryRemove(remote.UserId, out _);
+                    throw;
+                }
             }
             await connection.HealDeliveryGate.WaitAsync(ct);
             try
