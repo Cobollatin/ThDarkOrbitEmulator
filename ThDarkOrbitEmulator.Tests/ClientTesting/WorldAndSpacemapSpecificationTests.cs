@@ -1534,7 +1534,7 @@ public sealed class WorldAndSpacemapSpecificationTests
         var clock = new AdvancingClock();
         var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), clock: clock);
         var pilot = new WorldPilot(902, "mmo", 1, 1, "ship", 0, 0)
-            { X = x, Y = 1300, Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
+            { FactionId = 1, X = x, Y = 1300, Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
         await store.EnterAsync(pilot, default);
         var now = clock.GetUtcNow();
         await store.MoveAsync(pilot, -1, 1300, null, default, now);
@@ -1559,7 +1559,7 @@ public sealed class WorldAndSpacemapSpecificationTests
         var clock = new AdvancingClock();
         var store = new WorldSessionStore(cache, clock: clock);
         var pilot = new WorldPilot(903, "mmo", 1, 1, "ship", 0, 0)
-            { Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
+            { FactionId = 1, Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
         await store.EnterAsync(pilot, default);
         var now = clock.GetUtcNow();
         await store.MoveAsync(pilot, -1, 1300, null, default, now);
@@ -1579,6 +1579,39 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task StationRepair_OnlyHealsPilotsOfTheMapFaction()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingClock();
+        var store = new WorldSessionStore(cache, clock: clock);
+        var enemy = await store.EnterAsync(new WorldPilot(905, "eic", 1, 1, "ship", 0, 0)
+        {
+            FactionId = 2, X = 2000, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 500, 0, 0, [])
+        }, default);
+        var ally = await store.EnterAsync(enemy with { UserId = 906, Company = "mmo", FactionId = 1 }, default);
+        await store.ApplyNpcDamageAsync(enemy, 1, 100, default, shieldAbsorption: 0);
+        await store.ApplyNpcDamageAsync(ally, 1, 100, default, shieldAbsorption: 0);
+        store.SetCurrentShield(enemy, 400);
+        store.SetCurrentShield(ally, 400);
+        clock.Advance(TimeSpan.FromSeconds(10));
+
+        await store.RepairAtBaseAsync(enemy, clock.GetUtcNow(), default);
+        await store.RepairAtBaseAsync(ally, clock.GetUtcNow(), default);
+
+        Assert.That(store.CurrentHitPoints(enemy), Is.EqualTo(900));
+        Assert.That(store.CurrentShield(enemy), Is.EqualTo(400));
+        Assert.That(store.CurrentHitPoints(ally), Is.GreaterThan(900));
+        Assert.That(store.CurrentShield(ally), Is.GreaterThan(400));
+        var replica = new WorldSessionStore(cache, clock: clock);
+        var restoredEnemy = await replica.RestoreAsync(enemy, default);
+        await replica.RepairAtBaseAsync(restoredEnemy, clock.GetUtcNow(), default);
+        Assert.That(replica.CurrentHitPoints(restoredEnemy), Is.EqualTo(900));
+        Assert.That(replica.CurrentShield(restoredEnemy), Is.EqualTo(400));
+    }
+
+    [Test]
     public async Task StationRepair_RechargesShieldWhenHullIsAlreadyFull()
     {
         using var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection()
@@ -1587,7 +1620,7 @@ public sealed class WorldAndSpacemapSpecificationTests
         var clock = new AdvancingClock();
         var store = new WorldSessionStore(cache, clock: clock);
         var pilot = new WorldPilot(904, "mmo", 1, 1, "ship_pusat-plus", 0, 0)
-            { Stats = new WorldShipStats(300, 1000, 500, 0, 0, []) };
+            { FactionId = 1, Stats = new WorldShipStats(300, 1000, 500, 0, 0, []) };
         await store.EnterAsync(pilot, default);
         store.SetCurrentShield(pilot, 400);
 

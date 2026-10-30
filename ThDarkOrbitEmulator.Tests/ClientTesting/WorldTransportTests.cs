@@ -1395,7 +1395,7 @@ public class WorldTransportTests
         var clock = new AdvancingWorldClock();
         var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), clock: clock);
         var pilot = new WorldPilot(120, "mmo", 1, 1, "ship", 0, 0)
-            { X = 0, Y = 1300, Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
+            { FactionId = 1, X = 0, Y = 1300, Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
         await store.EnterAsync(pilot, default);
         var now = clock.GetUtcNow();
         await store.MoveAsync(pilot, -1, 1300, null, default, now);
