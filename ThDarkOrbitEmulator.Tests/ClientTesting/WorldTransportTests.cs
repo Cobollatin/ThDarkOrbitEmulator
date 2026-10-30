@@ -355,6 +355,38 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task FailedRemotePilotRemoval_IsRetriedOnce()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var owner = new WorldSessionStore(cache);
+        var observerNode = new WorldSessionStore(cache);
+        var pilot = await owner.EnterAsync(new WorldPilot(951, "remote", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
+        var observer = pilot with { UserId = 952 };
+        using var wire = new FailNextWriteStream();
+        var connection = new WorldConnection(observer, new WorldPacketWriter(wire));
+        await observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+
+        await owner.LeaveAsync(pilot, null, default);
+        await Task.Delay(WorldSessionStore.RemoteSnapshotTtl + TimeSpan.FromMilliseconds(100));
+        wire.FailNext();
+        Assert.ThrowsAsync<IOException>(async () =>
+            await observerNode.ObserveRemotePilotsAsync(observer, connection, default));
+        await observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+        await observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.PilotCreateCommand));
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.CloakStateCommand));
+        var removal = await reader.ReadAsync();
+        Assert.That(removal?.Command, Is.EqualTo(WorldCommandId.PilotRemoveCommand));
+        Assert.That(WorldPayload.Decode(removal!.Value.Payload, WorldPayload.ReadInt64), Is.EqualTo(951));
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
     public async Task RemoteStationHeal_ReachesVisibleObserverOnce()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
