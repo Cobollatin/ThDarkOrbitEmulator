@@ -1527,7 +1527,7 @@ public sealed class WorldAndSpacemapSpecificationTests
 
     [TestCase(3000, true)]
     [TestCase(3001, false)]
-    public async Task StationRepair_UsesInclusiveRadiusAndRequiresStoppedTravel(int x, bool inside)
+    public async Task StationRepair_UsesInclusiveRadius(int x, bool inside)
     {
         using var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection()
             .AddDistributedMemoryCache().BuildServiceProvider();
@@ -1551,7 +1551,7 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
-    public async Task StationRepair_WaitsUntilTravelReachesItsDestination()
+    public async Task StationRepair_RequiresCurrentPositionInsideStationRadius()
     {
         using var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection()
             .AddDistributedMemoryCache().BuildServiceProvider();
@@ -1576,6 +1576,27 @@ public sealed class WorldAndSpacemapSpecificationTests
         var restored = await replica.RestoreAsync(pilot, default);
         await replica.RepairAtBaseAsync(restored, clock.GetUtcNow(), default);
         Assert.That(replica.CurrentHitPoints(restored), Is.EqualTo(1000));
+    }
+
+    [Test]
+    public async Task StationRepair_HealsMovingPilotInsideStationRadius()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var clock = new AdvancingClock();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), clock: clock);
+        var pilot = await store.EnterAsync(new WorldPilot(909, "mmo", 1, 1, "ship", 0, 0)
+        {
+            FactionId = 1, X = 2000, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 10, default, shieldAbsorption: 0);
+        clock.Advance(TimeSpan.FromSeconds(10));
+        var now = clock.GetUtcNow();
+        await store.MoveAsync(pilot, 3000, 1300, null, default, now);
+        Assert.That(store.Destination(pilot), Is.Not.EqualTo(store.CurrentPosition(pilot, now)));
+
+        Assert.That(await store.RepairAtBaseAsync(pilot, now, default), Is.True);
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(1000));
     }
 
     [Test]

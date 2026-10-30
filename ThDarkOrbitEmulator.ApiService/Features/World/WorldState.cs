@@ -1462,12 +1462,11 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         if (pilot.FactionId != map.FactionId) return false;
         var station = map.HomeStation;
         var position = CurrentPosition(pilot, now);
-        var target = Destination(pilot);
         var dx = (long)position.X - station.X;
         var dy = (long)position.Y - station.Y;
         var peaceRadius = variables is null ? station.PeaceRadius
             : (int)await variables.NumberAsync("world.station.peace_radius", ct);
-        if (position != target || dx * dx + dy * dy > (long)peaceRadius * peaceRadius) return false;
+        if (dx * dx + dy * dy > (long)peaceRadius * peaceRadius) return false;
         var stats = ActiveStats(pilot);
         var current = CurrentHitPoints(pilot);
         if (current <= 0) return false;
