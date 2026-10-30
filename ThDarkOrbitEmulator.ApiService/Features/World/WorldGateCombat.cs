@@ -27,8 +27,12 @@ public sealed class WorldGateCombat(EconomyStore economy, IDistributedCache cach
             2500, 1300, state.NpcHp, 1000, 0, 0, 0, 0, 0, 0)];
     }
 
-    public async Task<WorldNpc?> SelectAsync(WorldPilot pilot, int npcId, CancellationToken ct)
+    public async Task<WorldNpc?> SelectAsync(WorldPilot pilot, int npcId, WorldSessionStore sessions,
+        CancellationToken ct)
     {
+        var admittedMapId = pilot.MapId;
+        pilot = await sessions.RestoreAsync(pilot, ct);
+        if (pilot.MapId != admittedMapId) throw new WorldMapChangedException();
         var npc = (await VisibleAsync(pilot, ct)).FirstOrDefault(item => item.Id == npcId);
         if (npc is null) return null;
         await cache.SetStringAsync(TargetKey(pilot.UserId), $"{pilot.AccountId:N}:{npcId}",
@@ -39,9 +43,11 @@ public sealed class WorldGateCombat(EconomyStore economy, IDistributedCache cach
     public async Task<WorldNpcAttack> AttackAsync(WorldPilot pilot, int npcId, WorldSessionStore sessions,
         CancellationToken ct)
     {
+        var admittedMapId = pilot.MapId;
+        pilot = await sessions.RestoreAsync(pilot, ct);
+        if (pilot.MapId != admittedMapId) throw new WorldMapChangedException();
         if (await cache.GetStringAsync(TargetKey(pilot.UserId), ct) != $"{pilot.AccountId:N}:{npcId}")
             return new("not_selected");
-        pilot = await sessions.RestoreAsync(pilot, ct);
         var npc = (await VisibleAsync(pilot, ct)).FirstOrDefault(item => item.Id == npcId);
         if (npc is null) return new("missing");
         var (x, y) = sessions.CurrentPosition(pilot);

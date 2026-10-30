@@ -410,7 +410,7 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                         if (npcs is not null) await npcs.StopLaserAsync(connected, ct);
                         var id = WorldPayload.Decode(packet.Value.Payload, WorldPayload.ReadInt32);
                         var target = WorldMapInstance.IsGate(connected.MapId)
-                            ? gates is null ? null : await gates.SelectAsync(connected, id, ct)
+                            ? gates is null ? null : await gates.SelectAsync(connected, id, sessions!, ct)
                             : npcs is null ? null : await npcs.SelectAsync(connected, id, ct, fence, sessions);
                         selectedNpcId = target?.Id;
                         await connection!.SendAsync(WorldCommandId.TargetLockCommand, WorldPayload.Encode(w =>

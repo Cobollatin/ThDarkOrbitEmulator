@@ -495,7 +495,7 @@ public static class WorldHttpBridge
         if (sessions.CurrentHitPoints(pilot) <= 0)
         { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "destroyed_pilot" }, ct); return; }
         try { target = WorldMapInstance.IsGate(pilot.MapId)
-            ? await context.RequestServices.GetRequiredService<WorldGateCombat>().SelectAsync(pilot, id, ct)
+            ? await context.RequestServices.GetRequiredService<WorldGateCombat>().SelectAsync(pilot, id, sessions, ct)
             : await npcs.SelectAsync(pilot, id, ct,
                 await LeaseFenceAsync(context, pilot.MapId, ct), sessions, expectedMapId); }
         catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }

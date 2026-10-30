@@ -138,6 +138,40 @@ public sealed class LocalGalaxyGatePostgresTests
     }
 
     [Test]
+    public async Task WorldGateCombat_FromPreviousMap_DoesNotChangeTargetOrAttack()
+    {
+        var h = await HarnessAsync();
+        var ct = TestContext.CurrentContext.CancellationToken;
+        var cache = NewCache();
+        var world = new WorldSessionStore(cache, economy: h.Economy);
+        var combat = new WorldGateCombat(h.Economy, cache);
+        var pilot = await world.EnterAsync(new WorldPilot(h.Session.GameUserId, "mmo", 1, 1,
+            "ship_phoenix", 17500, 6500)
+        {
+            AccountId = h.Session.AccountId, FactionId = 1, X = 17500, Y = 6500,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
+        }, ct);
+        await SpinUntilAsync(h, "alpha", 34);
+        await ActivateAsync(h, h.Gates, "alpha");
+        var entry = WorldMapInstance.Starter(1).Portals.Single(p => p.DestinationMapId == 101);
+        pilot = (await world.JumpAsync(pilot, entry.Id, null, ct))!.Pilot;
+        var npc = (await combat.VisibleAsync(pilot, ct)).Single();
+        var targetKey = $"world:gate:target:{pilot.UserId}";
+        await cache.SetStringAsync(targetKey, "existing-target", ct);
+        var exit = WorldMapInstance.Starter(101).Portals.Single();
+        var current = (await world.JumpAsync(pilot, exit.Id, null, ct))!.Pilot;
+
+        Assert.ThrowsAsync<WorldMapChangedException>(async () =>
+            await combat.SelectAsync(pilot, npc.Id, world, ct));
+        Assert.ThrowsAsync<WorldMapChangedException>(async () =>
+            await combat.AttackAsync(pilot, npc.Id, world, ct));
+        Assert.That(await cache.GetStringAsync(targetKey, ct), Is.EqualTo("existing-target"));
+        Assert.That((await h.Economy.GateCombatAsync(pilot.AccountId, "alpha", ct))!.Kills,
+            Is.Zero);
+        Assert.That(current!.MapId, Is.EqualTo(1));
+    }
+
+    [Test]
     public async Task WorldPortal_EntersActiveGateAndWorldShotsAdvanceWavesAndGrantRewards()
     {
         var h = await HarnessAsync();
@@ -147,7 +181,8 @@ public sealed class LocalGalaxyGatePostgresTests
         var combat = new WorldGateCombat(h.Economy, cache);
         var pilot = new WorldPilot(h.Session.GameUserId, "mmo", 1, 1, "ship_phoenix", 0, 0)
         {
-            AccountId = h.Session.AccountId, FactionId = 1, X = 17500, Y = 6500
+            AccountId = h.Session.AccountId, FactionId = 1, X = 17500, Y = 6500,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
         };
         pilot = await world.EnterAsync(pilot, ct);
         var portal = WorldMapInstance.Starter(1).Portals.Single(p => p.DestinationMapId == 101);
@@ -165,7 +200,7 @@ public sealed class LocalGalaxyGatePostgresTests
             await SetCombatAsync(h.Session.AccountId, "alpha", required - 1);
             var npc = (await combat.VisibleAsync(pilot, ct)).Single();
             Assert.That(npc.Kind, Is.EqualTo(EconomyStore.GateWaveAt("alpha", wave)!.Npc));
-            Assert.That(await combat.SelectAsync(pilot, npc.Id, ct), Is.Not.Null);
+            Assert.That(await combat.SelectAsync(pilot, npc.Id, world, ct), Is.Not.Null);
             Assert.That((await combat.AttackAsync(pilot, npc.Id, world, ct)).Destroyed, Is.True);
             Assert.That((await h.Economy.GateRunAsync(h.Session.AccountId, "alpha", ct))!.Wave,
                 Is.EqualTo(wave + 1));
