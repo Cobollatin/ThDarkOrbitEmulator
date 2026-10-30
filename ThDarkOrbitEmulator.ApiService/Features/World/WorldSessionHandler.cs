@@ -551,22 +551,109 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
         var reader = new UnityWorldFrameReader(stream, options.MaximumPacketBytes);
         var clientVersion = new UnityModuleReader(versionPayload).String();
         await writer.WriteAsync(UnityWorldModules.Version(clientVersion, true), ct);
-        while (!ct.IsCancellationRequested)
+        WorldPilot? connected = null;
+        using var beaconCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        Task beacon = Task.CompletedTask;
+        try
         {
-            WorldPacket? packet;
-            try { packet = await reader.ReadAsync(ct); }
-            catch (Exception e) when (e is EndOfStreamException or InvalidDataException or IOException) { return; }
-            if (packet is null) return;
-            if ((ushort)packet.Value.Command != UnityWorldModuleId.LoginRequest) continue;
-            UnityLoginRequest login;
-            try { login = UnityLoginRequest.Read(packet.Value.Payload); }
-            catch (EndOfStreamException) { return; }
-            var (pilot, _) = await resolver.ResolveAsync(login.UserId, login.SessionId, ct);
-            if (pilot is null) return;
-            var stats = pilot.Stats;
-            await writer.WriteAsync(UnityWorldModules.ShipInitialization(pilot, stats, stats.MaxShield,
-                stats.MaxHitPoints, pilot.X, pilot.Y), ct);
+            while (!ct.IsCancellationRequested)
+            {
+                WorldPacket? packet;
+                try { packet = await reader.ReadAsync(ct); }
+                catch (Exception e) when (e is EndOfStreamException or InvalidDataException or IOException) { return; }
+                if (packet is null) return;
+                var moduleId = (ushort)packet.Value.Command;
+                if (moduleId == UnityWorldModuleId.LoginRequest && connected is null)
+                {
+                    UnityLoginRequest login;
+                    try { login = UnityLoginRequest.Read(packet.Value.Payload); }
+                    catch (EndOfStreamException) { return; }
+                    var (pilot, _) = await resolver.ResolveAsync(login.UserId, login.SessionId, ct);
+                    if (pilot is null) return;
+                    connected = sessions is null ? pilot : await sessions.EnterAsync(pilot, ct);
+                    var stats = connected.Stats;
+                    await writer.WriteAsync(UnityWorldModules.ShipInitialization(connected, stats, stats.MaxShield,
+                        stats.MaxHitPoints, connected.X, connected.Y), ct);
+                    var ui = UnityUiSettingsStore.Shared.For(connected.UserId);
+                    // The main HUD is built from the feature menu when LoginResponse is handled.
+                    await writer.WriteAsync(UnityWorldModules.UILayout(ui.Layout), ct);
+                    await writer.WriteAsync(UnityWorldModules.LoginResponse(), ct);
+                    await writer.WriteAsync(UnityWorldModules.ItemsMenu(ui), ct);
+                    foreach (var (itemId, state) in ui.Windows())
+                        await writer.WriteAsync(UnityWorldModules.WindowItem(itemId, state), ct);
+                    var map = await RuntimeMapAsync(connected.MapId, ct);
+                    foreach (var building in UnityWorldModules.HomeBase(map.HomeStation, map.FactionId))
+                        await writer.WriteAsync(building, ct);
+                    beacon = UnityBeaconAsync(writer, connected, map.HomeStation, beaconCts.Token);
+                }
+                else if (connected is not null && moduleId is UnityWorldModuleId.MenuActionRequest
+                             or UnityWorldModuleId.WindowSettingsRequest or UnityWorldModuleId.UIWindowUpdateRequest
+                             or UnityWorldModuleId.SlotBarConfigSetRequest)
+                {
+                    var ui = UnityUiSettingsStore.Shared.For(connected.UserId);
+                    try
+                    {
+                        switch (moduleId)
+                        {
+                            case UnityWorldModuleId.MenuActionRequest:
+                                var action = UnityMenuActionRequest.Read(packet.Value.Payload);
+                                if (ui.Select(action.MenuItemId) is { } selection)
+                                {
+                                    if (selection.Previous is not null)
+                                        await writer.WriteAsync(UnityWorldModules.AmmoStatus(selection.Previous, false), ct);
+                                    await writer.WriteAsync(UnityWorldModules.AmmoStatus(action.MenuItemId, true), ct);
+                                }
+                                break;
+                            case UnityWorldModuleId.WindowSettingsRequest:
+                                ui.Layout = UnityWindowSettingsRequest.Read(packet.Value.Payload);
+                                break;
+                            case UnityWorldModuleId.UIWindowUpdateRequest:
+                                var window = UnityWindowUpdateRequest.Read(packet.Value.Payload);
+                                ui.SetWindow(window.ItemId, window.State);
+                                break;
+                            default:
+                                ui.MoveSlot(UnitySlotBarConfigSetRequest.Read(packet.Value.Payload));
+                                break;
+                        }
+                    }
+                    catch (EndOfStreamException) { return; }
+                }
+                else if (moduleId == UnityWorldModuleId.MoveRequest && connected is not null && sessions is not null)
+                {
+                    UnityMoveRequest move;
+                    try { move = UnityMoveRequest.Read(packet.Value.Payload); }
+                    catch (EndOfStreamException) { return; }
+                    // The connection is not attached, so legacy-format broadcasts never reach this socket.
+                    await sessions.MoveAsync(connected, move.TargetX, move.TargetY, null, ct);
+                }
+            }
         }
+        finally
+        {
+            beaconCts.Cancel();
+            try { await beacon; } catch (Exception e) when (e is OperationCanceledException or IOException) { }
+            if (connected is not null && sessions is not null)
+                await sessions.LeaveAsync(connected, null, CancellationToken.None);
+        }
+    }
+
+    // Pushes BeaconCommand whenever the ship crosses the home station's peace radius.
+    private async Task UnityBeaconAsync(UnityWorldFrameWriter writer, WorldPilot pilot, WorldStation station,
+        CancellationToken ct)
+    {
+        bool? inPeace = null;
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(500));
+        do
+        {
+            var (x, y) = sessions is null ? (pilot.X, pilot.Y) : sessions.CurrentPosition(pilot);
+            long dx = x - station.X, dy = y - station.Y;
+            var now = dx * dx + dy * dy <= (long)station.PeaceRadius * station.PeaceRadius;
+            if (now != inPeace)
+            {
+                inPeace = now;
+                await writer.WriteAsync(UnityWorldModules.Beacon(x, y, now), ct);
+            }
+        } while (await timer.WaitForNextTickAsync(ct));
     }
 
     private async Task<WorldMapInstance> RuntimeMapAsync(int mapId, CancellationToken ct)
