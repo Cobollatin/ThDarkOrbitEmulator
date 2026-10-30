@@ -527,6 +527,32 @@ public sealed class WorldHttpBridgeTests
     }
 
     [Test]
+    public async Task BrowserTarget_WithoutMapIdFromPreviousReplica_DoesNotSelectDestinationNpc()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new NpcMutex();
+        var oldMap = new WorldSessionStore(cache, mutex);
+        var destination = new WorldSessionStore(cache, mutex);
+        var npcs = new WorldNpcs(cache, mutex, new NpcRewards(), Options.Create(new WorldNpcOptions
+        { Templates = [new("Scout", "npc_scout", 1, 50, 0, 400, 1, 400, 2, 0)] }), TimeProvider.System);
+        using var appServices = new ServiceCollection().AddSingleton(npcs).BuildServiceProvider();
+        var auth = new Auth(); var resolver = new Resolver(100);
+        await SendAsync("GET", "enter", null, auth, resolver, oldMap);
+        await destination.TeleportAsync(73, 2, 3000, 1300, false, default);
+        var npc = (await npcs.VisibleAsync(2, default)).Single();
+
+        var response = await SendAsync("POST", "target", $"{{\"npcId\":{npc.Id}}}",
+            auth, resolver, oldMap, services: appServices);
+
+        Assert.That(response.Response.StatusCode, Is.EqualTo(409));
+        using var body = JsonDocument.Parse(Body(response));
+        Assert.That(body.RootElement.GetProperty("status").GetString(), Is.EqualTo("map_changed"));
+        var current = await destination.GetOrEnterAsync((await resolver.ResolveAsync(73, Session.Dosid, default)).Pilot!, default);
+        Assert.That(await npcs.IsSelectedAsync(current, npc.Id, default), Is.False);
+    }
+
+    [Test]
     public async Task BrowserLauncherFire_UsesSeparateSharedLoad()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

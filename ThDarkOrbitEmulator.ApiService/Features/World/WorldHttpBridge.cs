@@ -490,7 +490,10 @@ public static class WorldHttpBridge
         if (!JsonRequest(context)) { context.Response.StatusCode = 415; return; }
         var pilot = await PilotAsync(context, auth, resolver, sessions, ct);
         if (pilot is null) return;
+        var admittedMapId = pilot.MapId;
         pilot = await sessions.GetOrEnterAsync(pilot, ct);
+        if (pilot.MapId != admittedMapId)
+        { await MapChangedAsync(context, pilot, sessions, ct); return; }
         await SetMeshHeadersAsync(context, pilot.MapId, ct);
         int id;
         int? expectedMapId;
@@ -504,7 +507,6 @@ public static class WorldHttpBridge
         if (expectedMapId is not null && expectedMapId != pilot.MapId)
         { await MapChangedAsync(context, pilot, sessions, ct); return; }
         WorldNpc? target;
-        var admittedMapId = pilot.MapId;
         pilot = await sessions.RestoreAsync(pilot, ct);
         if (pilot.MapId != admittedMapId)
         { await MapChangedAsync(context, pilot, sessions, ct); return; }

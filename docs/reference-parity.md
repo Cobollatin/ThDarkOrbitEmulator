@@ -1,4 +1,4 @@
-# Reference parity — iteration 161
+# Reference parity — iteration 162
 
 The two shallow clones under ignored `_reference/` are comparison material, not dependencies or native Unity evidence. Compared revisions: `darkorbit-emulators` `fb4e4564d1b3a6b6a32d75acd0e59a38771b8c9e`, `Darkorbit-client` `2b15acd8ac0b40f285f7d821cfcf586dd1f63d6c`. `darkorbit-emulators` contains several older server implementations; `Darkorbit-client` is a Flash wrapper and packet inspection tool, not a gameplay server. Its `darkDev/packet_dumper.py` hooks Flash packet send and receive functions and extracts packet IDs; it supplies no Unity command layout. Their packet identifiers and framing must not be copied into the provisional Unity world protocol without a captured fixture. The relevant local contract is [world-protocol.md](world-protocol.md).
 
@@ -42,6 +42,8 @@ The two shallow clones under ignored `_reference/` are comparison material, not 
 | 36 | Gate combat command admission | `DarkOrbit 10.0/Net/netty/handlers/ShipSelectRequestHandler.cs` and `AttackLaserRequestHandler.cs` act on the session's current player and map. The Flash wrapper supplies no Unity gate command layout. | Iteration 154 restores shared map state before gate target selection or attack. Iteration 155 retains the admitted map through HTTP and TCP refresh, so an intervening transfer cannot dispatch a gate command against the destination. | Capture Unity gate selection and attack packets before mapping these local commands to the installed client. |
 
 The rank reflects gameplay impact and an implementable local slice. The Flash reference does not establish the installed Unity client's wire contract. No reference source is copied into the emulator.
+
+Iteration 162 retains the admitted map of an HTTP NPC target request before refreshing a pilot on a stale replica. The older server's ship selection handler uses the current session player and map; the local cross-replica guard rejects the stale request as `map_changed` before selecting a destination NPC. A focused HTTP test verifies that the target remains unselected when the request omits `mapId`. This does not establish the installed Unity selection packet.
 
 Iteration 2 kept rocket fire as a single cooldown-gated action and reused the existing authoritative NPC hit and reward path for each timed laser shot. `WorldNpcs` stores active fire in the shared cache so the map lease owner can advance it after a node handoff. The TCP start request still emits its immediate hit and result; subsequent hits arrive through existing damage broadcasts. Focused tests cover timing, explicit stop, target-lock change, range loss, and socket acceptance of the stop command. The second slice preserves the NPC's current target while it remains eligible and tests peace-zone retargeting. The next ranked implementation gap is the portal combat restriction (rank 4).
 
