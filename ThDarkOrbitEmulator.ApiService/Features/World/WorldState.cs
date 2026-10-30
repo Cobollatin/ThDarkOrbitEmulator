@@ -390,7 +390,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 await PersistRuntimeAsync(pilot, ct, healAmount: hitPoints[pilot.UserId] - current);
                 await cache.SetStringAsync(HullRecoveryKey(pilot.UserId), now.ToUnixTimeMilliseconds().ToString(),
                     new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);
-                await AnnounceHullHealAsync(pilot, hitPoints[pilot.UserId] - current, ct);
+                await AnnounceHullHealAsync(pilot, ct);
             }
             finally { gate.Release(); }
         }
@@ -1656,27 +1656,28 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         if (hitPoints[pilot.UserId] >= stats.MaxHitPoints)
             await SetRepairBotAsync(pilot, false, ct);
         await PersistRuntimeAsync(pilot, ct, healAmount: hitPoints[pilot.UserId] - current);
-        await AnnounceHullHealAsync(pilot, hitPoints[pilot.UserId] - current, ct);
+        await AnnounceHullHealAsync(pilot, ct);
         return true;
     }
 
-    private async Task AnnounceHullHealAsync(WorldPilot pilot, long amount, CancellationToken ct)
+    private async Task AnnounceHullHealAsync(WorldPilot pilot, CancellationToken ct)
     {
-        var payload = WorldPayload.Encode(w =>
-        {
-            WorldPayload.WriteInt64(w, pilot.UserId);
-            WorldPayload.WriteInt64(w, amount);
-            WorldPayload.WriteInt64(w, hitPoints[pilot.UserId]);
-        });
-        var healId = (await ReadOwnHealRuntimeAsync(pilot, ct))?.LastHealId;
+        var runtime = await ReadOwnHealRuntimeAsync(pilot, ct);
+        if (runtime is null) return;
         foreach (var observer in connections.Values.Where(c => c.Pilot.MapId == pilot.MapId
             && (!WorldMapInstance.IsGate(pilot.MapId) || c.Pilot.AccountId == pilot.AccountId)).ToArray())
         {
-            try { await observer.SendAsync(WorldCommandId.ShipHealCommand, payload, ct); }
-            catch (IOException) { continue; }
-            if (healId is null) continue;
-            if (observer.Pilot.UserId == pilot.UserId) announcedOwnHeals[pilot.UserId] = healId;
-            else connectedHeals.GetOrAdd(observer.Pilot.UserId, _ => new())[pilot.UserId] = healId;
+            var own = observer.Pilot.UserId == pilot.UserId;
+            var observed = connectedHeals.GetOrAdd(observer.Pilot.UserId, _ => new());
+            var announced = own ? announcedOwnHeals.GetValueOrDefault(pilot.UserId)
+                : observed.GetValueOrDefault(pilot.UserId);
+            foreach (var heal in UnannouncedHeals(runtime, announced))
+            {
+                try { await SendHealAsync(observer, pilot.UserId, heal, ct); }
+                catch (IOException) { break; }
+                if (own) announcedOwnHeals[pilot.UserId] = heal.Id;
+                else observed[pilot.UserId] = heal.Id;
+            }
         }
     }
 

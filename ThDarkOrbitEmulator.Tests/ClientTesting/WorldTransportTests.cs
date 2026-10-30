@@ -617,6 +617,45 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task LaterLocalHeal_ReplaysEarlierFailedHealBeforeCurrentHeal()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var clock = new AdvancingWorldClock();
+        var sessions = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), clock: clock);
+        var pilot = await sessions.EnterAsync(new WorldPilot(934, "pilot", 1, 1, "ship", 0, 0)
+        {
+            FactionId = 1, X = 5000, Y = 5000,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await sessions.ApplyNpcDamageAsync(pilot, 1, 100, default, shieldAbsorption: 0);
+        var observer = await sessions.EnterAsync(pilot with { UserId = 935 }, default);
+        using var pilotWire = new MemoryStream();
+        using var observerWire = new FailFirstHealWriteStream();
+        sessions.Attach(new WorldConnection(pilot, new WorldPacketWriter(pilotWire)));
+        var observerConnection = new WorldConnection(observer, new WorldPacketWriter(observerWire));
+        sessions.Attach(observerConnection);
+        await sessions.ObserveRemotePilotsAsync(observer, observerConnection, default);
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await sessions.RecoverHullAsync(pilot.MapId, default);
+        Assert.That(observerWire.Length, Is.Zero);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await sessions.RecoverHullAsync(pilot.MapId, default);
+
+        observerWire.Position = 0;
+        var reader = new WorldPacketReader(observerWire);
+        foreach (var hull in new long[] { 925, 950 })
+        {
+            var packet = await reader.ReadAsync();
+            Assert.That(packet?.Command, Is.EqualTo(WorldCommandId.ShipHealCommand));
+            Assert.That(WorldPayload.Decode(packet!.Value.Payload, r =>
+                (WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r))),
+                Is.EqualTo((934L, 25L, hull)));
+        }
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
     public async Task LocalHullHeal_DoesNotReplayToConnectedObserver()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
