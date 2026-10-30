@@ -22,6 +22,7 @@ public static class WorldHttpBridge
         app.MapPost("/spacemap/world/move", MoveAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/jump", JumpAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/respawn", RespawnAsync).AllowAnonymous().DisableRateLimiting();
+        app.MapPost("/spacemap/world/station-repair", StationRepairAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/collect", CollectAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/target", TargetAsync).AllowAnonymous().DisableRateLimiting();
         app.MapPost("/spacemap/world/fire", FireAsync).AllowAnonymous().DisableRateLimiting();
@@ -240,6 +241,37 @@ public static class WorldHttpBridge
     public static async Task StateAsync(HttpContext context, IGameAuthSessionStore auth,
         IWorldPilotResolver resolver, WorldSessionStore sessions, CancellationToken ct)
         => await RespondAsync(context, auth, resolver, sessions, ct);
+
+    public static async Task StationRepairAsync(HttpContext context, IGameAuthSessionStore auth,
+        IWorldPilotResolver resolver, WorldSessionStore sessions, CancellationToken ct)
+    {
+        if (!JsonRequest(context)) { context.Response.StatusCode = 415; return; }
+        var pilot = await PilotAsync(context, auth, resolver, sessions, ct);
+        if (pilot is null) return;
+        var admittedMapId = pilot.MapId;
+        pilot = await sessions.GetOrEnterAsync(pilot, ct);
+        if (pilot.MapId != admittedMapId)
+        { await MapChangedAsync(context, pilot, sessions, ct); return; }
+        int mapId;
+        try
+        {
+            using var body = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: ct);
+            mapId = body.RootElement.GetProperty("mapId").GetInt32();
+        }
+        catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
+        { context.Response.StatusCode = 400; return; }
+        if (mapId != admittedMapId)
+        { await MapChangedAsync(context, pilot, sessions, ct); return; }
+        await SetMeshHeadersAsync(context, pilot.MapId, ct);
+        try
+        {
+            await sessions.RepairAtBaseFencedAsync(pilot, DateTimeOffset.UtcNow, ct,
+                await LeaseFenceAsync(context, pilot.MapId, ct));
+        }
+        catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
+        catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }
+        await WriteStateAsync(context, pilot, sessions, ct);
+    }
 
     public static async Task ConfigAsync(HttpContext context, IGameAuthSessionStore auth,
         IWorldPilotResolver resolver, WorldSessionStore sessions, CancellationToken ct)
@@ -717,7 +749,6 @@ public static class WorldHttpBridge
             var fence = await LeaseFenceAsync(context, pilot.MapId, ct);
             var move = await sessions.RetimeForLiveSpeedAsync(pilot, ct, fence);
             if (move is not null) await sessions.BroadcastMoveAsync(pilot, move, ct);
-            await sessions.RepairAtBaseFencedAsync(pilot, DateTimeOffset.UtcNow, ct, fence);
         }
         catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
         catch (WorldMapChangedException) { await MapChangedAsync(context, pilot, sessions, ct); return; }

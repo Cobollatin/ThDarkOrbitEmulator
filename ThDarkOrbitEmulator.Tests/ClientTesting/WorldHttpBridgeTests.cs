@@ -24,6 +24,39 @@ namespace ThDarkOrbitEmulator.Tests.ClientTesting;
 [TestFixture]
 public sealed class WorldHttpBridgeTests
 {
+    [Test]
+    public async Task StationRepair_RequiresExplicitActionAndCurrentMap()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var clock = new ManualClock();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), clock: clock);
+        var station = WorldMapInstance.Starter(1).HomeStation;
+        var pilot = await store.EnterAsync(new WorldPilot(73, "mmo", 1, 1, "ship_pusat-plus", 0, 0)
+        {
+            FactionId = 1, X = station.X, Y = station.Y,
+            Stats = new WorldShipStats(370, 1000, 500, 0, 0, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 100, 10, default, shieldAbsorption: 0);
+        clock.Now += TimeSpan.FromSeconds(11);
+        var auth = new Auth();
+        var resolver = new Resolver();
+
+        var state = await SendAsync("GET", "state", null, auth, resolver, store);
+        Assert.That(state.Response.StatusCode, Is.EqualTo(200));
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(990));
+        var move = await SendAsync("POST", "move",
+            $"{{\"x\":{station.X},\"y\":{station.Y},\"mapId\":1}}", auth, resolver, store);
+        Assert.That(move.Response.StatusCode, Is.EqualTo(200));
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(990));
+        var stale = await SendAsync("POST", "station-repair", "{\"mapId\":2}", auth, resolver, store);
+        Assert.That(stale.Response.StatusCode, Is.EqualTo(409));
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(990));
+
+        var activated = await SendAsync("POST", "station-repair", "{\"mapId\":1}", auth, resolver, store);
+        Assert.That(activated.Response.StatusCode, Is.EqualTo(200));
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(1000));
+    }
+
     [TestCase("application/json; charset=utf-8")]
     [TestCase("APPLICATION/JSON")]
     public async Task Move_AcceptsExactJsonMediaTypeWithCaseAndParameters(string contentType)
@@ -2285,6 +2318,7 @@ public sealed class WorldHttpBridgeTests
             case "config": await WorldHttpBridge.ConfigAsync(context, auth, resolver, store, default); break;
             case "jump": await WorldHttpBridge.JumpAsync(context, auth, resolver, store, default); break;
             case "respawn": await WorldHttpBridge.RespawnAsync(context, auth, resolver, store, default); break;
+            case "station-repair": await WorldHttpBridge.StationRepairAsync(context, auth, resolver, store, default); break;
             case "collect": await WorldHttpBridge.CollectAsync(context, auth, resolver, store,
                 services!.GetRequiredService<WorldCollectibles>(), default); break;
             case "target": await WorldHttpBridge.TargetAsync(context, auth, resolver, store,

@@ -1316,8 +1316,6 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             await cache.SetStringAsync(Key(pilot.UserId), JsonSerializer.Serialize(next),
                 new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
             await PersistRuntimeAsync(pilot, ct);
-            if (!warning)
-                await RepairAtBaseAsync(pilot, now, ct);
             return result with { RadiationWarning = warning };
         }
         finally { gate.Release(); }
@@ -1487,8 +1485,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);
     }
 
-    // State polling can repair hull. Serialize that write with lease reassignment
-    // and reload the shared pilot state before applying it.
+    // Station activation is serialized with lease reassignment and shared pilot state.
     public async Task RepairAtBaseFencedAsync(WorldPilot pilot, DateTimeOffset now,
         CancellationToken ct, WorldLeaseFence? fence)
     {
