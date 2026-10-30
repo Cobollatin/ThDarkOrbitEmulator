@@ -28,9 +28,9 @@ public sealed class WorldGateCombat(EconomyStore economy, IDistributedCache cach
     }
 
     public async Task<WorldNpc?> SelectAsync(WorldPilot pilot, int npcId, WorldSessionStore sessions,
-        CancellationToken ct)
+        CancellationToken ct, int? expectedMapId = null)
     {
-        var admittedMapId = pilot.MapId;
+        var admittedMapId = expectedMapId ?? pilot.MapId;
         pilot = await sessions.RestoreAsync(pilot, ct);
         if (pilot.MapId != admittedMapId) throw new WorldMapChangedException();
         var npc = (await VisibleAsync(pilot, ct)).FirstOrDefault(item => item.Id == npcId);
@@ -41,9 +41,9 @@ public sealed class WorldGateCombat(EconomyStore economy, IDistributedCache cach
     }
 
     public async Task<WorldNpcAttack> AttackAsync(WorldPilot pilot, int npcId, WorldSessionStore sessions,
-        CancellationToken ct)
+        CancellationToken ct, int? expectedMapId = null)
     {
-        var admittedMapId = pilot.MapId;
+        var admittedMapId = expectedMapId ?? pilot.MapId;
         pilot = await sessions.RestoreAsync(pilot, ct);
         if (pilot.MapId != admittedMapId) throw new WorldMapChangedException();
         if (await cache.GetStringAsync(TargetKey(pilot.UserId), ct) != $"{pilot.AccountId:N}:{npcId}")

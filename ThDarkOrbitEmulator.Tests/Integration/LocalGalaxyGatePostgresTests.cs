@@ -165,6 +165,10 @@ public sealed class LocalGalaxyGatePostgresTests
             await combat.SelectAsync(pilot, npc.Id, world, ct));
         Assert.ThrowsAsync<WorldMapChangedException>(async () =>
             await combat.AttackAsync(pilot, npc.Id, world, ct));
+        Assert.ThrowsAsync<WorldMapChangedException>(async () =>
+            await combat.SelectAsync(current!, npc.Id, world, ct, pilot.MapId));
+        Assert.ThrowsAsync<WorldMapChangedException>(async () =>
+            await combat.AttackAsync(current!, npc.Id, world, ct, pilot.MapId));
         Assert.That(await cache.GetStringAsync(targetKey, ct), Is.EqualTo("existing-target"));
         Assert.That((await h.Economy.GateCombatAsync(pilot.AccountId, "alpha", ct))!.Kills,
             Is.Zero);

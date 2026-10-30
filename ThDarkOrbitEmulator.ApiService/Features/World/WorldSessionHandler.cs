@@ -433,7 +433,9 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                         (npcs is not null || gates is not null) && sessions is not null)
                     {
                         var id = WorldPayload.Decode(packet.Value.Payload, WorldPayload.ReadInt32);
-                        await sessions.RestoreAsync(connected, ct);
+                        var admittedMapId = connected.MapId;
+                        connected = await sessions.RestoreAsync(connected, ct);
+                        if (connected.MapId != admittedMapId) throw new WorldMapChangedException();
                         if (sessions.CurrentHitPoints(connected) <= 0)
                         {
                             await SendLaserFireResultAsync(connection!, id, "destroyed_pilot", ct);

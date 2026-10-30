@@ -491,11 +491,14 @@ public static class WorldHttpBridge
         if (expectedMapId is not null && expectedMapId != pilot.MapId)
         { await MapChangedAsync(context, pilot, sessions, ct); return; }
         WorldNpc? target;
-        await sessions.RestoreAsync(pilot, ct);
+        var admittedMapId = pilot.MapId;
+        pilot = await sessions.RestoreAsync(pilot, ct);
+        if (pilot.MapId != admittedMapId)
+        { await MapChangedAsync(context, pilot, sessions, ct); return; }
         if (sessions.CurrentHitPoints(pilot) <= 0)
         { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "destroyed_pilot" }, ct); return; }
         try { target = WorldMapInstance.IsGate(pilot.MapId)
-            ? await context.RequestServices.GetRequiredService<WorldGateCombat>().SelectAsync(pilot, id, sessions, ct)
+            ? await context.RequestServices.GetRequiredService<WorldGateCombat>().SelectAsync(pilot, id, sessions, ct, admittedMapId)
             : await npcs.SelectAsync(pilot, id, ct,
                 await LeaseFenceAsync(context, pilot.MapId, ct), sessions, expectedMapId); }
         catch (WorldLeaseLostException) { await LeaseLostAsync(context, ct); return; }
@@ -577,7 +580,10 @@ public static class WorldHttpBridge
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
         { context.Response.StatusCode = 400; return; }
         if (expectedMapId is <= 0) { context.Response.StatusCode = 400; return; }
-        await sessions.RestoreAsync(pilot, ct);
+        var admittedMapId = pilot.MapId;
+        pilot = await sessions.RestoreAsync(pilot, ct);
+        if (pilot.MapId != admittedMapId)
+        { await MapChangedAsync(context, pilot, sessions, ct); return; }
         if (sessions.CurrentHitPoints(pilot) <= 0)
         { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "destroyed_pilot" }, ct); return; }
         if (expectedMapId is not null && expectedMapId != pilot.MapId)
@@ -589,7 +595,7 @@ public static class WorldHttpBridge
         if (launcher && WorldMapInstance.IsGate(pilot.MapId))
         { context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { status = "unsupported_weapon" }, ct); return; }
         try { result = WorldMapInstance.IsGate(pilot.MapId)
-            ? await context.RequestServices.GetRequiredService<WorldGateCombat>().AttackAsync(pilot, id, sessions, ct)
+            ? await context.RequestServices.GetRequiredService<WorldGateCombat>().AttackAsync(pilot, id, sessions, ct, admittedMapId)
             : await npcs.AttackAsync(pilot, id, sessions, ct,
                 await LeaseFenceAsync(context, pilot.MapId, ct), expectedMapId, rocket,
                 launcher: launcher); }
