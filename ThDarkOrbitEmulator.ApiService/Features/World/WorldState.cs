@@ -419,35 +419,40 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
 
     public async Task ObserveOwnRepairBotAsync(WorldPilot pilot, WorldConnection connection, CancellationToken ct)
     {
-        var saved = await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct);
-        if (saved is null) return;
-        WorldRuntimeSnapshot? runtime;
-        try { runtime = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(saved); }
-        catch (JsonException) { return; }
-        if (runtime is null || runtime.MapId != pilot.MapId) return;
-        announcedRepairBots.TryGetValue(pilot.UserId, out var announced);
-        var history = runtime.RecentRepairBotStates ?? [];
-        if (history.Length == 0 && repairBots.GetValueOrDefault(pilot.UserId) != runtime.RepairBotActive)
+        await connection.RepairBotDeliveryGate.WaitAsync(ct);
+        try
         {
-            await connection.SendAsync(WorldCommandId.RepairBotStateCommand, WorldPayload.Encode(w =>
+            var saved = await cache.GetStringAsync(RuntimeKey(pilot.UserId), ct);
+            if (saved is null) return;
+            WorldRuntimeSnapshot? runtime;
+            try { runtime = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(saved); }
+            catch (JsonException) { return; }
+            if (runtime is null || runtime.MapId != pilot.MapId) return;
+            announcedRepairBots.TryGetValue(pilot.UserId, out var announced);
+            var history = runtime.RecentRepairBotStates ?? [];
+            if (history.Length == 0 && repairBots.GetValueOrDefault(pilot.UserId) != runtime.RepairBotActive)
             {
-                WorldPayload.WriteInt64(w, pilot.UserId);
-                w.Write(runtime.RepairBotActive);
-            }), ct);
-        }
-        var index = Array.FindLastIndex(history, entry => entry.Id == announced);
-        var pending = announced is null || index < 0 && announced.Length > 0
-            ? history.TakeLast(1) : history.Skip(index + 1);
-        foreach (var entry in pending)
-        {
-            await connection.SendAsync(WorldCommandId.RepairBotStateCommand, WorldPayload.Encode(w =>
+                await connection.SendAsync(WorldCommandId.RepairBotStateCommand, WorldPayload.Encode(w =>
+                {
+                    WorldPayload.WriteInt64(w, pilot.UserId);
+                    w.Write(runtime.RepairBotActive);
+                }), ct);
+            }
+            var index = Array.FindLastIndex(history, entry => entry.Id == announced);
+            var pending = announced is null || index < 0 && announced.Length > 0
+                ? history.TakeLast(1) : history.Skip(index + 1);
+            foreach (var entry in pending)
             {
-                WorldPayload.WriteInt64(w, pilot.UserId);
-                w.Write(entry.Active);
-            }), ct);
-            announcedRepairBots[pilot.UserId] = entry.Id;
+                await connection.SendAsync(WorldCommandId.RepairBotStateCommand, WorldPayload.Encode(w =>
+                {
+                    WorldPayload.WriteInt64(w, pilot.UserId);
+                    w.Write(entry.Active);
+                }), ct);
+                announcedRepairBots[pilot.UserId] = entry.Id;
+            }
+            repairBots[pilot.UserId] = runtime.RepairBotActive;
         }
-        repairBots[pilot.UserId] = runtime.RepairBotActive;
+        finally { connection.RepairBotDeliveryGate.Release(); }
     }
 
     public async Task PrimeOwnHealAsync(WorldPilot pilot, CancellationToken ct)

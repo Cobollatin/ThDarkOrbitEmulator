@@ -468,6 +468,42 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task ConcurrentRepairBotObservations_SendTransitionOnce()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingWorldClock();
+        var mapOwner = new WorldSessionStore(cache, clock: clock);
+        var socketNode = new WorldSessionStore(cache, clock: clock);
+        var pilot = await mapOwner.EnterAsync(new WorldPilot(937, "pilot", 1, 1, "ship", 0, 0)
+        {
+            FactionId = 1, X = 5000, Y = 5000,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await mapOwner.ApplyNpcDamageAsync(pilot, 1, 100, default, shieldAbsorption: 0);
+        await socketNode.EnterAsync(pilot, default);
+        await socketNode.PrimeOwnRepairBotAsync(pilot, default);
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await mapOwner.RecoverHullAsync(pilot.MapId, default);
+
+        using var wire = new PauseFirstWriteStream();
+        var connection = new WorldConnection(pilot, new WorldPacketWriter(wire));
+        var first = socketNode.ObserveOwnRepairBotAsync(pilot, connection, default);
+        await wire.FirstWriteStarted;
+        var second = socketNode.ObserveOwnRepairBotAsync(pilot, connection, default);
+        wire.Resume();
+        await Task.WhenAll(first, second);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        var packet = await reader.ReadAsync();
+        Assert.That(packet?.Command, Is.EqualTo(WorldCommandId.RepairBotStateCommand));
+        Assert.That(WorldPayload.Decode(packet!.Value.Payload, r =>
+            (WorldPayload.ReadInt64(r), r.ReadBoolean())), Is.EqualTo((pilot.UserId, true)));
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
     public async Task RemoteHullHeal_ReachesOwningPilotOnceAfterEntry()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
@@ -3247,6 +3283,26 @@ public class WorldTransportTests
                 throw new IOException("Simulated heal delivery failure.");
             }
             return base.WriteAsync(buffer, cancellationToken);
+        }
+    }
+
+    private sealed class PauseFirstWriteStream : MemoryStream
+    {
+        private readonly TaskCompletionSource started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource resumed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private bool first = true;
+        public Task FirstWriteStarted => started.Task;
+        public void Resume() => resumed.SetResult();
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            if (first)
+            {
+                first = false;
+                started.SetResult();
+                await resumed.Task.WaitAsync(cancellationToken);
+            }
+            await base.WriteAsync(buffer, cancellationToken);
         }
     }
 

@@ -1719,6 +1719,7 @@ public sealed class WorldAndSpacemapSpecificationTests
 
         using var stationWire = new MemoryStream();
         store.Attach(new WorldConnection(pilot, new WorldPacketWriter(stationWire)));
+        await store.PrimeOwnRepairBotAsync(pilot, default);
         Assert.That(await store.RepairAtBaseFencedAsync(pilot, clock.GetUtcNow(), default, null), Is.True);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(1000));
         Assert.That(store.RepairBotActive(pilot.UserId), Is.False);
@@ -1950,6 +1951,7 @@ public sealed class WorldAndSpacemapSpecificationTests
 
         using var combatWire = new MemoryStream();
         store.Attach(new WorldConnection(pilot, new WorldPacketWriter(combatWire)));
+        await store.PrimeOwnRepairBotAsync(pilot, default);
         await store.MarkCombatAsync(pilot, default);
         Assert.That(store.RepairBotActive(pilot.UserId), Is.False);
         combatWire.Position = 0;
