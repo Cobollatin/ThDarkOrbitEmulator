@@ -19,11 +19,17 @@ public sealed class LocalAccountPreferencesStore(IDistributedCache cache, Econom
 {
     public static readonly LocalAccountPreferences Default = new("es", true, true);
 
-    // Emulator-defined language list; the Unity client settings are not changed by this page.
+    // Emulator-defined language list, matching the Unity client's language codes (DarkOrbit.Settings static
+    // constructor) so the launch-screen choice can be stored as-is.
     public static readonly IReadOnlyList<(string Code, string Name)> Languages =
     [
         ("es", "Español"), ("en", "English"), ("de", "Deutsch"), ("fr", "Français"),
-        ("it", "Italiano"), ("pl", "Polski"), ("tr", "Türkçe"), ("pt", "Português")
+        ("it", "Italiano"), ("pl", "Polski"), ("tr", "Türkçe"), ("pt", "Português"),
+        ("en_US", "English US"), ("sv", "Svenska"), ("ru", "Русский"), ("fi", "Suomi"), ("da", "Dansk"),
+        ("no", "Norsk"), ("cs", "Čeština"), ("sk", "Slovenčina"), ("pt_BR", "Português BR"), ("ro", "Română"),
+        ("el", "Ελληνικά"), ("bg", "Български"), ("hu", "Magyar"), ("es_CO", "Español (Colombia)"),
+        ("es_VE", "Español (Venezuela)"), ("es_CL", "Español (Chile)"), ("es_AR", "Español (Argentina)"),
+        ("es_PE", "Español (Perú)"), ("ja", "日本語")
     ];
 
     public const int MaxRevision = 1_000_000;

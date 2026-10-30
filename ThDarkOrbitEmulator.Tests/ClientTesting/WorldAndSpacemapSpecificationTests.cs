@@ -601,27 +601,25 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.Throws<DecoderFallbackException>(() => WorldPayload.Decode(new byte[] { 0, 1, 0xff }, WorldPayload.ReadAdminResult));
     }
 
-    [TestCase(1, 1, 2, 3)]
-    [TestCase(2, 1, 1, -1)]
-    [TestCase(5, 2, 6, 7)]
-    [TestCase(6, 2, 5, -1)]
-    [TestCase(9, 3, 10, 11)]
-    [TestCase(10, 3, 9, -1)]
-    [TestCase(13, 4, 14, 15)]
-    public void MapGraph_HasSyntheticFactionGeometry(int mapId, int faction, int firstDestination,
-        int secondDestination)
+    // Jumpgates follow the client's spacemap-config.xml: portal ids are the client gate keys.
+    [TestCase(1, 1, new[] { 1 }, new[] { 2 })]
+    [TestCase(2, 1, new[] { 2, 3, 5 }, new[] { 1, 3, 4 })]
+    [TestCase(5, 2, new[] { 16 }, new[] { 6 })]
+    [TestCase(6, 2, new[] { 10, 15, 17 }, new[] { 7, 5, 8 })]
+    [TestCase(9, 3, new[] { 24 }, new[] { 10 })]
+    [TestCase(10, 3, new[] { 14, 22, 23 }, new[] { 12, 11, 9 })]
+    [TestCase(13, 4, new[] { 32, 37, 42, 43 }, new[] { 4, 14, 15, 16 })]
+    public void MapGraph_UsesClientJumpgates(int mapId, int faction, int[] gateKeys, int[] destinations)
     {
         var map = WorldMapInstance.Starter(mapId);
         Assert.Multiple(() =>
         {
             Assert.That(map.FactionId, Is.EqualTo(faction));
             Assert.That((map.Width, map.Height), Is.EqualTo((21000, 13100)));
-            Assert.That(map.Portals[0].DestinationMapId, Is.EqualTo(firstDestination));
-            Assert.That(map.Portals[0].Id, Is.EqualTo(mapId * 100 + 1));
+            Assert.That(map.Portals.Select(p => p.Id), Is.EqualTo(gateKeys));
+            Assert.That(map.Portals.Select(p => p.DestinationMapId), Is.EqualTo(destinations));
             Assert.That(map.HomeStation.PeaceRadius, Is.EqualTo(1000));
-            Assert.That(map.Portals.Count, Is.EqualTo(secondDestination < 0 ? 1 : 2));
         });
-        if (secondDestination > 0) Assert.That(map.Portals[1].DestinationMapId, Is.EqualTo(secondDestination));
     }
 
     [Test]
@@ -648,7 +646,7 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(packets.Select(p => p.Command), Is.EqualTo(new[]
         {
             WorldCommandId.MapInitializationCommand, WorldCommandId.SpaceStationCommand,
-            WorldCommandId.JumpgateCreateCommand, WorldCommandId.JumpgateCreateCommand,
+            WorldCommandId.JumpgateCreateCommand,
             WorldCommandId.SafeZoneCommand, WorldCommandId.HeroInitCommand
         }));
         Assert.That(WorldPayload.Decode(packets[0].Payload, r =>
@@ -657,8 +655,8 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(WorldPayload.Decode(packets[1].Payload, r =>
             (WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r),
                 WorldPayload.ReadInt32(r))), Is.EqualTo((100, 2000, 1300, 1000)));
-        Assert.That(packets[4].Payload.ToArray(), Is.EqualTo(new byte[] { 1 }));
-        using var heroStream = new MemoryStream(packets[5].Payload.ToArray());
+        Assert.That(packets[3].Payload.ToArray(), Is.EqualTo(new byte[] { 1 }));
+        using var heroStream = new MemoryStream(packets[4].Payload.ToArray());
         using var heroReader = new BinaryReader(heroStream);
         Assert.That((WorldPayload.ReadInt64(heroReader), WorldPayload.ReadString(heroReader),
             WorldPayload.ReadString(heroReader)), Is.EqualTo((7L, "pilot", "ship_pusat-plus")));
@@ -669,16 +667,16 @@ public sealed class WorldAndSpacemapSpecificationTests
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
         var sessions = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
-        var outside = await sessions.EnterAsync(Pilot() with { X = 20001, Y = 1300 }, default);
-        Assert.That(await sessions.JumpAsync(outside, 101, null, default), Is.Null);
-        var inside = await sessions.TeleportAsync(outside.UserId, 1, 20000, 1300, false, default);
+        var outside = await sessions.EnterAsync(Pilot() with { X = 20001, Y = 11000 }, default);
+        Assert.That(await sessions.JumpAsync(outside, 1, null, default), Is.Null);
+        var inside = await sessions.TeleportAsync(outside.UserId, 1, 20000, 11000, false, default);
         Assert.That(inside, Is.Not.Null);
-        var jump = await sessions.JumpAsync(inside!, 101, null, default);
+        var jump = await sessions.JumpAsync(inside!, 1, null, default);
         Assert.That(jump, Is.Not.Null);
         Assert.Multiple(() =>
         {
-            Assert.That((jump!.Pilot.MapId, jump.Pilot.X, jump.Pilot.Y), Is.EqualTo((2, 2500, 1300)));
-            Assert.That(jump.PortalId, Is.EqualTo(101));
+            Assert.That((jump!.Pilot.MapId, jump.Pilot.X, jump.Pilot.Y), Is.EqualTo((2, 2100, 1900)));
+            Assert.That(jump.PortalId, Is.EqualTo(1));
             Assert.That(sessions.MoveId(jump.Pilot), Is.EqualTo(Guid.Empty));
         });
     }
@@ -907,23 +905,27 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
-    public void MapGraph_StaysInsideFaction_AndLeavesFourthMapWithoutInboundPortal()
+    public void MapGraph_EveryJumpgateHasReverseGateAtItsArrivalPoint()
     {
         var maps = Enumerable.Range(1, 16).Select(WorldMapInstance.Starter).ToArray();
-        var destinations = maps.SelectMany(m => m.Portals).Select(p => p.DestinationMapId).ToHashSet();
+        var portals = maps.SelectMany(m => m.Portals.Select(p => (Map: m.MapId, Portal: p))).ToArray();
         Assert.Multiple(() =>
         {
+            Assert.That(portals.Select(p => p.Portal.Id), Is.Unique);
             foreach (var map in maps)
             {
                 Assert.That(map.HomeStation.Id, Is.EqualTo(map.MapId * 100));
                 Assert.That((map.Width, map.Height, map.HomeStation.PeaceRadius), Is.EqualTo((21000, 13100, 1000)));
-                Assert.That(map.Portals.Select(p => p.Id),
-                    Is.EqualTo(Enumerable.Range(1, map.Portals.Count).Select(i => map.MapId * 100 + i)));
-                Assert.That(map.Portals.All(p => WorldMapInstance.Starter(p.DestinationMapId).FactionId == map.FactionId));
+                Assert.That(map.Portals, Is.Not.Empty, $"map {map.MapId}");
                 Assert.That(map.Portals.All(p => p.JumpRadius == 500));
-                Assert.That(destinations.Contains(map.MapId), Is.EqualTo((map.MapId - 1) % 4 != 3), $"map {map.MapId}");
+                Assert.That(portals.Any(p => p.Portal.DestinationMapId == map.MapId), $"map {map.MapId}");
             }
-            Assert.That(WorldMapInstance.Starter(4).Portals.Single().DestinationMapId, Is.EqualTo(3));
+            foreach (var (mapId, portal) in portals)
+            {
+                var reverse = WorldMapInstance.Starter(portal.DestinationMapId).Portals
+                    .Single(p => p.DestinationMapId == mapId);
+                Assert.That((portal.ArrivalX, portal.ArrivalY), Is.EqualTo((reverse.X, reverse.Y)), $"gate {portal.Id}");
+            }
             Assert.That(WorldMapInstance.Starter(16).FactionId, Is.EqualTo(4));
         });
     }

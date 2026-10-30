@@ -66,6 +66,8 @@ var authKeycloak = builder.AddContainer(DashboardResourceNames.AuthKeycloak, "qu
     .WithEnvironment("KC_HTTP_ENABLED", "true")
     .WithEnvironment("KC_HEALTH_ENABLED", "true")
     .WithHttpEndpoint(port: 8081, targetPort: 8080, name: "http")
+    .WithHttpEndpoint(targetPort: 9000, name: "management")
+    .WithHttpHealthCheck("/health/ready", endpointName: "management")
     .WithHttpUiLink("Keycloak admin")
     .WithExternalDocLink("https://www.keycloak.org/documentation", "Keycloak docs")
     .WithArgs("start-dev")
@@ -165,9 +167,13 @@ builder.AddJavaScriptApp(DashboardResourceNames.CmsPlayers, "../ThDarkOrbitEmula
     .WithReference(gatewayPlayers)
     .WaitFor(gatewayPlayers);
 
+// Persistent containers survive AppHost restarts, so Keycloak/Postgres/Redis are not re-created on every run.
+// Stop them with `docker stop` (or from the dashboard) when you are done.
 foreach (var container in builder.Resources.OfType<ContainerResource>())
 {
-    builder.CreateResourceBuilder(container).WithContainerRuntimeArgs(
+    builder.CreateResourceBuilder(container)
+        .WithLifetime(ContainerLifetime.Persistent)
+        .WithContainerRuntimeArgs(
         "--label", "com.docker.compose.project=thdarkorbit",
         "--label", $"com.docker.compose.service={container.Name}");
 }

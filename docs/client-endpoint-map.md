@@ -2241,7 +2241,10 @@ hex asset hashes in Live, where Redirect emitted the nine-character
 `darkorbit-22.bpsecure.com` and is left upstream by the Redirect addon.
 
 `UnityLoginPayloadBuilder` now emits the four observed startup flags and the
-twelve asset content hashes from the captured login response. The allowlisted
+twelve asset content hashes from the captured login response. `display2d` was
+later changed to `0`: the client maps it to `Settings.UserType`
+(`GameLoadingManager.InitSetting`), where `2` forces 2D on every start and `0`
+keeps the locally saved `force2D` PlayerPref. The allowlisted
 `extract_login_asset_hashes.py` script generated `CapturedAssetHashes.cs` from
 the decoded response, validating every hash as 32 hex characters and copying
 no account or session fields. The login payload test checks the emitted flags,
@@ -2520,6 +2523,7 @@ The table covers game and API traffic observed during login and the one newly ob
 | GET | `https://gbl6.darkorbit.com/indexInternal.es?action=internalPayment` | — / redirect | Redirects to company choice before faction confirmation | 302 | Verified: `20261022-003627-menus` | `Features/IndexInternal/InternalStart` | Pre-company redirect; distinct synthetic HTML page after local choice, no payment operation |
 | GET | `https://gbl3.darkorbit.com/unityApi/login.php` | — / `application/json` | `UnityLoginCapturedResponse.data` is a JSON encoded string containing `UnityLoginData` | 200 | Verified: login, flow 82 | `Features/UnityApi/Login` | Synthetic account/hangar data; session required; local company choice changes faction and local starter map; captured asset hashes and four startup flags |
 | GET | `https://gbl3.darkorbit.com/unityApi/links.php` | — / `application/json` | `UnityLinksResponse`: six string links | 200 | Verified: login, flow 83 | `Features/UnityApi/Links` | Four captured static values; two local authenticated-link placeholders |
+| POST | `/unityApi/setLang.php` | form field `lang` (client code, e.g. `en`, `en_US`, `pt_BR`) / empty | Sent by `LaunchShow.GetUnityPostLanguage` when the launch-screen language dropdown changes | 200 saved or unchanged; 400 unknown/disabled code or non-form body; 401 no valid `dosid` cookie | No official capture; observed from the patched 1.1.93 client | `Features/UnityApi/Login/SetLangEndpoint.cs` | Stores the exact client code as the account language, so the next `login.php` `lang` keeps the choice. The 27 client codes come from `DarkOrbit.Settings` (migration `031_client_languages_unity`) |
 | GET | `/indexInternal.es?action=internalSupport` or `internalAccount` | — / no local-target Live response captured | Local link targets from `unityApi/links.php` | — | Emulator-only destinations | `Features/IndexInternal/InternalStart` | Session-gated Support placeholder and local Account page with persisted preferences; client use unverified |
 | POST | `/indexInternal.es?action=internalAccountSave` | form fields `language`, `sound`, `notifications`, `rev` / redirect | Emulator-only preferences action | 303 on valid save (`saved={rev}`), 303 to `internalAccount&unchanged=1` when the values already match (no revision bump, menu-187) | No official capture | `Features/IndexInternal/InternalStart` | Account-scoped local settings; invalid input 400, no session 401, no or invalid company 403, stale or replayed `rev` 409, non-POST 405, unreadable form 400; HTML error pages |
 | GET | `/indexInternal.es?action=internalForum` or `internalHelp` | — / no local-target Live response captured | Link targets from local `unityApi/login.php` `boardLink` and `helpLink` | — | Emulator-only destinations | `Features/IndexInternal/InternalStart` | Session-gated synthetic Forum and Help HTML pages with 400/401/403/404 validation, board notices, and an optional `category` filter (menu-44); client use unverified |

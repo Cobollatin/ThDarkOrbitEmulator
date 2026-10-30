@@ -230,10 +230,11 @@ public sealed class WorldMeshJourneyTests
         Assert.That(four.Leases.GroupBy(l => l.NodeId).Select(g => g.Count()), Has.All.EqualTo(4));
         Assert.That(four.Leases.Count(l => three.Leases.Single(old => old.MapId == l.MapId).NodeId != l.NodeId),
             Is.GreaterThan(0));
-        var portal = WorldMapInstance.Starter(1).Portals.First(p =>
-            four.Leases.Single(l => l.MapId == p.DestinationMapId).NodeId !=
-            four.Leases.Single(l => l.MapId == 1).NodeId);
-        await stores[0].TeleportAsync(100, 1, portal.X, portal.Y, false, default);
+        var (sourceMapId, portal) = Enumerable.Range(1, 16)
+            .SelectMany(id => WorldMapInstance.Starter(id).Portals.Select(p => (MapId: id, Portal: p)))
+            .First(x => four.Leases.Single(l => l.MapId == x.Portal.DestinationMapId).NodeId !=
+                four.Leases.Single(l => l.MapId == x.MapId).NodeId);
+        await stores[0].TeleportAsync(100, sourceMapId, portal.X, portal.Y, false, default);
         using var meshService = new ServiceCollection().AddSingleton<IServerMeshRegistry>(mesh[0]).BuildServiceProvider();
         var jump = await HttpAsync("jump", $"{{\"portalId\":{portal.Id}}}", "fixture-0",
             auth, resolver, stores[1], meshService);

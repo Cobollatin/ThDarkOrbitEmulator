@@ -25,6 +25,15 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+// After an in-game logout the Unity client reopens "{host}/" + "/indexInternal.es?action=internalWebGL".
+// Collapse the leading "//" before routing so that page still returns the dosid the client needs for login.php.
+app.Use((context, next) =>
+{
+    if (context.Request.Path.Value is { Length: > 1 } path && path.StartsWith("//", StringComparison.Ordinal))
+        context.Request.Path = "/" + path.TrimStart('/');
+    return next(context);
+});
+app.UseRouting();
 app.UseExceptionHandler();
 app.UseServiceDefaults();
 app.UseCors();

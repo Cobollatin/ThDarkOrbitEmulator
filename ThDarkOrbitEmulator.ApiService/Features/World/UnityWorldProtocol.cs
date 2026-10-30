@@ -31,6 +31,7 @@ public static class UnityWorldModuleId
     public const ushort MenuCategoryInitializationCommand = 37349;
     public const ushort TimerStateModule = 47277;
     public const ushort SlotInfoCommand = 61563;
+    public const ushort DisplaySettingsRequest = 266;
     public const ushort WindowSettingsRequest = 268;
     public const ushort UIWindowUpdateRequest = 9246;
     public const ushort SlotBarConfigSetRequest = 31832;
@@ -40,6 +41,24 @@ public static class UnityWorldModuleId
     public const ushort BeaconCommand = 4853;
     public const ushort ClanRelationModule = 7010;
     public const ushort AssetCreateCommand = 21957;
+    public const ushort JumpRequest = 10;
+    public const ushort JumpDeniedCommand = 18;
+    public const ushort JumpInitiatedCommand = 19;
+    public const ushort JumpgateCreateCommand = 3389;
+    public const ushort UserKeyBindingsModule = 800;
+    public const ushort UserKeyBindingsUpdate = 801;
+    public const ushort AssetInformationModule = 3430;
+    public const ushort MapAssetActivationRequest = 4302;
+    public const ushort MapAssetActionAvailableCommand = 6530;
+    public const ushort HangarShipsCommand = 21507;
+    public const ushort HangarShipBriefCommand = 17967;
+    public const ushort HangarListRequest = 0xA2C5;
+    public const ushort ShopItemListCommand = 0xDF84;
+    public const ushort HangarShipDetailRequest = 0xFDAA;
+    public const ushort HangarShipDetailCommand = 0xA1C7;
+    public const ushort HangarShipEquipmentRequest = 0xDE44;
+    public const ushort HangarShipEquipmentCommand = 13231;
+    public const ushort HangarShipEquipmentMsg = 20353;
 }
 
 // AssetTypeModule.AssetType values used for the home base. AssetCreateHelper.GetBuildTypeId resolves
@@ -309,6 +328,13 @@ public sealed record UnityMoveRequest(int PositionX, int TargetY, int TargetX, i
     }
 }
 
+// MapAssetActivationRequest.read: mapAssetId (rotr 5). Sent when an enabled click bubble is clicked.
+public sealed record UnityMapAssetActivationRequest(int MapAssetId)
+{
+    public static UnityMapAssetActivationRequest Read(ReadOnlyMemory<byte> payload) =>
+        new(new UnityModuleReader(payload).RotatedInt(5));
+}
+
 // MenuActionRequest.write: sourceType (ITEM_BAR=0, SLOT_BAR=1), menuItemId, actionType (SELECT=0, ACTIVATE=1).
 public sealed record UnityMenuActionRequest(short SourceType, string MenuItemId, short ActionType)
 {
@@ -361,6 +387,26 @@ public sealed record UnityWindowSettingsRequest(int MinimapScale, string MainMen
         return new UnityWindowSettingsRequest(r.RotatedInt(18), r.String(), r.String(), r.String(), r.String(),
             r.String(), r.String(), r.String(), r.String(), r.String(), r.String(), r.String(), r.String(),
             r.String(), r.Bool());
+    }
+}
+
+// DisplaySettingsRequest.write: seventeen display booleans, displayUse2d, eight rotated quality ints
+// (rotr 11, 7, 26, 15, 30, 28, 1, 8), then five booleans. Sent at login and when display settings are saved.
+// One hangar equipment configuration; lists hold inventory item ids.
+public sealed record HangarShipConfig(int SetId, bool Active, IReadOnlyList<int> Lasers, IReadOnlyList<int> Generators);
+
+public sealed record UnityDisplaySettingsRequest(bool Use2D)
+{
+    private static readonly int[] QualityRotations = [11, 7, 26, 15, 30, 28, 1, 8];
+
+    public static UnityDisplaySettingsRequest Read(ReadOnlyMemory<byte> payload)
+    {
+        var r = new UnityModuleReader(payload);
+        for (var i = 0; i < 17; i++) r.Bool();
+        var use2D = r.Bool();
+        foreach (var bits in QualityRotations) r.RotatedInt(bits);
+        for (var i = 0; i < 5; i++) r.Bool();
+        return new UnityDisplaySettingsRequest(use2D);
     }
 }
 
@@ -486,23 +532,40 @@ public static class UnityWorldModules
             .ToArray();
 
     // A home base is five separate buildings around the station point (HQ in the middle).
-    public static IReadOnlyList<byte[]> HomeBase(WorldStation station, int factionId)
+    public static IReadOnlyList<(int Id, UnityAssetType Type, string Name, int X, int Y)> HomeBaseLayout(
+        WorldStation station)
     {
         int id = station.Id * 10, x = station.X, y = station.Y;
         return
         [
-            AssetCreate(id + 1, UnityAssetType.CompanyHqHome, "HQ", factionId, 0, x, y),
-            AssetCreate(id + 2, UnityAssetType.InstantRepairHome, "Repair Station", factionId, 0, x, y - 600),
-            AssetCreate(id + 3, UnityAssetType.HangarHome, "Hangar", factionId, 0, x + 600, y),
-            AssetCreate(id + 4, UnityAssetType.QuestGiver, "Quest Giver", factionId, factionId * 3, x, y + 600),
-            AssetCreate(id + 5, UnityAssetType.OreTradeHome, "Ore Trade", factionId, 0, x - 600, y),
+            (id + 1, UnityAssetType.CompanyHqHome, "HQ", x, y),
+            (id + 2, UnityAssetType.InstantRepairHome, "Repair Station", x, y - 600),
+            (id + 3, UnityAssetType.HangarHome, "Hangar", x + 600, y),
+            (id + 4, UnityAssetType.QuestGiver, "Quest Giver", x, y + 600),
+            (id + 5, UnityAssetType.OreTradeHome, "Ore Trade", x - 600, y),
         ];
     }
+
+    public static IReadOnlyList<byte[]> HomeBase(WorldStation station, int factionId) =>
+        HomeBaseLayout(station).Select(asset => AssetCreate(asset.Id, asset.Type, asset.Name, factionId,
+            asset.Type == UnityAssetType.QuestGiver ? factionId * 3 : 0, asset.X, asset.Y)).ToArray();
+
+    // MapAssetActionAvailableCommand.read: mapAssetId (rotr 20), state (raw short, 0 = ON, 1 = OFF), activatable,
+    // toolTip (MessageKeyListWildcardCommand), additionalInformation (empty AssetInformationModule).
+    // Enables or disables the click bubble of a building or jumpgate.
+    public static byte[] MapAssetActionAvailable(int assetId, bool available) =>
+        new UnityModuleWriter(UnityWorldModuleId.MapAssetActionAvailableCommand)
+            .RotatedInt(assetId, 20)
+            .Short(available ? (short)0 : (short)1)
+            .Bool(available)
+            .Module(EmptyToolTip())
+            .Module(new UnityModuleWriter(UnityWorldModuleId.AssetInformationModule).ToArray())
+            .ToArray();
 
     // BeaconCommand.read: inPeaceArea, positionAheadY (rotr 20), isAlarmEffectActive, positionY (rotr 21),
     // repairRobotActive, repairRobotLootId, positionX (rotr 31), inStation, nearJumpGate, positionAheadX (rotr 14),
     // inRadiationZone, repairBotSkilled. BeaconCommandHandler shows the demilitarized-zone notice.
-    public static byte[] Beacon(int x, int y, bool inPeaceArea) =>
+    public static byte[] Beacon(int x, int y, bool inPeaceArea, bool nearJumpGate = false) =>
         new UnityModuleWriter(UnityWorldModuleId.BeaconCommand)
             .Bool(inPeaceArea)
             .RotatedInt(y, 20)
@@ -512,9 +575,78 @@ public static class UnityWorldModules
             .String(string.Empty)
             .RotatedInt(x, 31)
             .Bool(false)
-            .Bool(false)
+            .Bool(nearJumpGate)
             .RotatedInt(x, 14)
             .Bool(false)
+            .Bool(false)
+            .ToArray();
+
+    // JumpgateCreateCommand.read: gateId (rotr 10), factionId (rotr 30), designId (rotr 17), x (rotr 11),
+    // y (rotr 9), isVisibleOnMinimap, showBubble, decoratorAssetTypes (byte count of ints rotr 30).
+    // designId selects the lib_portals asset; 1 is the standard portal.
+    public static byte[] Jumpgate(WorldPortal portal, int factionId = 0, int designId = 1) =>
+        new UnityModuleWriter(UnityWorldModuleId.JumpgateCreateCommand)
+            .RotatedInt(portal.Id, 10)
+            .RotatedInt(factionId, 30)
+            .RotatedInt(designId, 17)
+            .RotatedInt(portal.X, 11)
+            .RotatedInt(portal.Y, 9)
+            .Bool(true)
+            .Bool(true)
+            .Byte(0)
+            .ToArray();
+
+    // JumpInitiatedCommand.read: mapId (rotr 25), gateId (rotr 26). Plays the jump effect on that gate;
+    // the map switch itself happens when ShipInitializationCommand arrives with a different map id.
+    public static byte[] JumpInitiated(int mapId, int gateId) =>
+        new UnityModuleWriter(UnityWorldModuleId.JumpInitiatedCommand)
+            .RotatedInt(mapId, 25)
+            .RotatedInt(gateId, 26)
+            .ToArray();
+
+    // JumpDeniedCommand.read: mandatoryLevel (rotr 6).
+    public static byte[] JumpDenied(int mandatoryLevel = 0) =>
+        new UnityModuleWriter(UnityWorldModuleId.JumpDeniedCommand)
+            .RotatedInt(mandatoryLevel, 6)
+            .ToArray();
+
+    // UserKeyBindingsModule.ActionType values with DarkOrbit's default (Flash) key codes. The client has no
+    // local defaults: KeyboardComponent.KeyboardInit only runs from UserKeyBindingsUpdateHandler.
+    public static readonly IReadOnlyList<(short Action, int[] KeyCodes, int Parameter)> DefaultKeyBindings =
+    [
+        (0, [74], 0),   // JUMP: J
+        (1, [67], 0),   // CHANGE_CONFIG: C
+        (2, [17], 0),   // ACTIVATE_LASER: Ctrl
+        (3, [32], 0),   // LAUNCH_ROCKET: Space
+        (4, [69], 0),   // PET_ACTIVATE: E
+        (5, [82], 0),   // PET_GUARD_MODE: R
+        (6, [76], 0),   // LOGOUT: L
+        .. Enumerable.Range(0, 10).Select(i => ((short)7, new[] { i == 9 ? 48 : 49 + i }, i)),       // QUICKSLOT: 1..0
+        .. Enumerable.Range(0, 10).Select(i => ((short)8, new[] { 112 + i }, i)),                     // QUICKSLOT_PREMIUM: F1..F10
+        (9, [72], 0),   // TOGGLE_WINDOWS: H
+        (10, [70], 0),  // PERFORMANCE_MONITORING: F
+        (11, [107], 0), // ZOOM_IN: numpad +
+        (12, [109], 0), // ZOOM_OUT: numpad -
+        (13, [], 0),    // PET_REPAIR_SHIP
+        (14, [13], 0),  // FOCUS_CHAT: Enter
+        (15, [], 0),    // TOGGLE_CATEGORY_BAR
+        (16, [], 0),    // TOGGLE_PRO_ACTION_BAR
+        (17, [], 0),    // AUTO_ACTION_BAR
+    ];
+
+    // UserKeyBindingsUpdate.read: changedKeyBindings (byte list), remove (bool).
+    // UserKeyBindingsModule.read: actionType (raw short), keyCodes (byte list of int rotr 25),
+    // parameter (rotr 18), charCode (short; client computes rotl 2).
+    public static byte[] KeyBindings(IEnumerable<(short Action, int[] KeyCodes, int Parameter)>? bindings = null) =>
+        new UnityModuleWriter(UnityWorldModuleId.UserKeyBindingsUpdate)
+            .ModuleList((bindings ?? DefaultKeyBindings).Select(binding =>
+            {
+                var module = new UnityModuleWriter(UnityWorldModuleId.UserKeyBindingsModule)
+                    .Short(binding.Action)
+                    .Byte((byte)binding.KeyCodes.Length);
+                foreach (var keyCode in binding.KeyCodes) module.RotatedInt(keyCode, 25);
+                return module.RotatedInt(binding.Parameter, 18).Short(0).ToArray();
+            }).ToArray())
             .Bool(false)
             .ToArray();
 
@@ -591,6 +723,108 @@ public static class UnityWorldModules
             .ToArray();
 
     // Field order and rotations follow ShipInitializationCommand.read.
+    // HangarShipsCommand.read: petView (nullable module, id 0 = none), then byte-counted module lists drones,
+    // ships (HangarShipBriefCommand), items and allDesignPack. Answers HangarListRequest from the hangar window.
+    // ShopItemListCommand.read: itemList, promptList, currentShipLootId, category. HangarShipsCommandHandlerEvent
+    // only resolves each hangar ship's ItemInfo once a "ship" category list exists, so send it (empty) first.
+    public static byte[] ShopItemList(string category, string currentShipLootId) =>
+        new UnityModuleWriter(UnityWorldModuleId.ShopItemListCommand)
+            .ModuleList([])
+            .ModuleList([])
+            .String(currentShipLootId)
+            .String(category)
+            .ToArray();
+
+    public static byte[] HangarShips(string shipLootId, long shipId) =>
+        new UnityModuleWriter(UnityWorldModuleId.HangarShipsCommand)
+            .Short(0)
+            .ModuleList([])
+            .ModuleList([HangarShipBrief(shipLootId, shipId, isActive: true)])
+            .ModuleList([])
+            .ModuleList([])
+            .ToArray();
+
+    // HangarShipBriefCommand.read: lootId, isFavorite, shipId (double), isActive.
+    public static byte[] HangarShipBrief(string lootId, long shipId, bool isActive) =>
+        new UnityModuleWriter(UnityWorldModuleId.HangarShipBriefCommand)
+            .String(lootId)
+            .Bool(false)
+            .Long(shipId)
+            .Bool(isActive)
+            .ToArray();
+
+    // HangarShipDetailCommand.read: hp (rotr 3), laserAmmo (double), nano (29), shieldGenerators (11),
+    // curDesignLootId, maxSpeed (2), maxHp (3), designList (byte-counted strings), upgradeModuleCount (20),
+    // isFavorite, shield (12), shipId (double), hull (31), lootId, repairVouchers (26), speedGenerators (16),
+    // laserCount (25), isActive, rockets (12), maxNano (16). Answers HangarShipDetailRequest for the selected ship.
+    public static byte[] HangarShipDetail(string lootId, long shipId, bool isActive, WorldShipStats stats,
+        long hitPoints, long shield) =>
+        new UnityModuleWriter(UnityWorldModuleId.HangarShipDetailCommand)
+            .RotatedInt(ClampInt(hitPoints), 3)
+            .Long(0)
+            .RotatedInt(0, 29)
+            .RotatedInt(0, 11)
+            .String(lootId)
+            .RotatedInt(stats.Speed, 2)
+            .RotatedInt(ClampInt(stats.MaxHitPoints), 3)
+            .Byte(0)
+            .RotatedInt(0, 20)
+            .Bool(false)
+            .RotatedInt(ClampInt(shield), 12)
+            .Long(shipId)
+            .RotatedInt(0, 31)
+            .String(lootId)
+            .RotatedInt(0, 26)
+            .RotatedInt(0, 16)
+            .RotatedInt(0, 25)
+            .Bool(isActive)
+            .RotatedInt(0, 12)
+            .RotatedInt(0, 16)
+            .ToArray();
+
+    private static int ClampInt(long value) => (int)Math.Clamp(value, 0, int.MaxValue);
+
+    // HangarShipEquipmentCommand.read: shipId (double), extrasSlotsSize2 (rotr 18), hangarId (double), lootId,
+    // petConfigs, extrasSlotsSize1 (2), shipConfigs, droneConfigs, currentConfigId (26).
+    // Answers HangarShipEquipmentRequest when the hangar Manage page opens.
+    public static byte[] HangarShipEquipment(string lootId, long shipId, long hangarId, int currentConfigId,
+        IReadOnlyList<HangarShipConfig> shipConfigs) =>
+        new UnityModuleWriter(UnityWorldModuleId.HangarShipEquipmentCommand)
+            .Long(shipId)
+            .RotatedInt(0, 18)
+            .Long(hangarId)
+            .String(lootId)
+            .ModuleList([])
+            .RotatedInt(0, 2)
+            .ModuleList(shipConfigs.Select(HangarShipEquipmentMsg).ToArray())
+            .ModuleList([])
+            .RotatedInt(currentConfigId, 26)
+            .ToArray();
+
+    // HangarShipEquipmentMsg.read: active, setId (rotr 15), then byte-counted int lists generators (23),
+    // extra (21), QuantumFluidCore (10), laser (21), cannonShield (9), rocket (11), upgrades (16), cannon (23).
+    public static byte[] HangarShipEquipmentMsg(HangarShipConfig config)
+    {
+        var writer = new UnityModuleWriter(UnityWorldModuleId.HangarShipEquipmentMsg)
+            .Bool(config.Active)
+            .RotatedInt(config.SetId, 15);
+        IntList(writer, config.Generators, 23);
+        IntList(writer, [], 21);
+        IntList(writer, [], 10);
+        IntList(writer, config.Lasers, 21);
+        IntList(writer, [], 9);
+        IntList(writer, [], 11);
+        IntList(writer, [], 16);
+        IntList(writer, [], 23);
+        return writer.ToArray();
+    }
+
+    private static void IntList(UnityModuleWriter writer, IReadOnlyCollection<int> values, int bits)
+    {
+        writer.Byte(checked((byte)values.Count));
+        foreach (var value in values) writer.RotatedInt(value, bits);
+    }
+
     public static byte[] ShipInitialization(WorldPilot pilot, WorldShipStats stats, long shield, long hitPoints,
         int x, int y) =>
         new UnityModuleWriter(UnityWorldModuleId.ShipInitializationCommand)

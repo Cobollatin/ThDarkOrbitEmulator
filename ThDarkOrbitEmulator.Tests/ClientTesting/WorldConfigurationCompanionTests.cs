@@ -113,7 +113,7 @@ public sealed class WorldConfigurationCompanionTests
             second.CurrentPosition(restored, start.AddSeconds(2)));
         stream.Position = 0;
         var reader = new WorldPacketReader(stream);
-        for (var i = 0; i < 5; i++) await reader.ReadAsync();
+        for (var i = 0; i < 3 + WorldMapInstance.Starter(restored.MapId).Portals.Count; i++) await reader.ReadAsync();
         var hero = (await reader.ReadAsync())!.Value;
         var attributes = WorldPayload.Decode(hero.Payload, r =>
         {

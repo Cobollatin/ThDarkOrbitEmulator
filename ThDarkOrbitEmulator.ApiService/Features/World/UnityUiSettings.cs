@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 
 namespace ThDarkOrbitEmulator.ApiService.Features.World;
 
@@ -86,8 +87,44 @@ public sealed class UnityUiSettings
                 ? slots.Select(slot => (slot.Key, slot.Value)).ToArray()
                 : [];
     }
+
+    public string ToJson()
+    {
+        lock (_gate)
+            return JsonSerializer.Serialize(new UnityUiSettingsData(_layout,
+                new Dictionary<string, UnityWindowState>(_windows),
+                new Dictionary<string, string>(_selected),
+                _slotBars.ToDictionary(bar => bar.Key, bar => new Dictionary<int, string>(bar.Value))));
+    }
+
+    public static UnityUiSettings FromJson(string? json)
+    {
+        var settings = new UnityUiSettings();
+        if (string.IsNullOrWhiteSpace(json)) return settings;
+        UnityUiSettingsData? data;
+        try { data = JsonSerializer.Deserialize<UnityUiSettingsData>(json); }
+        catch (JsonException) { return settings; }
+        if (data is null) return settings;
+        settings._layout = data.Layout;
+        foreach (var (id, state) in data.Windows ?? []) settings._windows[id] = state;
+        foreach (var (category, item) in data.Selected ?? [])
+            if (settings._selected.ContainsKey(category) && UnityItemsMenu.CategoryOf(item) == category)
+                settings._selected[category] = item;
+        foreach (var (barId, slots) in data.SlotBars ?? [])
+            if (settings._slotBars.ContainsKey(barId))
+                settings._slotBars[barId] = new SortedDictionary<int, string>(slots
+                    .Where(slot => UnityItemsMenu.CategoryOf(slot.Value) is not null)
+                    .ToDictionary(slot => slot.Key, slot => slot.Value));
+        return settings;
+    }
+
+    private sealed record UnityUiSettingsData(UnityWindowSettingsRequest? Layout,
+        Dictionary<string, UnityWindowState>? Windows, Dictionary<string, string>? Selected,
+        Dictionary<string, Dictionary<int, string>>? SlotBars);
 }
 
+// Keeps the live per-pilot settings in memory and mirrors them to the world session cache (Redis in the
+// AppHost) so HUD placement survives server restarts.
 public sealed class UnityUiSettingsStore
 {
     private readonly ConcurrentDictionary<long, UnityUiSettings> _settings = new();
@@ -95,4 +132,15 @@ public sealed class UnityUiSettingsStore
     public static UnityUiSettingsStore Shared { get; } = new();
 
     public UnityUiSettings For(long userId) => _settings.GetOrAdd(userId, _ => new UnityUiSettings());
+
+    public async Task<UnityUiSettings> LoadAsync(long userId, WorldSessionStore? sessions, CancellationToken ct)
+    {
+        if (sessions is null) return For(userId);
+        var settings = UnityUiSettings.FromJson(await sessions.UnityUiSettingsAsync(userId, ct));
+        _settings[userId] = settings;
+        return settings;
+    }
+
+    public Task SaveAsync(long userId, WorldSessionStore? sessions, CancellationToken ct) =>
+        sessions is null ? Task.CompletedTask : sessions.SaveUnityUiSettingsAsync(userId, For(userId).ToJson(), ct);
 }
