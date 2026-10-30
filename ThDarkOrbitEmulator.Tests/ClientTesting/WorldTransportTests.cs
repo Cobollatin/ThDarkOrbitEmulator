@@ -434,6 +434,61 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task RemoteHullHeals_ReplayEachRecoveryBetweenPolls()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingWorldClock();
+        var mapOwner = new WorldSessionStore(cache, clock: clock);
+        var socketNode = new WorldSessionStore(cache, clock: clock);
+        var observerNode = new WorldSessionStore(cache, clock: clock);
+        var pilot = await mapOwner.EnterAsync(new WorldPilot(925, "pilot", 1, 1, "ship", 0, 0)
+        {
+            FactionId = 1, X = 5000, Y = 5000,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await mapOwner.ApplyNpcDamageAsync(pilot, 1, 100, default, shieldAbsorption: 0);
+        await socketNode.EnterAsync(pilot, default);
+        await socketNode.PrimeOwnHealAsync(pilot, default);
+        var observer = pilot with { UserId = 926 };
+        using var ownWire = new MemoryStream();
+        using var observerWire = new MemoryStream();
+        var ownConnection = new WorldConnection(pilot, new WorldPacketWriter(ownWire));
+        var observerConnection = new WorldConnection(observer, new WorldPacketWriter(observerWire));
+        socketNode.Attach(ownConnection);
+        await observerNode.ObserveRemotePilotsAsync(observer, observerConnection, default);
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await mapOwner.RecoverHullAsync(pilot.MapId, default);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await mapOwner.RecoverHullAsync(pilot.MapId, default);
+        await socketNode.ObserveOwnHealAsync(pilot, ownConnection, default);
+        await socketNode.ObserveOwnHealAsync(pilot, ownConnection, default);
+        await Task.Delay(WorldSessionStore.RemoteSnapshotTtl + TimeSpan.FromMilliseconds(100));
+        await observerNode.ObserveRemotePilotsAsync(observer, observerConnection, default);
+        await observerNode.ObserveRemotePilotsAsync(observer, observerConnection, default);
+
+        ownWire.Position = 0;
+        var ownReader = new WorldPacketReader(ownWire);
+        observerWire.Position = 0;
+        var observerReader = new WorldPacketReader(observerWire);
+        Assert.That((await observerReader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.PilotCreateCommand));
+        Assert.That((await observerReader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.CloakStateCommand));
+        foreach (var reader in new[] { ownReader, observerReader })
+        {
+            foreach (var hull in new long[] { 925, 950 })
+            {
+                var packet = await reader.ReadAsync();
+                Assert.That(packet?.Command, Is.EqualTo(WorldCommandId.ShipHealCommand));
+                Assert.That(WorldPayload.Decode(packet!.Value.Payload, r =>
+                    (WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r))),
+                    Is.EqualTo((925L, 25L, hull)));
+            }
+            Assert.That(await reader.ReadAsync(), Is.Null);
+        }
+    }
+
+    [Test]
     public async Task LocalHullHeal_DoesNotReplayToOwningPilot()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

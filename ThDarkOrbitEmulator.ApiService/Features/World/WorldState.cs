@@ -104,11 +104,13 @@ public static class WorldShipStatCalculator
 }
 
 public sealed record WorldPosition(int MapId, int X, int Y);
+public sealed record WorldHealEvent(string Id, long Amount, long Hull);
 public sealed record WorldRuntimeSnapshot(int MapId, int Configuration, long Shield,
     long LastSwitchUnixMilliseconds, WorldTravel? Travel, long? HitPoints = null,
     long LastHazardUnixMilliseconds = 0, bool RadiationWarning = false, bool RepairBotActive = false,
     string? DeathId = null, bool IsInvisible = false, long LastCloakActivationUnixMs = 0,
-    string? LastHealId = null, long LastHealAmount = 0, long LastHealHull = 0);
+    string? LastHealId = null, long LastHealAmount = 0, long LastHealHull = 0,
+    WorldHealEvent[]? RecentHeals = null);
 public sealed record WorldJumpResult(WorldPilot Pilot, int PortalId, string? TargetNodeId,
     string? TargetTcpHostPort);
 public sealed record WorldSwitchResult(bool Changed, int CooldownRemainingMs, WorldMoveResult? Move);
@@ -437,22 +439,40 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     {
         var runtime = await ReadOwnHealRuntimeAsync(pilot, ct);
         if (runtime?.LastHealId is { } id) announcedOwnHeals[pilot.UserId] = id;
-        else announcedOwnHeals.TryRemove(pilot.UserId, out _);
+        else announcedOwnHeals[pilot.UserId] = string.Empty;
     }
 
     public async Task ObserveOwnHealAsync(WorldPilot pilot, WorldConnection connection, CancellationToken ct)
     {
         var runtime = await ReadOwnHealRuntimeAsync(pilot, ct);
-        if (runtime?.LastHealId is not { } id ||
-            announcedOwnHeals.TryGetValue(pilot.UserId, out var announced) && announced == id) return;
-        await connection.SendAsync(WorldCommandId.ShipHealCommand, WorldPayload.Encode(w =>
+        if (runtime is null) return;
+        announcedOwnHeals.TryGetValue(pilot.UserId, out var announced);
+        foreach (var heal in UnannouncedHeals(runtime, announced))
         {
-            WorldPayload.WriteInt64(w, pilot.UserId);
-            WorldPayload.WriteInt64(w, runtime.LastHealAmount);
-            WorldPayload.WriteInt64(w, runtime.LastHealHull);
-        }), ct);
-        announcedOwnHeals[pilot.UserId] = id;
+            await SendHealAsync(connection, pilot.UserId, heal, ct);
+            announcedOwnHeals[pilot.UserId] = heal.Id;
+        }
     }
+
+    private static IEnumerable<WorldHealEvent> UnannouncedHeals(WorldRuntimeSnapshot runtime, string? announced)
+    {
+        var history = runtime.RecentHeals is { Length: > 0 } recent ? recent
+            : runtime.LastHealId is { } id
+                ? [new WorldHealEvent(id, runtime.LastHealAmount, runtime.LastHealHull)]
+                : [];
+        if (announced is null) return history.Length > 0 ? [history[^1]] : [];
+        if (announced.Length == 0) return history;
+        var index = Array.FindLastIndex(history, heal => heal.Id == announced);
+        return index >= 0 ? history.Skip(index + 1) : history.Length > 0 ? [history[^1]] : [];
+    }
+
+    private static Task SendHealAsync(WorldConnection connection, long userId, WorldHealEvent heal,
+        CancellationToken ct) => connection.SendAsync(WorldCommandId.ShipHealCommand, WorldPayload.Encode(w =>
+        {
+            WorldPayload.WriteInt64(w, userId);
+            WorldPayload.WriteInt64(w, heal.Amount);
+            WorldPayload.WriteInt64(w, heal.Hull);
+        }), ct);
 
     private async Task<WorldRuntimeSnapshot?> ReadOwnHealRuntimeAsync(WorldPilot pilot, CancellationToken ct)
     {
@@ -1158,7 +1178,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             present.Add(remote.UserId);
             if (visible.TryAdd(remote.UserId, 0))
             {
-                if (runtime?.LastHealId is { } initialHeal) heals[remote.UserId] = initialHeal;
+                heals[remote.UserId] = runtime?.LastHealId ?? string.Empty;
                 remotePositions.GetOrAdd(observer.UserId, _ => new())[remote.UserId] = (remote.X, remote.Y);
                 await connection.SendAsync(WorldCommandId.PilotCreateCommand, WorldPayload.Encode(w =>
                 {
@@ -1171,16 +1191,14 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                     WorldPayload.WriteInt32(w, remote.Y);
                 }), ct);
             }
-            else if (runtime?.LastHealId is { } healId &&
-                (!heals.TryGetValue(remote.UserId, out var announcedHeal) || announcedHeal != healId))
+            else if (runtime?.LastHealId is not null)
             {
-                heals[remote.UserId] = healId;
-                await connection.SendAsync(WorldCommandId.ShipHealCommand, WorldPayload.Encode(w =>
+                heals.TryGetValue(remote.UserId, out var announcedHeal);
+                foreach (var heal in UnannouncedHeals(runtime, announcedHeal))
                 {
-                    WorldPayload.WriteInt64(w, remote.UserId);
-                    WorldPayload.WriteInt64(w, runtime.LastHealAmount);
-                    WorldPayload.WriteInt64(w, runtime.LastHealHull);
-                }), ct);
+                    await SendHealAsync(connection, remote.UserId, heal, ct);
+                    heals[remote.UserId] = heal.Id;
+                }
             }
             if (!cloaks.TryGetValue(remote.UserId, out var announced) || announced != remote.IsInvisible)
             {
@@ -1511,6 +1529,11 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         if (previousJson is not null)
             try { previous = JsonSerializer.Deserialize<WorldRuntimeSnapshot>(previousJson); }
             catch (JsonException) { }
+        var healId = healAmount > 0 ? Guid.NewGuid().ToString("N") : null;
+        var recentHeals = previous?.RecentHeals ?? [];
+        if (healId is not null)
+            recentHeals = [.. recentHeals.TakeLast(15),
+                new WorldHealEvent(healId, healAmount, CurrentHitPoints(pilot))];
         await cache.SetStringAsync(RuntimeKey(pilot.UserId), JsonSerializer.Serialize(new WorldRuntimeSnapshot(
             pilot.MapId, Configuration(pilot.UserId), CurrentShield(pilot),
             lastSwitches.TryGetValue(pilot.UserId, out var last) ? last.ToUnixTimeMilliseconds() : 0,
@@ -1520,9 +1543,10 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             clearDeathId ? null : await DeathIdAsync(pilot.UserId, ct),
             cloakOverride ?? previous?.IsInvisible ?? pilot.IsInvisible,
             cloakActivatedAtUnixMs ?? previous?.LastCloakActivationUnixMs ?? 0,
-            healAmount > 0 ? Guid.NewGuid().ToString("N") : previous?.LastHealId,
+            healId ?? previous?.LastHealId,
             healAmount > 0 ? healAmount : previous?.LastHealAmount ?? 0,
-            healAmount > 0 ? CurrentHitPoints(pilot) : previous?.LastHealHull ?? 0)),
+            healAmount > 0 ? CurrentHitPoints(pilot) : previous?.LastHealHull ?? 0,
+            recentHeals)),
             new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
     }
 
