@@ -106,7 +106,7 @@ The `SPEC-06` TCP pilot resolver now has tests for blank and 128/129-character s
 | `ThDarkOrbitEmulator.Tests/ClientTesting/BrowserSupportMockEndpointTests.cs` | 4 | `SPEC-01` |
 | `ThDarkOrbitEmulator.Tests/ClientTesting/ChallengeAndUnityConfigMockEndpointTests.cs` | 6 | `SPEC-01` |
 | `ThDarkOrbitEmulator.Tests/ClientTesting/HomePageMockEndpointTests.cs` | 12 | `SPEC-01` |
-| `ThDarkOrbitEmulator.Tests/ClientTesting/ClientUriPatcherSpecificationTests.cs` | 26 | `SPEC-02` |
+| `ThDarkOrbitEmulator.Tests/ClientTesting/ClientUriPatcherSpecificationTests.cs` | 28 | `SPEC-02` |
 | `ThDarkOrbitEmulator.Tests/ClientTesting/ClientTrafficAnalysisSpecificationTests.cs` | 34 | `SPEC-02` |
 | `ThDarkOrbitEmulator.Tests/ClientTesting/ClientTestingPathsSpecificationTests.cs` | 9 | `SPEC-02` |
 | `ThDarkOrbitEmulator.Tests/ClientTesting/ClientEndpointCatalogSpecificationTests.cs` | 15 | `SPEC-02` |

@@ -1542,7 +1542,7 @@ public class ApiServiceVerticalSliceTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(endpoint, Does.Contain("Post(\"/Bigpoint\")").And.Contain("RoutePrefixOverride(\"Sas/Authentication\")")
+            Assert.That(endpoint, Does.Contain("Post(\"/Bigpoint\", \"/Local\")").And.Contain("RoutePrefixOverride(\"Sas/Authentication\")")
                 .And.Contain("AllowAnonymous()"));
             Assert.That(sources, Has.None.Contain("Identity.Infrastructure").And.None.Contain("DbContext")
                 .And.None.Contain("CreateUserAsync").And.None.Contain("ValidateCredentialsQuery")

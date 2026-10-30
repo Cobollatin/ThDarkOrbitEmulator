@@ -124,6 +124,8 @@ public class HomePageMockEndpointTests
             Assert.That(local, Does.Not.Contain("DarkOrbit").IgnoreCase);
             Assert.That(local, Does.Not.Contain("Bigpoint").IgnoreCase);
             Assert.That(local, Does.Not.Contain("http://").And.Not.Contain("https://"));
+            Assert.That(local, Does.Contain("action=\"/Sas/Authentication/Local\""));
+            Assert.That(local, Does.Contain("name=\"username\"").And.Contain("name=\"password\""));
         });
     }
 
