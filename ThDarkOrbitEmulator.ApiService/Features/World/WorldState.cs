@@ -377,6 +377,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 if (long.TryParse(recovery, out var recoveryMs) &&
                     now - DateTimeOffset.FromUnixTimeMilliseconds(recoveryMs) < TimeSpan.FromSeconds(1)) continue;
                 hitPoints[pilot.UserId] = Math.Min(hitPointMaximum, current + Math.Max(1, hitPointMaximum / 40));
+                if (hitPoints[pilot.UserId] >= hitPointMaximum)
+                    repairBots[pilot.UserId] = false;
                 await PersistRuntimeAsync(pilot, ct);
                 await cache.SetStringAsync(HullRecoveryKey(pilot.UserId), now.ToUnixTimeMilliseconds().ToString(),
                     new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);

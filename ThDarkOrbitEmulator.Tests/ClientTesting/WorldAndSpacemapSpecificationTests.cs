@@ -1845,8 +1845,10 @@ public sealed class WorldAndSpacemapSpecificationTests
         clock.Advance(TimeSpan.FromSeconds(1));
         await replica.RecoverHullAsync(pilot.MapId, default);
         Assert.That(replica.CurrentHitPoints(pilot), Is.EqualTo(1000));
-        await replica.RecoverHullAsync(pilot.MapId, default);
         Assert.That(replica.RepairBotActive(pilot.UserId), Is.False);
+        var finalReplica = new WorldSessionStore(cache, clock: clock);
+        await finalReplica.EnterAsync(pilot, default);
+        Assert.That(finalReplica.RepairBotActive(pilot.UserId), Is.False);
     }
 
     [Test]
