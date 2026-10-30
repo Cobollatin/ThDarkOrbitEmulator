@@ -1603,7 +1603,7 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(store.CurrentHitPoints(enemy), Is.EqualTo(900));
         Assert.That(store.CurrentShield(enemy), Is.EqualTo(400));
         Assert.That(store.CurrentHitPoints(ally), Is.GreaterThan(900));
-        Assert.That(store.CurrentShield(ally), Is.GreaterThan(400));
+        Assert.That(store.CurrentShield(ally), Is.EqualTo(400));
         var replica = new WorldSessionStore(cache, clock: clock);
         var restoredEnemy = await replica.RestoreAsync(enemy, default);
         await replica.RepairAtBaseAsync(restoredEnemy, clock.GetUtcNow(), default);
@@ -1629,22 +1629,22 @@ public sealed class WorldAndSpacemapSpecificationTests
 
         await first.RepairAtBaseFencedAsync(pilot, now, default, null);
         Assert.That(first.CurrentHitPoints(pilot), Is.EqualTo(920));
-        Assert.That(first.CurrentShield(pilot), Is.EqualTo(410));
+        Assert.That(first.CurrentShield(pilot), Is.EqualTo(400));
         await first.RepairAtBaseFencedAsync(pilot, now, default, null);
         var second = new WorldSessionStore(cache, clock: clock);
         var restored = await second.RestoreAsync(pilot, default);
         await second.RepairAtBaseFencedAsync(restored, now.AddMilliseconds(999), default, null);
         Assert.That(second.CurrentHitPoints(restored), Is.EqualTo(920));
-        Assert.That(second.CurrentShield(restored), Is.EqualTo(410));
+        Assert.That(second.CurrentShield(restored), Is.EqualTo(400));
 
         clock.Advance(TimeSpan.FromSeconds(1));
         await second.RepairAtBaseFencedAsync(restored, clock.GetUtcNow(), default, null);
         Assert.That(second.CurrentHitPoints(restored), Is.EqualTo(940));
-        Assert.That(second.CurrentShield(restored), Is.EqualTo(420));
+        Assert.That(second.CurrentShield(restored), Is.EqualTo(400));
     }
 
     [Test]
-    public async Task StationRepair_RechargesShieldWhenHullIsAlreadyFull()
+    public async Task StationRepair_DoesNotRechargeShieldWhenHullIsAlreadyFull()
     {
         using var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection()
             .AddDistributedMemoryCache().BuildServiceProvider();
@@ -1664,11 +1664,11 @@ public sealed class WorldAndSpacemapSpecificationTests
         await store.RepairAtBaseAsync(pilot, clock.GetUtcNow(), default);
 
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(1000));
-        Assert.That(store.CurrentShield(pilot), Is.EqualTo(410));
+        Assert.That(store.CurrentShield(pilot), Is.EqualTo(400));
         var replica = new WorldSessionStore(cache, clock: clock);
         var restored = await replica.RestoreAsync(pilot, default);
         Assert.That(restored.ShipId, Is.EqualTo("ship_pusat-plus"));
-        Assert.That(replica.CurrentShield(restored), Is.EqualTo(410));
+        Assert.That(replica.CurrentShield(restored), Is.EqualTo(400));
     }
 
     [Test]

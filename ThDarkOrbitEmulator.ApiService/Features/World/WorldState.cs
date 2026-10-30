@@ -1473,21 +1473,14 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         var stats = ActiveStats(pilot);
         var current = CurrentHitPoints(pilot);
         if (current <= 0) return;
-        var shield = CurrentShield(pilot);
-        if (current >= stats.MaxHitPoints && shield >= stats.MaxShield) return;
+        if (current >= stats.MaxHitPoints) return;
         if (await PortalCombatLockedAsync(pilot, ct)) return;
         var lastRepair = await cache.GetStringAsync(StationRepairKey(pilot.UserId), ct);
         if (long.TryParse(lastRepair, out var lastRepairMs) &&
             now - DateTimeOffset.FromUnixTimeMilliseconds(lastRepairMs) < TimeSpan.FromSeconds(1)) return;
-        if (current < stats.MaxHitPoints)
-        {
-            var repair = variables is null ? 0 : (long)await variables.NumberAsync("world.station.repair_hp_per_tick", ct);
-            hitPoints[pilot.UserId] = Math.Min(stats.MaxHitPoints,
-                current + (repair > 0 ? repair : Math.Max(1, stats.MaxHitPoints / 50)));
-        }
-        if (shield < stats.MaxShield)
-            shields[pilot.UserId] = Math.Min(stats.MaxShield,
-                shield + Math.Max(1, stats.MaxShield / 50));
+        var repair = variables is null ? 0 : (long)await variables.NumberAsync("world.station.repair_hp_per_tick", ct);
+        hitPoints[pilot.UserId] = Math.Min(stats.MaxHitPoints,
+            current + (repair > 0 ? repair : Math.Max(1, stats.MaxHitPoints / 50)));
         await PersistRuntimeAsync(pilot, ct);
         await cache.SetStringAsync(StationRepairKey(pilot.UserId), now.ToUnixTimeMilliseconds().ToString(),
             new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);
