@@ -1700,6 +1700,34 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task StationRepair_FullHullStopsActiveRepairBotAcrossReplicas()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingClock();
+        var store = new WorldSessionStore(cache, clock: clock);
+        var pilot = await store.EnterAsync(new WorldPilot(912, "mmo", 1, 1, "ship", 0, 0)
+        {
+            FactionId = 1, X = 2000, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 100, default, shieldAbsorption: 0);
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await store.RecoverHullAsync(pilot.MapId, default);
+        Assert.That(store.RepairBotActive(pilot.UserId), Is.True);
+        Assert.That(store.CurrentHitPoints(pilot), Is.LessThan(1000));
+
+        Assert.That(await store.RepairAtBaseFencedAsync(pilot, clock.GetUtcNow(), default, null), Is.True);
+        Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(1000));
+        Assert.That(store.RepairBotActive(pilot.UserId), Is.False);
+
+        var replica = new WorldSessionStore(cache, clock: clock);
+        var restored = await replica.RestoreAsync(pilot, default);
+        Assert.That(replica.CurrentHitPoints(restored), Is.EqualTo(1000));
+        Assert.That(replica.RepairBotActive(pilot.UserId), Is.False);
+    }
+
+    [Test]
     public async Task StationRepair_DoesNotRechargeShieldWhenHullIsAlreadyFull()
     {
         using var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection()

@@ -1476,6 +1476,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         hitPoints[pilot.UserId] = repair > 0
             ? Math.Min(stats.MaxHitPoints, current + repair)
             : stats.MaxHitPoints;
+        if (hitPoints[pilot.UserId] >= stats.MaxHitPoints)
+            repairBots[pilot.UserId] = false;
         await PersistRuntimeAsync(pilot, ct);
         await BroadcastAsync(pilot, WorldCommandId.ShipHealCommand, WorldPayload.Encode(w =>
         {
