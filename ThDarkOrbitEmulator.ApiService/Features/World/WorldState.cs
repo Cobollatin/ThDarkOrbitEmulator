@@ -378,7 +378,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                     now - DateTimeOffset.FromUnixTimeMilliseconds(recoveryMs) < TimeSpan.FromSeconds(1)) continue;
                 hitPoints[pilot.UserId] = Math.Min(hitPointMaximum, current + Math.Max(1, hitPointMaximum / 40));
                 if (hitPoints[pilot.UserId] >= hitPointMaximum)
-                    repairBots[pilot.UserId] = false;
+                    await SetRepairBotAsync(pilot, false, ct);
                 await PersistRuntimeAsync(pilot, ct);
                 await cache.SetStringAsync(HullRecoveryKey(pilot.UserId), now.ToUnixTimeMilliseconds().ToString(),
                     new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);
@@ -393,6 +393,18 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         if (repairBots.GetValueOrDefault(pilot.UserId) == active) return;
         repairBots[pilot.UserId] = active;
         await PersistRuntimeAsync(pilot, ct);
+        if (connections.TryGetValue(pilot.UserId, out var connection) && connection.Pilot.MapId == pilot.MapId)
+        {
+            try
+            {
+                await connection.SendAsync(WorldCommandId.RepairBotStateCommand, WorldPayload.Encode(w =>
+                {
+                    WorldPayload.WriteInt64(w, pilot.UserId);
+                    w.Write(active);
+                }), ct);
+            }
+            catch (IOException) { }
+        }
     }
 
     public bool RepairBotActive(long userId) => repairBots.GetValueOrDefault(userId);
@@ -1313,7 +1325,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 WorldMapInstance.Starter(pilot.MapId));
             var warning = atBoundary;
             radiationWarnings[pilot.UserId] = warning;
-            if (warning) repairBots[pilot.UserId] = false;
+            if (warning) await SetRepairBotAsync(pilot, false, ct);
             configurations[pilot.UserId] = selected;
             await cache.SetStringAsync(Key(pilot.UserId), JsonSerializer.Serialize(next),
                 new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
@@ -1437,7 +1449,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     {
         if (await RepairProtectedAsync(pilot.UserId, ct)) return;
         if (lastHazards.TryGetValue(pilot.UserId, out var last) && now - last < TimeSpan.FromSeconds(1)) return;
-        repairBots[pilot.UserId] = false;
+        await SetRepairBotAsync(pilot, false, ct);
         lastHazards[pilot.UserId] = now;
         var damage = variables is null ? Math.Max(1, ActiveStats(pilot).MaxHitPoints / 100)
             : (long)await variables.NumberAsync("world.radiation.damage_per_attempt", ct);
@@ -1480,7 +1492,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             ? Math.Min(stats.MaxHitPoints, current + repair)
             : stats.MaxHitPoints;
         if (hitPoints[pilot.UserId] >= stats.MaxHitPoints)
-            repairBots[pilot.UserId] = false;
+            await SetRepairBotAsync(pilot, false, ct);
         await PersistRuntimeAsync(pilot, ct);
         await AnnounceHullHealAsync(pilot, hitPoints[pilot.UserId] - current, ct);
         return true;

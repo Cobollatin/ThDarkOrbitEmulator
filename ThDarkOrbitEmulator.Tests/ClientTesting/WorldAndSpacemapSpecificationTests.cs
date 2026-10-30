@@ -1717,9 +1717,19 @@ public sealed class WorldAndSpacemapSpecificationTests
         Assert.That(store.RepairBotActive(pilot.UserId), Is.True);
         Assert.That(store.CurrentHitPoints(pilot), Is.LessThan(1000));
 
+        using var stationWire = new MemoryStream();
+        store.Attach(new WorldConnection(pilot, new WorldPacketWriter(stationWire)));
         Assert.That(await store.RepairAtBaseFencedAsync(pilot, clock.GetUtcNow(), default, null), Is.True);
         Assert.That(store.CurrentHitPoints(pilot), Is.EqualTo(1000));
         Assert.That(store.RepairBotActive(pilot.UserId), Is.False);
+        stationWire.Position = 0;
+        var stationReader = new WorldPacketReader(stationWire);
+        var stopped = await stationReader.ReadAsync();
+        Assert.That(stopped?.Command, Is.EqualTo(WorldCommandId.RepairBotStateCommand));
+        Assert.That(WorldPayload.Decode(stopped!.Value.Payload, r =>
+            (WorldPayload.ReadInt64(r), r.ReadBoolean())), Is.EqualTo((pilot.UserId, false)));
+        Assert.That((await stationReader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.ShipHealCommand));
+        Assert.That(await stationReader.ReadAsync(), Is.Null);
 
         var replica = new WorldSessionStore(cache, clock: clock);
         var restored = await replica.RestoreAsync(pilot, default);
@@ -1880,8 +1890,22 @@ public sealed class WorldAndSpacemapSpecificationTests
         {
             wire.Position = 0;
             var reader = new WorldPacketReader(wire);
+            if (wire == ownWire)
+            {
+                var active = await reader.ReadAsync();
+                Assert.That(active?.Command, Is.EqualTo(WorldCommandId.RepairBotStateCommand));
+                Assert.That(WorldPayload.Decode(active!.Value.Payload, r =>
+                    (WorldPayload.ReadInt64(r), r.ReadBoolean())), Is.EqualTo((pilot.UserId, true)));
+            }
             foreach (var expected in new[] { (25L, 985L), (15L, 1000L) })
             {
+                if (wire == ownWire && expected.Item2 == 1000)
+                {
+                    var inactive = await reader.ReadAsync();
+                    Assert.That(inactive?.Command, Is.EqualTo(WorldCommandId.RepairBotStateCommand));
+                    Assert.That(WorldPayload.Decode(inactive!.Value.Payload, r =>
+                        (WorldPayload.ReadInt64(r), r.ReadBoolean())), Is.EqualTo((pilot.UserId, false)));
+                }
                 var heal = await reader.ReadAsync();
                 Assert.That(heal?.Command, Is.EqualTo(WorldCommandId.ShipHealCommand));
                 Assert.That(WorldPayload.Decode(heal!.Value.Payload, r =>
@@ -1910,8 +1934,16 @@ public sealed class WorldAndSpacemapSpecificationTests
         await store.RecoverHullAsync(pilot.MapId, default);
         Assert.That(store.RepairBotActive(pilot.UserId), Is.True);
 
+        using var combatWire = new MemoryStream();
+        store.Attach(new WorldConnection(pilot, new WorldPacketWriter(combatWire)));
         await store.MarkCombatAsync(pilot, default);
         Assert.That(store.RepairBotActive(pilot.UserId), Is.False);
+        combatWire.Position = 0;
+        var combatReader = new WorldPacketReader(combatWire);
+        var combatStopped = await combatReader.ReadAsync();
+        Assert.That(combatStopped?.Command, Is.EqualTo(WorldCommandId.RepairBotStateCommand));
+        Assert.That(WorldPayload.Decode(combatStopped!.Value.Payload, r =>
+            (WorldPayload.ReadInt64(r), r.ReadBoolean())), Is.EqualTo((pilot.UserId, false)));
         var replica = new WorldSessionStore(cache, clock: clock);
         await replica.EnterAsync(pilot, default);
         Assert.That(replica.RepairBotActive(pilot.UserId), Is.False);

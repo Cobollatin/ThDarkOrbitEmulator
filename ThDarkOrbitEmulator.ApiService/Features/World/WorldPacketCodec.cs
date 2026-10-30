@@ -49,7 +49,8 @@ public enum WorldCommandId : ushort
     RadiationDamageCommand = 42,
     PortalOperationCommand = 43,
     CloakStateCommand = 44,
-    ShipHealCommand = 45
+    ShipHealCommand = 45,
+    RepairBotStateCommand = 46
 }
 
 public enum WorldLoginError : byte
