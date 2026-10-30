@@ -1254,27 +1254,32 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private async Task ObserveConnectedHealsAsync(WorldPilot observer, WorldConnection connection,
         RemoteSnapshot snapshot, CancellationToken ct)
     {
-        var announced = connectedHeals.GetOrAdd(observer.UserId, _ => new());
-        var present = new HashSet<long>();
-        foreach (var (entry, _, runtime) in snapshot.Entries)
+        await connection.HealDeliveryGate.WaitAsync(ct);
+        try
         {
-            var target = entry.Pilot;
-            if (target.UserId == observer.UserId
-                || !connections.TryGetValue(target.UserId, out var local)
-                || local.Pilot.MapId != observer.MapId || runtime?.MapId != observer.MapId
-                || WorldMapInstance.IsGate(observer.MapId) && target.AccountId != observer.AccountId)
-                continue;
-            present.Add(target.UserId);
-            if (announced.TryAdd(target.UserId, runtime.LastHealId ?? string.Empty)) continue;
-            announced.TryGetValue(target.UserId, out var last);
-            foreach (var heal in UnannouncedHeals(runtime, last))
+            var announced = connectedHeals.GetOrAdd(observer.UserId, _ => new());
+            var present = new HashSet<long>();
+            foreach (var (entry, _, runtime) in snapshot.Entries)
             {
-                await SendHealAsync(connection, target.UserId, heal, ct);
-                announced[target.UserId] = heal.Id;
+                var target = entry.Pilot;
+                if (target.UserId == observer.UserId
+                    || !connections.TryGetValue(target.UserId, out var local)
+                    || local.Pilot.MapId != observer.MapId || runtime?.MapId != observer.MapId
+                    || WorldMapInstance.IsGate(observer.MapId) && target.AccountId != observer.AccountId)
+                    continue;
+                present.Add(target.UserId);
+                if (announced.TryAdd(target.UserId, runtime.LastHealId ?? string.Empty)) continue;
+                announced.TryGetValue(target.UserId, out var last);
+                foreach (var heal in UnannouncedHeals(runtime, last))
+                {
+                    await SendHealAsync(connection, target.UserId, heal, ct);
+                    announced[target.UserId] = heal.Id;
+                }
             }
+            foreach (var id in announced.Keys.Where(id => !present.Contains(id)).ToArray())
+                announced.TryRemove(id, out _);
         }
-        foreach (var id in announced.Keys.Where(id => !present.Contains(id)).ToArray())
-            announced.TryRemove(id, out _);
+        finally { connection.HealDeliveryGate.Release(); }
     }
 
     // Pilots whose sockets live on another node reach this observer through shared presence and travel.
@@ -1676,14 +1681,19 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 catch (IOException) { }
                 continue;
             }
-            var observed = connectedHeals.GetOrAdd(observer.Pilot.UserId, _ => new());
-            var announced = observed.GetValueOrDefault(pilot.UserId);
-            foreach (var heal in UnannouncedHeals(runtime, announced))
+            await observer.HealDeliveryGate.WaitAsync(ct);
+            try
             {
-                try { await SendHealAsync(observer, pilot.UserId, heal, ct); }
-                catch (IOException) { break; }
-                observed[pilot.UserId] = heal.Id;
+                var observed = connectedHeals.GetOrAdd(observer.Pilot.UserId, _ => new());
+                var announced = observed.GetValueOrDefault(pilot.UserId);
+                foreach (var heal in UnannouncedHeals(runtime, announced))
+                {
+                    try { await SendHealAsync(observer, pilot.UserId, heal, ct); }
+                    catch (IOException) { break; }
+                    observed[pilot.UserId] = heal.Id;
+                }
             }
+            finally { observer.HealDeliveryGate.Release(); }
         }
     }
 

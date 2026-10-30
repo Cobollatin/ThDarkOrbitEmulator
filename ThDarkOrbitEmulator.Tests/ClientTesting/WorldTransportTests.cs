@@ -578,6 +578,48 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task ConcurrentConnectedObserverPolls_SendRemoteOwnerHealOnce()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingWorldClock();
+        var mapOwner = new WorldSessionStore(cache, clock: clock);
+        var socketNode = new WorldSessionStore(cache, clock: clock);
+        var pilot = await mapOwner.EnterAsync(new WorldPilot(939, "pilot", 1, 1, "ship", 0, 0)
+        {
+            FactionId = 1, X = 5000, Y = 5000,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await mapOwner.ApplyNpcDamageAsync(pilot, 1, 100, default, shieldAbsorption: 0);
+        await socketNode.EnterAsync(pilot, default);
+        var observer = await socketNode.EnterAsync(pilot with { UserId = 940 }, default);
+        using var pilotWire = new MemoryStream();
+        using var observerWire = new PauseFirstWriteStream();
+        socketNode.Attach(new WorldConnection(pilot, new WorldPacketWriter(pilotWire)));
+        var observerConnection = new WorldConnection(observer, new WorldPacketWriter(observerWire));
+        socketNode.Attach(observerConnection);
+        await socketNode.ObserveRemotePilotsAsync(observer, observerConnection, default);
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await mapOwner.RecoverHullAsync(pilot.MapId, default);
+        await Task.Delay(WorldSessionStore.RemoteSnapshotTtl + TimeSpan.FromMilliseconds(100));
+        var first = socketNode.ObserveRemotePilotsAsync(observer, observerConnection, default);
+        await observerWire.FirstWriteStarted;
+        var second = socketNode.ObserveRemotePilotsAsync(observer, observerConnection, default);
+        observerWire.Resume();
+        await Task.WhenAll(first, second);
+
+        observerWire.Position = 0;
+        var reader = new WorldPacketReader(observerWire);
+        var heal = await reader.ReadAsync();
+        Assert.That(heal?.Command, Is.EqualTo(WorldCommandId.ShipHealCommand));
+        Assert.That(WorldPayload.Decode(heal!.Value.Payload, r =>
+            (WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r))),
+            Is.EqualTo((pilot.UserId, 25L, 925L)));
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
     public async Task RemoteHullHeals_ReplayEachRecoveryBetweenPolls()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
