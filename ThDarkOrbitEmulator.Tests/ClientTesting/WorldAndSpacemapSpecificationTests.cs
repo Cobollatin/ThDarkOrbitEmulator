@@ -1850,6 +1850,20 @@ public sealed class WorldAndSpacemapSpecificationTests
         var replica = new WorldSessionStore(cache, clock: clock);
         await replica.EnterAsync(pilot, default);
         Assert.That(replica.RepairBotActive(pilot.UserId), Is.True);
+        using (var entryWire = new MemoryStream())
+        {
+            await WorldEntryPackets.SendAsync(new WorldPacketWriter(entryWire), pilot, default,
+                currentHitPoints: replica.CurrentHitPoints(pilot),
+                repairBotActive: replica.RepairBotActive(pilot.UserId));
+            entryWire.Position = 0;
+            var entryReader = new WorldPacketReader(entryWire);
+            WorldPacket? packet;
+            while ((packet = await entryReader.ReadAsync()) is { Command: not WorldCommandId.RepairBotStateCommand }) { }
+            Assert.That(packet, Is.Not.Null);
+            Assert.That(WorldPayload.Decode(packet!.Value.Payload, r =>
+                (WorldPayload.ReadInt64(r), r.ReadBoolean())), Is.EqualTo((pilot.UserId, true)));
+            Assert.That(await entryReader.ReadAsync(), Is.Null);
+        }
         await replica.RecoverHullAsync(pilot.MapId, default);
         Assert.That(replica.CurrentHitPoints(pilot), Is.EqualTo(990));
         clock.Advance(TimeSpan.FromSeconds(1));

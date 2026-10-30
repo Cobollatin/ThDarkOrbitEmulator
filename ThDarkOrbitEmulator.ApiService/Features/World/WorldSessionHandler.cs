@@ -307,7 +307,8 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                                 await WorldEntryPackets.SendAsync(writer, connected, ct,
                                     await sessions.LiveStatsAsync(connected, ct), sessions.CurrentShield(connected),
                                     sessions.CurrentPosition(connected), sessions.CurrentHitPoints(connected),
-                                    await RuntimeMapAsync(connected.MapId, ct));
+                                    await RuntimeMapAsync(connected.MapId, ct),
+                                    sessions.RepairBotActive(connected.UserId));
                                 await RefreshSafeZoneAsync(false, ct);
                             }
                         }
@@ -382,7 +383,8 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                         await WorldEntryPackets.SendAsync(writer, connected, ct,
                             await sessions.LiveStatsAsync(connected, ct), sessions.CurrentShield(connected),
                             sessions.CurrentPosition(connected), sessions.CurrentHitPoints(connected),
-                            await RuntimeMapAsync(connected.MapId, ct));
+                            await RuntimeMapAsync(connected.MapId, ct),
+                            sessions.RepairBotActive(connected.UserId));
                         await RefreshSafeZoneAsync(false, ct);
                         if (sessions is not null)
                         {
@@ -567,7 +569,8 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                         }
                         await WorldEntryPackets.SendAsync(writer, connected, ct, entryStats,
                             sessions?.CurrentShield(connected), sessions?.CurrentPosition(connected),
-                            sessions?.CurrentHitPoints(connected), await RuntimeMapAsync(connected.MapId, ct));
+                            sessions?.CurrentHitPoints(connected), await RuntimeMapAsync(connected.MapId, ct),
+                            sessions?.RepairBotActive(connected.UserId) ?? false);
                         await SendBoxesAsync(writer, connected, ct);
                         await SendNpcsAsync(writer, connected, knownNpcs, npcVitals, ct);
                         await SendAnnouncementAsync(writer, ct);

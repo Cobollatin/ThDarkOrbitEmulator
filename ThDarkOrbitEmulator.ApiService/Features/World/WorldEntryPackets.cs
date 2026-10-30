@@ -5,7 +5,8 @@ public static class WorldEntryPackets
     // Local diagnostic command order and fields; not a recovered libcom serialization.
     public static async Task SendAsync(WorldPacketWriter writer, WorldPilot pilot, CancellationToken ct,
         WorldShipStats? activeStats = null, long? currentShield = null, (int X, int Y)? position = null,
-        long? currentHitPoints = null, WorldMapInstance? runtimeMap = null)
+        long? currentHitPoints = null, WorldMapInstance? runtimeMap = null,
+        bool repairBotActive = false)
     {
         var stats = activeStats ?? pilot.Stats;
         var shield = currentShield ?? stats.MaxShield;
@@ -69,5 +70,11 @@ public static class WorldEntryPackets
                 WorldPayload.WriteInt32(w, item.Quantity);
             }
         }), ct);
+        if (repairBotActive)
+            await writer.WriteAsync(WorldCommandId.RepairBotStateCommand, WorldPayload.Encode(w =>
+            {
+                WorldPayload.WriteInt64(w, pilot.UserId);
+                w.Write(true);
+            }), ct);
     }
 }
