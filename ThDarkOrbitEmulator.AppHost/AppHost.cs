@@ -137,6 +137,7 @@ var apiGame = builder.AddProject<Projects.ThDarkOrbitEmulator_ApiService>(Dashbo
     .WithEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", $"http://{DashboardResourceNames.TelemetryOtel}:4318")
     .WithOtlpExporter()
     .WithEmulatorOperationsCommand(desiredReplicas, dataPostgres)
+    .WaitFor(sessionsRedis)
     .WaitFor(appDatabase)
     .WaitFor(authKeycloak);
 

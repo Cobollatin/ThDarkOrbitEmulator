@@ -10,8 +10,9 @@
     global-metadata.dat remain 100% unchanged.
 
     Creates automatic .orig.bak backups before modifying any file and verifies
-    the original global-metadata.dat SHA-256 hash on backup and reset:
-    a9df074bb27ea58dbd19f322a6c6b45438fe198c74cc2f78a1d33f29604e3055
+    the original global-metadata.dat SHA-256 against the known unmodified builds
+    (KNOWN_ORIG_METADATA_SHA256 in patch_il2cpp_uris.py). Target literals are
+    located by their original value, so per-build index differences are handled.
 
 .EXAMPLE
     .\scripts\client-testing\Patch-ClientUris.ps1 -Action Status
@@ -51,10 +52,13 @@ $pythonHelper = Join-Path $scriptDir "patch_il2cpp_uris.py"
 
 # Windows keeps the running player's metadata and executable open. Fail before
 # touching any patch target so a live session is never left partly updated.
-if ($Action -ne "Status" -and
-    [System.IO.Path]::GetFullPath($ClientRoot).TrimEnd('\') -ieq 'D:\Games\DarkOrbit Unity' -and
-    (Get-Process -Name DarkOrbit -ErrorAction SilentlyContinue)) {
-    throw "DarkOrbit.exe is running. Close the game before $Action, then retry."
+if ($Action -ne "Status") {
+    $clientExe = Join-Path ([System.IO.Path]::GetFullPath($ClientRoot).TrimEnd('\')) 'DarkOrbit.exe'
+    $running = Get-Process -Name DarkOrbit -ErrorAction SilentlyContinue |
+        Where-Object { -not $_.Path -or $_.Path -ieq $clientExe }
+    if ($running) {
+        throw "DarkOrbit.exe is running. Close the game before $Action, then retry."
+    }
 }
 
 if (-not (Test-Path -LiteralPath $pythonHelper)) {

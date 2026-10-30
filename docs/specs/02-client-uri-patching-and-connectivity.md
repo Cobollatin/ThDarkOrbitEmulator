@@ -30,7 +30,11 @@ The examined original metadata has `stringLiteralOffset = 256 (0x100)`, `stringL
 | 24853 | PortalBaseUrl / core | `https://www.darkorbit.com/` | 26 | `0x309a8` / `0x309ac` | `0x109975` | Gateway URL with `/` | Same |
 | 24854 | ExternalDownloadUrl / core | `https://www.darkorbit.com/index.es?action=externalDownload` | 58 | `0x309b0` / `0x309b4` | `0x10998f` | Gateway URL + `/index.es?action=externalDownload` | Same |
 
-`Apply` uses the original descriptor length as each slot's capacity. A replacement's UTF-8 bytes must fit; an overlong value raises an error. For changed literals it writes replacement bytes, fills the unused original slot with zero bytes, changes only the descriptor length, and retains `dataIndex`. It must preserve total metadata file length. The default gateway URL is 24 bytes including the final `/`, so the 18-byte loopback literal remains untouched. CDN and Steam literals are changed only with `-PatchCdn`; serving their assets and Steam flow locally is a separate connectivity requirement and is not established by the patch itself.
+`Apply` uses the original descriptor length as each slot's capacity. A replacement's UTF-8 bytes must fit; an overlong value raises an error.
+
+The indices above belong to the baseline build. Other client builds put the same literals at other indices; the 2026-03-10 build (`global-metadata.dat` SHA-256 `a0726c248d765b7782ca5045e17521bfa1477428a06ed84a26707cb9569ba1a2`, 18,166,792 bytes) has every index 33 lower, for example `24820` for PortalBaseUrl. The patcher therefore finds each target by its exact original value in the clean metadata (the `.orig.bak` backup when present). Each value must occur exactly once; a missing or duplicated target is rejected before any backup is made. Both SHA-256 values are accepted as originals.
+
+For changed literals it writes replacement bytes, fills the unused original slot with zero bytes, changes only the descriptor length, and retains `dataIndex`. It must preserve total metadata file length. The default gateway URL is 24 bytes including the final `/`, so the 18-byte loopback literal remains untouched. CDN and Steam literals are changed only with `-PatchCdn`; serving their assets and Steam flow locally is a separate connectivity requirement and is not established by the patch itself.
 
 ## Backups, companion files, and actions
 
