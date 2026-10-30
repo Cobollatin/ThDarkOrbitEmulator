@@ -258,9 +258,13 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
     public async Task<bool> IsSelectedAsync(WorldPilot pilot, int npcId, CancellationToken ct) =>
         await cache.GetStringAsync(TargetKey(pilot.UserId), ct) == $"{pilot.MapId}:{npcId}:{Cycle}";
 
-    public async Task StartLaserAsync(WorldPilot pilot, int npcId, CancellationToken ct)
+    public async Task StartLaserAsync(WorldPilot pilot, int npcId, CancellationToken ct,
+        WorldSessionStore sessions)
     {
         await using var held = await mutex.AcquireAsync(ct);
+        var mapId = pilot.MapId;
+        pilot = await sessions.RestoreAsync(pilot, ct);
+        if (pilot.MapId != mapId) throw new WorldMapChangedException();
         if (await AutoLauncherEnabledAsync(pilot.UserId, ct))
         {
             var loadKey = $"world:launcher:{pilot.UserId}";

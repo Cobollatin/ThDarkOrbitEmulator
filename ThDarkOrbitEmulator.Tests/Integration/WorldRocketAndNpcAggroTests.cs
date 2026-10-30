@@ -27,7 +27,7 @@ public sealed class WorldRocketAndNpcAggroTests
         var pilot = await sessions.EnterAsync(Pilot(npc.X, npc.Y), default);
         await npcs.SelectAsync(pilot, npc.Id, default);
         Assert.That((await npcs.AttackAsync(pilot, npc.Id, sessions, default)).Target!.Hp, Is.EqualTo(299));
-        await npcs.StartLaserAsync(pilot, npc.Id, default);
+        await npcs.StartLaserAsync(pilot, npc.Id, default, sessions);
         await npcs.TickLasersAsync(1, sessions, default);
         Assert.That((await npcs.VisibleAsync(1, default)).Single().Hp, Is.EqualTo(299));
         clock.Advance(TimeSpan.FromSeconds(1));
@@ -56,7 +56,7 @@ public sealed class WorldRocketAndNpcAggroTests
         var sessions = new WorldSessionStore(cache, mutex, clock: clock);
         var pilot = await sessions.EnterAsync(Pilot(npc.X, npc.Y), default);
         await npcs.SelectAsync(pilot, npc.Id, default);
-        await npcs.StartLaserAsync(pilot, npc.Id, default);
+        await npcs.StartLaserAsync(pilot, npc.Id, default, sessions);
 
         clock.Advance(TimeSpan.FromSeconds(1));
         await npcs.TickLasersAsync(1, sessions, default);
@@ -83,7 +83,7 @@ public sealed class WorldRocketAndNpcAggroTests
         var sessions = new WorldSessionStore(cache, mutex, clock: clock);
         var pilot = await sessions.EnterAsync(Pilot(target.X, target.Y), default);
         await npcs.SelectAsync(pilot, target.Id, default);
-        await npcs.StartLaserAsync(pilot, target.Id, default);
+        await npcs.StartLaserAsync(pilot, target.Id, default, sessions);
         await npcs.SelectAsync(pilot, target.Id + 1, default);
         clock.Advance(TimeSpan.FromSeconds(1));
         await npcs.TickLasersAsync(1, sessions, default);
@@ -105,7 +105,7 @@ public sealed class WorldRocketAndNpcAggroTests
         var sessions = new WorldSessionStore(cache, mutex, clock: clock);
         var pilot = await sessions.EnterAsync(Pilot(target.X, target.Y), default);
         await npcs.SelectAsync(pilot, target.Id, default);
-        await npcs.StartLaserAsync(pilot, target.Id, default);
+        await npcs.StartLaserAsync(pilot, target.Id, default, sessions);
         await sessions.TeleportAsync(pilot.UserId, 1, target.X + 2000, target.Y, false, default);
         clock.Advance(TimeSpan.FromSeconds(1));
         await npcs.TickLasersAsync(1, sessions, default);

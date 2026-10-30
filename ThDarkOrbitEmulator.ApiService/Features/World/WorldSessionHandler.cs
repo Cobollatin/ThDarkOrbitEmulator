@@ -457,14 +457,14 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                         else await SendLaserFireResultAsync(connection!, id, "hit", ct);
                         if (packet.Value.Command == WorldCommandId.LaserFireRequest &&
                             !WorldMapInstance.IsGate(connected.MapId) && hit.Status == "hit" && !hit.Destroyed)
-                            await npcs!.StartLaserAsync(connected, id, ct);
+                            await npcs!.StartLaserAsync(connected, id, ct, sessions);
                         else if (npcs is not null && hit.Status != "hit")
                             await npcs.StopLaserAsync(connected, ct);
                         if (hit.Destroyed) selectedNpcId = null;
                         continue;
                     }
                 }
-                catch (WorldLeaseLostException)
+                catch (Exception e) when (e is WorldLeaseLostException or WorldMapChangedException)
                 {
                     var destinationMap = await sessions!.SavedMapAsync(connected.UserId, ct) ?? connected.MapId;
                     await SendMapChangeAsync(writer, destinationMap,
