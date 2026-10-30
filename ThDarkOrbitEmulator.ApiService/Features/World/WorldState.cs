@@ -382,6 +382,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 await PersistRuntimeAsync(pilot, ct);
                 await cache.SetStringAsync(HullRecoveryKey(pilot.UserId), now.ToUnixTimeMilliseconds().ToString(),
                     new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) }, ct);
+                await AnnounceHullHealAsync(pilot, hitPoints[pilot.UserId] - current, ct);
             }
             finally { gate.Release(); }
         }
@@ -1481,14 +1482,17 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         if (hitPoints[pilot.UserId] >= stats.MaxHitPoints)
             repairBots[pilot.UserId] = false;
         await PersistRuntimeAsync(pilot, ct);
-        await BroadcastAsync(pilot, WorldCommandId.ShipHealCommand, WorldPayload.Encode(w =>
-        {
-            WorldPayload.WriteInt64(w, pilot.UserId);
-            WorldPayload.WriteInt64(w, hitPoints[pilot.UserId] - current);
-            WorldPayload.WriteInt64(w, hitPoints[pilot.UserId]);
-        }), ct);
+        await AnnounceHullHealAsync(pilot, hitPoints[pilot.UserId] - current, ct);
         return true;
     }
+
+    private Task AnnounceHullHealAsync(WorldPilot pilot, long amount, CancellationToken ct) =>
+        BroadcastAsync(pilot, WorldCommandId.ShipHealCommand, WorldPayload.Encode(w =>
+        {
+            WorldPayload.WriteInt64(w, pilot.UserId);
+            WorldPayload.WriteInt64(w, amount);
+            WorldPayload.WriteInt64(w, hitPoints[pilot.UserId]);
+        }), ct);
 
     // Station activation is serialized with lease reassignment and shared pilot state.
     public async Task<bool> RepairAtBaseFencedAsync(WorldPilot pilot, DateTimeOffset now,

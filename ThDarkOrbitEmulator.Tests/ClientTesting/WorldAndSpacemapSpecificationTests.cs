@@ -1852,6 +1852,48 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task PilotHullRecovery_AnnouncesOnlyAppliedHealToMapPilots()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var clock = new AdvancingClock();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), clock: clock);
+        var pilot = await store.EnterAsync(Pilot() with
+        {
+            UserId = 912, X = 5000, Y = 5000,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+        await store.ApplyNpcDamageAsync(pilot, 1, 40, default);
+        using var ownWire = new MemoryStream();
+        using var observerWire = new MemoryStream();
+        using var otherMapWire = new MemoryStream();
+        store.Attach(new WorldConnection(pilot, new WorldPacketWriter(ownWire)));
+        store.Attach(new WorldConnection(pilot with { UserId = 913 }, new WorldPacketWriter(observerWire)));
+        store.Attach(new WorldConnection(pilot with { UserId = 914, MapId = 2 }, new WorldPacketWriter(otherMapWire)));
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await store.RecoverHullAsync(pilot.MapId, default);
+        await store.RecoverHullAsync(pilot.MapId, default);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await store.RecoverHullAsync(pilot.MapId, default);
+
+        foreach (var wire in new[] { ownWire, observerWire })
+        {
+            wire.Position = 0;
+            var reader = new WorldPacketReader(wire);
+            foreach (var expected in new[] { (25L, 985L), (15L, 1000L) })
+            {
+                var heal = await reader.ReadAsync();
+                Assert.That(heal?.Command, Is.EqualTo(WorldCommandId.ShipHealCommand));
+                Assert.That(WorldPayload.Decode(heal!.Value.Payload, r =>
+                    (WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r), WorldPayload.ReadInt64(r))),
+                    Is.EqualTo((pilot.UserId, expected.Item1, expected.Item2)));
+            }
+            Assert.That(await reader.ReadAsync(), Is.Null);
+        }
+        Assert.That(otherMapWire.Length, Is.Zero);
+    }
+
+    [Test]
     public async Task FieldRepairBot_DeactivatesWhenCombatResumes()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
