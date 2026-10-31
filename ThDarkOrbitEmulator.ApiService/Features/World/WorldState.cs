@@ -1358,6 +1358,11 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         {
             var observerId = observer.Pilot.UserId;
             var userId = remoteMove.Move.UserId;
+            // A selected move may outlive the pilot's shared map membership. The
+            // saved position remains after logout, so travel alone is insufficient.
+            var present = await ReadPresenceAsync(observer.Pilot.MapId, ct);
+            if (!present.TryGetValue(userId, out var membership)
+                || DateTimeOffset.UtcNow - membership.SeenAtUtc >= TimeSpan.FromMinutes(2)) return;
             // A cached map snapshot can outlive a newer course or a stop. Do not send
             // its obsolete destination after the owner has published new travel.
             var saved = await cache.GetStringAsync(Key(userId), ct);

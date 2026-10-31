@@ -266,7 +266,8 @@ public class WorldTransportTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(counting.Reads.Count(k => k == "world:presence:map:1"), Is.EqualTo(1));
+            Assert.That(counting.Reads.Count(k => k == "world:presence:map:1"), Is.EqualTo(4),
+                "One shared snapshot read plus one current-membership check per delivered move.");
             Assert.That(counting.Reads.Count(k => k == "world:position:811"), Is.EqualTo(4),
                 "One snapshot read plus one current-travel check per delivered move.");
             Assert.That(counting.Reads.Count(k => k == "world:runtime:811"), Is.EqualTo(4),
@@ -277,7 +278,7 @@ public class WorldTransportTests
 
         await Task.Delay(WorldSessionStore.RemoteSnapshotTtl + TimeSpan.FromMilliseconds(100));
         await nodeA.ObserveRemoteMovesAsync(observers[0], CancellationToken.None);
-        Assert.That(counting.Reads.Count(k => k == "world:presence:map:1"), Is.EqualTo(2),
+        Assert.That(counting.Reads.Count(k => k == "world:presence:map:1"), Is.EqualTo(5),
             "An expired snapshot must re-read shared presence.");
     }
 
@@ -390,6 +391,27 @@ public class WorldTransportTests
             Assert.That(destination.Duration, Is.GreaterThan(0));
         });
         Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
+    public async Task RemoteMove_SelectedBeforePilotLeaves_IsNotDelivered()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var owner = new WorldSessionStore(cache);
+        var observerNode = new WorldSessionStore(cache);
+        var remote = await owner.EnterAsync(new WorldPilot(959, "remote", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
+        var observer = remote with { UserId = 960 };
+        await owner.MoveAsync(remote, 4000, 2500, null, default);
+        var selected = (await observerNode.ObserveRemoteMovesAsync(observer, default)).Single();
+        await owner.LeaveAsync(remote, null, default);
+
+        using var wire = new MemoryStream();
+        var connection = new WorldConnection(observer, new WorldPacketWriter(wire));
+        await observerNode.SendMoveAsync(connection, selected, default);
+
+        Assert.That(wire.Length, Is.Zero);
     }
 
     [Test]
