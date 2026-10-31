@@ -3596,7 +3596,11 @@ public class WorldTransportTests
                     Assert.That(hero.Bool(), Is.True, "Unity needs refreshMap to create the ship scene");
                     sawShip = true;
                 }
-                if ((ushort)packet.Command == UnityWorldModuleId.LoginResponse) sawLogin = true;
+                if ((ushort)packet.Command == 0xA50C)
+                {
+                    Assert.That(new UnityModuleReader(packet.Payload).Short(), Is.Zero);
+                    sawLogin = true;
+                }
                 if (!sawShip || !sawLogin)
                     pendingEntry = (await reader.ReadAsync().WaitAsync(TimeSpan.FromSeconds(2)))!.Value;
             }

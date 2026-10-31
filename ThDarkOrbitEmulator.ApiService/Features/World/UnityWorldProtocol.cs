@@ -19,7 +19,7 @@ public static class UnityWorldModuleId
     public const ushort HeroMoveCommand = 29;
     public const ushort VersionRequest = 666;
     public const ushort VersionCommand = 667;
-    public const ushort LoginResponse = 19206;
+    public const ushort LoginResponse = 0xA50C;
     public const ushort ItemCommand = 2210;
     public const ushort UIFeatureBarCommand = 17638;
     public const ushort UILayoutCommand = 27964;
