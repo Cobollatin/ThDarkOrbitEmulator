@@ -1206,31 +1206,36 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                 catch (JsonException) { }
             }
             present.Add(remote.UserId);
-            if (visible.TryAdd(remote.UserId, 0))
+            await connection.RemoteMoveDeliveryGate.WaitAsync(ct);
+            try
             {
-                heals[remote.UserId] = runtime?.LastHealId ?? string.Empty;
-                remotePositions.GetOrAdd(observer.UserId, _ => new())[remote.UserId] = (remote.X, remote.Y);
-                try
+                if (visible.TryAdd(remote.UserId, 0))
                 {
-                    await connection.SendAsync(WorldCommandId.PilotCreateCommand, WorldPayload.Encode(w =>
+                    heals[remote.UserId] = runtime?.LastHealId ?? string.Empty;
+                    remotePositions.GetOrAdd(observer.UserId, _ => new())[remote.UserId] = (remote.X, remote.Y);
+                    try
                     {
-                        WorldPayload.WriteInt64(w, remote.UserId);
-                        WorldPayload.WriteString(w, remote.UserName);
-                        WorldPayload.WriteString(w, remote.ShipId);
-                        WorldPayload.WriteInt32(w, remote.FactionId);
-                        WorldPayload.WriteInt32(w, remote.MapId);
-                        WorldPayload.WriteInt32(w, remote.X);
-                        WorldPayload.WriteInt32(w, remote.Y);
-                    }), ct);
-                }
-                catch
-                {
-                    visible.TryRemove(remote.UserId, out _);
-                    heals.TryRemove(remote.UserId, out _);
-                    remotePositions.GetOrAdd(observer.UserId, _ => new()).TryRemove(remote.UserId, out _);
-                    throw;
+                        await connection.SendAsync(WorldCommandId.PilotCreateCommand, WorldPayload.Encode(w =>
+                        {
+                            WorldPayload.WriteInt64(w, remote.UserId);
+                            WorldPayload.WriteString(w, remote.UserName);
+                            WorldPayload.WriteString(w, remote.ShipId);
+                            WorldPayload.WriteInt32(w, remote.FactionId);
+                            WorldPayload.WriteInt32(w, remote.MapId);
+                            WorldPayload.WriteInt32(w, remote.X);
+                            WorldPayload.WriteInt32(w, remote.Y);
+                        }), ct);
+                    }
+                    catch
+                    {
+                        visible.TryRemove(remote.UserId, out _);
+                        heals.TryRemove(remote.UserId, out _);
+                        remotePositions.GetOrAdd(observer.UserId, _ => new()).TryRemove(remote.UserId, out _);
+                        throw;
+                    }
                 }
             }
+            finally { connection.RemoteMoveDeliveryGate.Release(); }
             await connection.HealDeliveryGate.WaitAsync(ct);
             try
             {

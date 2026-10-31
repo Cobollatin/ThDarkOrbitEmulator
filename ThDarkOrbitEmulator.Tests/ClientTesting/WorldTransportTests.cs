@@ -316,6 +316,39 @@ public class WorldTransportTests
         Assert.That(await reader.ReadAsync(), Is.Null);
     }
 
+    [Test]
+    public async Task RemoteMove_DuringFailedPilotCreation_IsNotDelivered()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var owner = new WorldSessionStore(cache);
+        var observerNode = new WorldSessionStore(cache);
+        var remote = await owner.EnterAsync(new WorldPilot(965, "remote", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
+        var observer = remote with { UserId = 966 };
+        await owner.MoveAsync(remote, 4000, 2500, null, default);
+        var selected = (await observerNode.ObserveRemoteMovesAsync(observer, default)).Single();
+        using var wire = new PauseFirstWriteStream(failFirstOnResume: true);
+        var connection = new WorldConnection(observer, new WorldPacketWriter(wire));
+
+        var creation = observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+        await wire.FirstWriteStarted;
+        var movement = observerNode.SendMoveAsync(connection, selected, default);
+        wire.Resume();
+        Assert.ThrowsAsync<IOException>(async () => await creation);
+        await movement;
+
+        Assert.That(wire.Length, Is.Zero);
+        await observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+        await observerNode.SendMoveAsync(connection, selected, default);
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.PilotCreateCommand));
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.CloakStateCommand));
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
     private static async Task AnnounceRemotePilotAsync(WorldSessionStore node, WorldPilot observer)
     {
         using var wire = new MemoryStream();
@@ -3906,9 +3939,11 @@ public class WorldTransportTests
 
     private sealed class PauseFirstWriteStream : MemoryStream
     {
+        private readonly bool failFirstOnResume;
         private readonly TaskCompletionSource started = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource resumed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private bool first = true;
+        public PauseFirstWriteStream(bool failFirstOnResume = false) => this.failFirstOnResume = failFirstOnResume;
         public Task FirstWriteStarted => started.Task;
         public void Resume() => resumed.SetResult();
         public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer,
@@ -3919,6 +3954,7 @@ public class WorldTransportTests
                 first = false;
                 started.SetResult();
                 await resumed.Task.WaitAsync(cancellationToken);
+                if (failFirstOnResume) throw new IOException("Simulated packet delivery failure.");
             }
             await base.WriteAsync(buffer, cancellationToken);
         }
