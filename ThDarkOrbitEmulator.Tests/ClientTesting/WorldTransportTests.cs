@@ -305,6 +305,33 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task RemotePilot_LeftWhileCreationWaitsForSocket_IsNotCreated()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var owner = new WorldSessionStore(cache);
+        var observerNode = new WorldSessionStore(cache);
+        var remote = await owner.EnterAsync(new WorldPilot(969, "remote", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
+        var observer = remote with { UserId = 970 };
+        await observerNode.ObserveRemoteMovesAsync(observer, default);
+        using var wire = new MemoryStream();
+        var connection = new WorldConnection(observer, new WorldPacketWriter(wire));
+        var gate = (SemaphoreSlim)typeof(WorldConnection)
+            .GetProperty("RemoteMoveDeliveryGate", System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.NonPublic)!.GetValue(connection)!;
+
+        await gate.WaitAsync();
+        var creation = observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+        Assert.That(creation.IsCompleted, Is.False);
+        await owner.LeaveAsync(remote, null, default);
+        gate.Release();
+        await creation;
+
+        Assert.That(wire.Length, Is.Zero);
+    }
+
+    [Test]
     public async Task RemoteMove_WaitsForPilotCreation_ThenDeliversOnce()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
