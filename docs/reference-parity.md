@@ -1,4 +1,6 @@
-# Reference parity — iteration 223
+# Reference parity — iteration 224
+
+Iteration 224 extends the Unity loopback check to decode the ship's spawn coordinates, map ID, and `refreshMap` scene-load flag, then accepts a second click while the first move is in flight. This verifies the emulator sends the fields the installed client's reader uses for ship creation and repeated movement. The installed client's rendering and click handling still require a local visual run with the AppHost and game active.
 
 Iteration 223 routes the installed Unity version preamble to the Unity world session. The older native handshake answered login before ship initialization and never sent the Unity HUD or map burst. The Unity session now acknowledges an accepted click with `HeroMoveCommand` and `MoveCommand` using the server's saved destination and duration. A loopback socket test verifies entry order, ship identity and movement fields. This follows the IL2CPP reader layouts in `docs/cockpit-catalog.md`; an installed-client visual check remains outstanding.
 

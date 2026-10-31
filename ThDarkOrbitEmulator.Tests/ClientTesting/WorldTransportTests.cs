@@ -3567,6 +3567,33 @@ public class WorldTransportTests
                     Assert.That(hero.RotatedInt(14), Is.EqualTo(42));
                     Assert.That(hero.String(), Is.EqualTo("Pilot"));
                     Assert.That(hero.String(), Is.EqualTo("ship_phoenix"));
+                    hero.RotatedInt(20); // speed
+                    hero.RotatedInt(18); // shield
+                    hero.RotatedInt(19); // maximum shield
+                    hero.Int(); hero.Int(); // hit points
+                    hero.Int(); hero.Int(); // maximum hit points
+                    hero.RotatedInt(22);
+                    hero.RotatedInt(14);
+                    hero.RotatedInt(11);
+                    hero.RotatedInt(15);
+                    Assert.That((hero.RotatedInt(14), hero.RotatedInt(4)), Is.EqualTo((2000, 1300)));
+                    Assert.That(hero.RotatedInt(21), Is.EqualTo(1));
+                    hero.RotatedInt(27);
+                    hero.RotatedInt(3);
+                    hero.RotatedInt(5);
+                    hero.Bool();
+                    hero.Int(); hero.Int(); // experience
+                    hero.Int(); hero.Int(); // honor
+                    hero.RotatedInt(15);
+                    hero.Int(); hero.Int(); // credits
+                    hero.Int(); hero.Int(); // uridium
+                    hero.Int(); // jackpot
+                    hero.RotatedInt(18);
+                    hero.String();
+                    hero.RotatedInt(27);
+                    hero.Bool();
+                    hero.Bool();
+                    Assert.That(hero.Bool(), Is.True, "Unity needs refreshMap to create the ship scene");
                     sawShip = true;
                 }
                 if ((ushort)packet.Command == UnityWorldModuleId.LoginResponse) sawLogin = true;
@@ -3599,6 +3626,29 @@ public class WorldTransportTests
                 }
             }
             Assert.That(sawHeroMove && sawMove, Is.True, "Unity must receive its accepted movement");
+            await WriteNativeAsync(stream, UnityWorldModuleId.MoveRequest,
+                new UnityModuleWriter(0).RotatedInt(2000, 11).RotatedInt(1500, 17)
+                    .RotatedInt(2400, 13).RotatedInt(1300, 10).ToArray()[2..]);
+            sawHeroMove = false;
+            sawMove = false;
+            for (var i = 0; i < 30 && (!sawHeroMove || !sawMove); i++)
+            {
+                var packet = (await reader.ReadAsync().WaitAsync(TimeSpan.FromSeconds(2)))!.Value;
+                if ((ushort)packet.Command == UnityWorldModuleId.HeroMoveCommand)
+                {
+                    var move = new UnityModuleReader(packet.Payload);
+                    Assert.That((move.RotatedInt(9), move.RotatedInt(25)), Is.EqualTo((2400, 1500)));
+                    sawHeroMove = true;
+                }
+                if ((ushort)packet.Command == UnityWorldModuleId.MoveCommand)
+                {
+                    var move = new UnityModuleReader(packet.Payload);
+                    Assert.That(move.RotatedInt(16), Is.EqualTo(42));
+                    Assert.That((move.RotatedInt(13), move.RotatedInt(16)), Is.EqualTo((2400, 1500)));
+                    sawMove = true;
+                }
+            }
+            Assert.That(sawHeroMove && sawMove, Is.True, "Unity must accept another click while traveling");
             client.Client.Shutdown(SocketShutdown.Send);
             await worker.WaitAsync(TimeSpan.FromSeconds(2));
         }
