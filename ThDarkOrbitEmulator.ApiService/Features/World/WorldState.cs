@@ -1358,6 +1358,25 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         {
             var observerId = observer.Pilot.UserId;
             var userId = remoteMove.Move.UserId;
+            // A cached map snapshot can outlive a newer course or a stop. Do not send
+            // its obsolete destination after the owner has published new travel.
+            var saved = await cache.GetStringAsync(Key(userId), ct);
+            var current = ParseTravel(saved, observer.Pilot.MapId);
+            if (remoteMove.Travel is { } selectedTravel)
+            {
+                if (current != selectedTravel) return;
+            }
+            else
+            {
+                if (current is not null) return;
+                try
+                {
+                    var position = saved is null ? null : JsonSerializer.Deserialize<WorldPosition>(saved);
+                    if (position?.MapId != observer.Pilot.MapId
+                        || (position.X, position.Y) != (remoteMove.Move.X, remoteMove.Move.Y)) return;
+                }
+                catch (JsonException) { return; }
+            }
             if (remoteMove.Travel is { } currentTravel
                 && remoteAnnounced.GetOrAdd(observerId, _ => new()).TryGetValue(userId, out var sentTravel)
                 && sentTravel == currentTravel) return;

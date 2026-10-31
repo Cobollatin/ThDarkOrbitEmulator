@@ -1,4 +1,6 @@
-# Reference parity — iteration 204
+# Reference parity — iteration 205
+
+Iteration 205 skips a remote movement packet selected from a stale shared snapshot after the owner changes course or stops. The observer reads current shared travel inside its delivery gate before sending, so an obsolete destination cannot overwrite a newer one on the client. A focused transport test changes course between selection and delivery and verifies only the latest destination is sent. The older server broadcasts movement on each change; its Flash packet does not establish the installed Unity command or local snapshot policy.
 
 Iteration 204 serializes remote movement delivery for each observer socket. Concurrent polls could select the same trajectory before either successful write advanced the observer's delivery marker, producing duplicate movement packets. The send path now checks that marker inside a connection gate and skips an already delivered trajectory or stationary position. A focused paused-write test forces overlapping sends and checks that only one packet arrives. The older server broadcasts movement to nearby players; neither reference establishes the installed Unity command or this local delivery policy.
 

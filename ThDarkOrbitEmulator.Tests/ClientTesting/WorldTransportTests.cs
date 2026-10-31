@@ -237,7 +237,7 @@ public class WorldTransportTests
     }
 
     [Test]
-    public async Task RemoteObservers_OnSameMap_ShareOnePresenceAndTravelReadPerSnapshot()
+    public async Task RemoteObservers_OnSameMap_SharePresenceReadAndValidateEachMove()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
         var counting = new CountingCache(services.GetRequiredService<IDistributedCache>());
@@ -267,7 +267,8 @@ public class WorldTransportTests
         Assert.Multiple(() =>
         {
             Assert.That(counting.Reads.Count(k => k == "world:presence:map:1"), Is.EqualTo(1));
-            Assert.That(counting.Reads.Count(k => k == "world:position:811"), Is.EqualTo(1));
+            Assert.That(counting.Reads.Count(k => k == "world:position:811"), Is.EqualTo(4),
+                "One snapshot read plus one current-travel check per delivered move.");
             Assert.That(counting.Reads.Count(k => k == "world:runtime:811"), Is.EqualTo(4),
                 "Each first visibility poll reads current heal history after the shared snapshot.");
             Assert.That(sent.Count(s => s == WorldCommandId.PilotCreateCommand), Is.EqualTo(3));
@@ -349,6 +350,46 @@ public class WorldTransportTests
         Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.MoveCommand));
         Assert.That(await reader.ReadAsync(), Is.Null);
         Assert.That(await observerNode.ObserveRemoteMovesAsync(observer, default), Is.Empty);
+    }
+
+    [Test]
+    public async Task StaleRemoteMove_IsSkippedAfterOwnerChangesCourse()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var owner = new WorldSessionStore(cache);
+        var observerNode = new WorldSessionStore(cache);
+        var remote = await owner.EnterAsync(new WorldPilot(957, "remote", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
+        var observer = remote with { UserId = 958 };
+        await owner.MoveAsync(remote, 4000, 2500, null, default);
+        var stale = (await observerNode.ObserveRemoteMovesAsync(observer, default)).Single();
+        await owner.MoveAsync(remote, 5000, 3000, null, default);
+        using var wire = new MemoryStream();
+        var connection = new WorldConnection(observer, new WorldPacketWriter(wire));
+
+        await observerNode.SendMoveAsync(connection, stale, default);
+        await observerNode.SendMoveAsync(connection,
+            new WorldRemoteMove(new WorldMoveResult(957, 1000, 1000, 0, false), null), default);
+        await Task.Delay(WorldSessionStore.RemoteSnapshotTtl + TimeSpan.FromMilliseconds(100));
+        var latest = (await observerNode.ObserveRemoteMovesAsync(observer, default)).Single();
+        await observerNode.SendMoveAsync(connection, latest, default);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        var packet = await reader.ReadAsync();
+        Assert.That(packet?.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+        var destination = WorldPayload.Decode(packet!.Value.Payload, r =>
+            (Id: WorldPayload.ReadInt64(r), X: WorldPayload.ReadInt32(r),
+                Y: WorldPayload.ReadInt32(r), Duration: WorldPayload.ReadInt32(r)));
+        Assert.Multiple(() =>
+        {
+            Assert.That(destination.Id, Is.EqualTo(957));
+            Assert.That(destination.X, Is.EqualTo(5000));
+            Assert.That(destination.Y, Is.EqualTo(3000));
+            Assert.That(destination.Duration, Is.GreaterThan(0));
+        });
+        Assert.That(await reader.ReadAsync(), Is.Null);
     }
 
     [Test]
