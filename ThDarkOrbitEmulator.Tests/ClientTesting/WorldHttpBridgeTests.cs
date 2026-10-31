@@ -1778,7 +1778,7 @@ public sealed class WorldHttpBridgeTests
     }
 
     [Test]
-    public async Task BrowserState_RepairsHullOnlyWithCurrentMapLease()
+    public async Task StationRepair_RepairsHullOnlyWithCurrentMapLease()
     {
         using var shared = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
         var cache = shared.GetRequiredService<IDistributedCache>();
@@ -1794,7 +1794,7 @@ public sealed class WorldHttpBridgeTests
         var store = new WorldSessionStore(cache, new NpcMutex());
         var auth = new Auth();
         var resolver = new Resolver();
-        var rejected = await SendAsync("GET", "state", null, auth, resolver, store, services: app);
+        var rejected = await SendAsync("POST", "station-repair", "{\"mapId\":1}", auth, resolver, store, services: app);
         Assert.That(rejected.Response.StatusCode, Is.EqualTo(409));
         Assert.That(Body(rejected), Does.Contain("map_lease_changed"));
         Assert.That(JsonSerializer.Deserialize<WorldRuntimeSnapshot>(
@@ -1807,20 +1807,21 @@ public sealed class WorldHttpBridgeTests
         {
             if (count == changed + 3) registry.Snapshot = new ServerMeshSnapshot([owner], []);
         };
-        var reassigned = await SendAsync("GET", "state", null, auth, resolver, store, services: app);
+        var reassigned = await SendAsync("POST", "station-repair", "{\"mapId\":1}", auth, resolver, store, services: app);
         Assert.That(reassigned.Response.StatusCode, Is.EqualTo(409));
         Assert.That(JsonSerializer.Deserialize<WorldRuntimeSnapshot>(
             (await cache.GetStringAsync("world:runtime:73"))!)!.HitPoints, Is.EqualTo(1000));
         registry.AfterRead = null;
         registry.Snapshot = new ServerMeshSnapshot([owner],
             [new ServerMapLease(1, "owner", 3, now.AddMinutes(1))]);
-        var accepted = await SendAsync("GET", "state", null, auth, resolver, store, services: app);
+        var accepted = await SendAsync("POST", "station-repair", "{\"mapId\":1}", auth, resolver, store, services: app);
         Assert.That(accepted.Response.StatusCode, Is.EqualTo(200));
         using var body = JsonDocument.Parse(Body(accepted));
-        Assert.That(body.RootElement.GetProperty("pilot").GetProperty("hp").GetInt64(),
-            Is.EqualTo(3560));
+        var repairedHp = body.RootElement.GetProperty("pilot").GetProperty("hp").GetInt64();
+        Assert.That(repairedHp, Is.EqualTo(body.RootElement.GetProperty("pilot").GetProperty("maxHp").GetInt64()));
+        Assert.That(repairedHp, Is.GreaterThan(1000));
         Assert.That(JsonSerializer.Deserialize<WorldRuntimeSnapshot>(
-            (await cache.GetStringAsync("world:runtime:73"))!)!.HitPoints, Is.EqualTo(3560));
+            (await cache.GetStringAsync("world:runtime:73"))!)!.HitPoints, Is.EqualTo(repairedHp));
     }
 
     private sealed class FixedRegistry(ServerMeshSnapshot snapshot) : IServerMeshRegistry
@@ -2042,12 +2043,12 @@ public sealed class WorldHttpBridgeTests
         await nodeA.RefreshLocalPresenceAsync(default);
         Assert.That(counting.Writes.Count(k => k == "world:presence:map:1"), Is.Zero,
             "State polls and mesh ticks within the heartbeat interval must not rewrite the map roster.");
-        Assert.That(counting.Reads.Count(k => k.EndsWith(":811")), Is.EqualTo(1),
+        Assert.That(counting.Reads.Count(k => k == "world:position:811"), Is.EqualTo(1),
             "Three polls within the TTL must share one read of the remote pilot's saved position.");
 
         await Task.Delay(WorldSessionStore.RemoteSnapshotTtl + TimeSpan.FromMilliseconds(100));
         await SendAsync("GET", "state", null, auth, resolver, nodeA);
-        Assert.That(counting.Reads.Count(k => k.EndsWith(":811")), Is.EqualTo(2),
+        Assert.That(counting.Reads.Count(k => k == "world:position:811"), Is.EqualTo(2),
             "An expired snapshot must re-read the remote pilot's saved position.");
     }
 

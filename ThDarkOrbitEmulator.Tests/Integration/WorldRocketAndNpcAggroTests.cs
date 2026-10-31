@@ -24,7 +24,8 @@ public sealed class WorldRocketAndNpcAggroTests
         });
         var npc = (await npcs.VisibleAsync(1, default)).Single();
         var sessions = new WorldSessionStore(cache, mutex, clock: clock);
-        var pilot = await sessions.EnterAsync(Pilot(npc.X, npc.Y), default);
+        var pilot = await sessions.EnterAsync(Pilot(npc.X, npc.Y) with
+        { Stats = new WorldShipStats(300, 1000, 0, 100, 1, []) }, default);
         await npcs.SelectAsync(pilot, npc.Id, default);
         Assert.That((await npcs.AttackAsync(pilot, npc.Id, sessions, default)).Target!.Hp, Is.EqualTo(299));
         await npcs.StartLaserAsync(pilot, npc.Id, default, sessions);
@@ -54,7 +55,8 @@ public sealed class WorldRocketAndNpcAggroTests
         var npcs = CreateNpcs(cache, mutex, new Rewards(), clock, options);
         var npc = (await npcs.VisibleAsync(1, default)).Single();
         var sessions = new WorldSessionStore(cache, mutex, clock: clock);
-        var pilot = await sessions.EnterAsync(Pilot(npc.X, npc.Y), default);
+        var pilot = await sessions.EnterAsync(Pilot(npc.X, npc.Y) with
+        { Stats = new WorldShipStats(300, 1000, 0, 100, 1, []) }, default);
         await npcs.SelectAsync(pilot, npc.Id, default);
         await npcs.StartLaserAsync(pilot, npc.Id, default, sessions);
 
@@ -1022,7 +1024,8 @@ public sealed class WorldRocketAndNpcAggroTests
         var firstNode = CreateNpcs(cache, mutex, new Rewards(), clock, options);
         var npc = (await firstNode.VisibleAsync(1, default)).Single();
         var sessions = new WorldSessionStore(cache, mutex, clock: clock);
-        var attacker = await sessions.EnterAsync(Pilot(npc.X + 400, npc.Y), default);
+        var attacker = await sessions.EnterAsync(Pilot(npc.X + 400, npc.Y) with
+        { Stats = new WorldShipStats(300, 1000, 0, 100, 1, []) }, default);
         var bystander = await sessions.EnterAsync(Pilot(npc.X + 600, npc.Y) with { UserId = 8 }, default);
 
         await firstNode.TickAggroAsync(1, sessions, default);

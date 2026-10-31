@@ -120,7 +120,7 @@ The `SPEC-06` TCP pilot resolver now has tests for blank and 128/129-character s
 | `ThDarkOrbitEmulator.Tests/ClientTesting/CommandCenterResourceManifestSpecificationTests.cs` | 8 | `SPEC-05` |
 | `ThDarkOrbitEmulator.Tests/ClientTesting/CommandCenterCategoriesResourceSpecificationTests.cs` | 18 | `SPEC-05` |
 | `ThDarkOrbitEmulator.Tests/ClientTesting/MapsResourceSpecificationTests.cs` | 9 | `SPEC-07` |
-| `ThDarkOrbitEmulator.Tests/ClientTesting/WorldAndSpacemapSpecificationTests.cs` | 90 | `SPEC-06` |
+| `ThDarkOrbitEmulator.Tests/ClientTesting/WorldAndSpacemapSpecificationTests.cs` | 215 | `SPEC-06` |
 | `ThDarkOrbitEmulator.Tests/ClientTesting/UnityWorldProtocolSpecificationTests.cs` | 4 | `SPEC-06` |
 | `ThDarkOrbitEmulator.Tests/ClientTesting/WorldServerOptionsSpecificationTests.cs` | 79 | `SPEC-06` |
 | `ThDarkOrbitEmulator.Tests/ClientTesting/WorldPilotResolverSpecificationTests.cs` | 10 | `SPEC-06` |
@@ -128,8 +128,8 @@ The `SPEC-06` TCP pilot resolver now has tests for blank and 128/129-character s
 | `ThDarkOrbitEmulator.Tests/ClientTesting/WorldEntryPacketSpecificationTests.cs` | 11 | `SPEC-06` |
 | `ThDarkOrbitEmulator.Tests/ClientTesting/WorldCompanionSpecificationTests.cs` | 60 | `SPEC-06` |
 | `ThDarkOrbitEmulator.Tests/ClientTesting/WorldCompanionStateSpecificationTests.cs` | 8 | `SPEC-06` |
-| `ThDarkOrbitEmulator.Tests/ClientTesting/WorldCollectiblePickupSpecificationTests.cs` | 22 | `SPEC-06` |
-| `ThDarkOrbitEmulator.Tests/ClientTesting/WorldSpacemapPageSpecificationTests.cs` | 73 | `SPEC-06` |
+| `ThDarkOrbitEmulator.Tests/ClientTesting/WorldCollectiblePickupSpecificationTests.cs` | 23 | `SPEC-06` |
+| `ThDarkOrbitEmulator.Tests/ClientTesting/WorldSpacemapPageSpecificationTests.cs` | 82 | `SPEC-06` |
 | `ThDarkOrbitEmulator.Tests/ClientTesting/ServerMeshSpecificationTests.cs` | 63 | `SPEC-07` |
 | `ThDarkOrbitEmulator.Tests/ClientTesting/MeshBackofficeHttpSpecificationTests.cs` | 36 | `SPEC-07` |
 | `ThDarkOrbitEmulator.Tests/ClientTesting/AdminAndRuntimeVariablesSpecificationTests.cs` | 44 | `SPEC-08` |

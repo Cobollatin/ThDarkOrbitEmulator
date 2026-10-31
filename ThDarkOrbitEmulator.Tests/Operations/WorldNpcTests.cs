@@ -225,7 +225,8 @@ public sealed class WorldNpcTests
         var npcs = new WorldNpcs(cache, mutex, new Rewards(), Options.Create(new WorldNpcOptions
         { Templates = [new("Streuner", "npc_streuner", 1, 50, 0, 1, 0, 0, 0, 0)] }), clock);
         var npc = npcs.Spawn(1, clock.Now).Single();
-        var pilot = new WorldPilot(47, "mmo", 1, 1, "ship", 0, 0) { AccountId = Guid.NewGuid() };
+        var pilot = new WorldPilot(47, "mmo", 1, 1, "ship", 0, 0)
+        { AccountId = Guid.NewGuid(), Stats = new WorldShipStats(300, 1000, 0, 0, 1, []) };
         var sessions = new WorldSessionStore(cache, mutex);
         await registry.HeartbeatAsync(Node("b"));
         var changed = await registry.SetDrainingAsync("a");

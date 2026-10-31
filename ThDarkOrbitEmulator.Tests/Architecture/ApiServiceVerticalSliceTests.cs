@@ -50,7 +50,7 @@ public class ApiServiceVerticalSliceTests
             source.IndexOf("private static async Task WriteStateAsync", StringComparison.Ordinal)];
         Assert.Multiple(() =>
         {
-            Assert.That(Regex.Matches(source, @"if \(!JsonRequest\(context\)\)").Count, Is.EqualTo(8));
+            Assert.That(Regex.Matches(source, @"if \(!JsonRequest\(context\)\)").Count, Is.EqualTo(14));
             Assert.That(helper, Does.Contain("mediaType.Trim().Equals(\"application/json\", StringComparison.OrdinalIgnoreCase)"));
             Assert.That(helper, Does.Not.Contain("StartsWith"));
         });
@@ -736,7 +736,7 @@ public class ApiServiceVerticalSliceTests
     public void WorldProtocol_CommandIdsRemainUniqueAndContiguousThroughPublishedRange()
     {
         var values = Enum.GetValues<WorldCommandId>().Select(value => (ushort)value).ToArray();
-        Assert.That(values, Is.EqualTo(Enumerable.Range(1, 40).Select(value => (ushort)value)),
+        Assert.That(values, Is.EqualTo(Enumerable.Range(1, 46).Select(value => (ushort)value)),
             "Changing a published command ID changes the provisional TCP wire contract.");
         Assert.That(typeof(WorldCommandId).Namespace,
             Is.EqualTo("ThDarkOrbitEmulator.ApiService.Features.World"));
@@ -1055,7 +1055,7 @@ public class ApiServiceVerticalSliceTests
         {
             Assert.That(begin, Does.Contain("(double)targetX - start.Item1"));
             Assert.That(begin, Does.Contain("(double)targetY - start.Item2"));
-            Assert.That(begin, Does.Contain("Math.Min(durationMilliseconds, int.MaxValue)"));
+            Assert.That(source, Does.Contain("Math.Min(Math.Round(distance * 1000d / speed), int.MaxValue)"));
             Assert.That(begin, Does.Not.Contain("(int)Math.Ceiling(distance"));
         });
     }
@@ -1074,7 +1074,7 @@ public class ApiServiceVerticalSliceTests
         {
             Assert.That(begin, Does.Contain("previous?.MapId == pilot.MapId ? previous.PositionAt(now) : (pilot.X, pilot.Y)"));
             Assert.That(travel, Does.Contain("previous?.MapId == pilot.MapId ? previous.PositionAt(now) : (pilot.X, pilot.Y)"));
-            Assert.That(source, Does.Contain("Math.Clamp(elapsed * Speed / distance, 0, 1)"));
+            Assert.That(source, Does.Contain("Math.Clamp((double)elapsedMilliseconds / durationMilliseconds, 0, 1)"));
         });
     }
 
@@ -1139,8 +1139,8 @@ public class ApiServiceVerticalSliceTests
             Assert.That(damage, Does.Contain("Math.Max(0, current - damage)"));
             Assert.That(damage, Does.Contain("RecordDestructionAsync(pilot, ct)"));
             Assert.That(damage, Does.Contain("await PersistRuntimeAsync(pilot, ct)"));
-            Assert.That(repair, Does.Contain("position != target || dx * dx + dy * dy > (long)peaceRadius * peaceRadius"));
-            Assert.That(repair, Does.Contain("await PersistRuntimeAsync(pilot, ct)"));
+            Assert.That(repair, Does.Contain("dx * dx + dy * dy > (long)peaceRadius * peaceRadius"));
+            Assert.That(repair, Does.Contain("await PersistRuntimeAsync(pilot, ct, healAmount: hitPoints[pilot.UserId] - current)"));
             Assert.That(fenced, Does.Contain("await CheckLeaseAsync(pilot.MapId, fence, ct)"));
             Assert.That(fenced, Does.Contain("pilot = await RefreshAsync(pilot, ct)"));
             Assert.That(fenced.IndexOf("await CheckLeaseAsync(pilot.MapId, fence, ct)", StringComparison.Ordinal),
@@ -2027,7 +2027,7 @@ public class ApiServiceVerticalSliceTests
             Assert.That(Regex.Matches(source,
                     @"snapshot\.Leases\.Where\(l => l\.NodeId == nodeId && l\.ExpiresAtUtc > DateTimeOffset\.UtcNow\)")
                 .Count, Is.EqualTo(2), "pruning and emission must share the live-owned lease filter");
-            Assert.That(source, Does.Contain("{ known.Remove(mapId); knownBoxes.Remove(mapId); }"));
+            Assert.That(source, Does.Contain("{ known.Remove(mapId); knownBoxes.Remove(mapId); portalAnnouncer.Forget(mapId); }"));
             Assert.That(source, Does.Contain("variables is null ? 1000 :"));
             Assert.That(source, Does.Not.Contain("SetDrainingAsync").And.Not.Contain("HeartbeatAsync")
                 .And.Not.Contain("TryAcquire").And.Not.Contain("WorldNpcPackets.")
