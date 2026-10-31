@@ -305,6 +305,36 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task RemotePilot_ReturnedAfterSnapshot_IsCreatedAtCurrentPosition()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var owner = new WorldSessionStore(cache);
+        var observerNode = new WorldSessionStore(cache);
+        var remote = await owner.EnterAsync(new WorldPilot(975, "remote", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
+        var observer = remote with { UserId = 976 };
+        await observerNode.ObserveRemoteMovesAsync(observer, default);
+        await owner.LeaveAsync(remote, null, default);
+        var returned = remote with { X = 2300, Y = 1800 };
+        await owner.PersistAsync(returned, default);
+        await owner.EnterAsync(returned, default);
+
+        using var wire = new MemoryStream();
+        await observerNode.ObserveRemotePilotsAsync(observer,
+            new WorldConnection(observer, new WorldPacketWriter(wire)), default);
+        wire.Position = 0;
+        var packet = await new WorldPacketReader(wire).ReadAsync();
+        Assert.That(packet?.Command, Is.EqualTo(WorldCommandId.PilotCreateCommand));
+        var created = WorldPayload.Decode(packet!.Value.Payload, r =>
+            (Id: WorldPayload.ReadInt64(r), Name: WorldPayload.ReadString(r),
+                Ship: WorldPayload.ReadString(r), Faction: WorldPayload.ReadInt32(r),
+                Map: WorldPayload.ReadInt32(r), X: WorldPayload.ReadInt32(r),
+                Y: WorldPayload.ReadInt32(r)));
+        Assert.That((created.X, created.Y), Is.EqualTo((2300, 1800)));
+    }
+
+    [Test]
     public async Task RemotePilot_LeftWhileCreationWaitsForSocket_IsNotCreated()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

@@ -1216,6 +1216,33 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                     if (!currentPresence.TryGetValue(remote.UserId, out var currentEntry)
                         || DateTimeOffset.UtcNow - currentEntry.SeenAtUtc >= TimeSpan.FromMinutes(2))
                         continue;
+                    // A departed pilot may have returned while this map snapshot is cached.
+                    // Build the first creation from current presence and position.
+                    remote = currentEntry.Pilot;
+                    var currentSaved = await cache.GetStringAsync(Key(remote.UserId), ct);
+                    if (currentSaved is not null)
+                    {
+                        try
+                        {
+                            var currentTravel = JsonSerializer.Deserialize<WorldTravel>(currentSaved);
+                            if (currentTravel is { Speed: > 0 })
+                            {
+                                if (currentTravel.MapId != observer.MapId) continue;
+                                var position = currentTravel.PositionAt(DateTimeOffset.UtcNow);
+                                remote = remote with { X = position.X, Y = position.Y };
+                            }
+                            else
+                            {
+                                var position = JsonSerializer.Deserialize<WorldPosition>(currentSaved);
+                                if (position is not null)
+                                {
+                                    if (position.MapId != observer.MapId) continue;
+                                    remote = remote with { X = position.X, Y = position.Y };
+                                }
+                            }
+                        }
+                        catch (JsonException) { }
+                    }
                 }
                 present.Add(remote.UserId);
                 if (visible.TryAdd(remote.UserId, 0))
