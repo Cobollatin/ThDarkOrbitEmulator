@@ -96,6 +96,36 @@ public class ClientUriPatcherSpecificationTests
     }
 
     [Test]
+    public void ShiftedLiteralIndices_AreLocatedByOriginalValue()
+    {
+        using var fixture = new ClientFixture(indexShift: -33);
+        var result = Run(fixture, "Apply", patchCdn: true);
+        Assert.That(result.ExitCode, Is.Zero, result.Output);
+        var changed = File.ReadAllBytes(fixture.MetadataPath);
+        foreach (var literal in Literals)
+            Assert.That(fixture.ReadLiteral(changed, literal.Index - 33), Is.EqualTo(ExpectedValue(literal.Index, patchCdn: true, literal.Original)), literal.Name);
+        using var report = JsonDocument.Parse(result.Stdout);
+        Assert.That(report.RootElement.GetProperty("literals")[0].GetProperty("index").GetInt32(), Is.EqualTo(24820));
+
+        Assert.That(Run(fixture, "Reset").ExitCode, Is.Zero);
+        fixture.AssertOriginalFiles();
+    }
+
+    [Test]
+    public void DuplicateTargetLiteral_IsRejectedBeforeBackup()
+    {
+        using var fixture = new ClientFixture();
+        var duplicated = (byte[])fixture.OriginalMetadata.Clone();
+        // Point an unused descriptor at the PortalBaseUrl bytes so the value occurs twice.
+        duplicated.AsSpan(32 + 24853 * 8, 8).CopyTo(duplicated.AsSpan(32 + 1 * 8, 8));
+        File.WriteAllBytes(fixture.MetadataPath, duplicated);
+        var result = Run(fixture, "Apply", expectedHash: Convert.ToHexString(SHA256.HashData(duplicated)).ToLowerInvariant());
+        Assert.That(result.ExitCode, Is.Not.Zero);
+        Assert.That(result.Output, Does.Contain("PortalBaseUrl (ambiguous"));
+        fixture.AssertNoBackups();
+    }
+
+    [Test]
     public void OverlongUrl_IsRejectedWithoutChangingAnyClientFile()
     {
         using var fixture = new ClientFixture();
@@ -374,8 +404,12 @@ public class ClientUriPatcherSpecificationTests
         public string ExeHash { get; }
         public string BootHash { get; }
 
-        public ClientFixture()
+        public int IndexShift { get; }
+
+        // indexShift moves every target literal to model client builds whose literal table differs.
+        public ClientFixture(int indexShift = 0)
         {
+            IndexShift = indexShift;
             Directory.CreateDirectory(Path.GetDirectoryName(MetadataPath)!);
             Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath)!);
             const int literalOffset = 32;
@@ -394,7 +428,7 @@ public class ClientUriPatcherSpecificationTests
             foreach (var literal in Literals)
             {
                 var encoded = Encoding.UTF8.GetBytes(literal.Original);
-                var descriptor = literalOffset + literal.Index * 8;
+                var descriptor = literalOffset + (literal.Index + indexShift) * 8;
                 BinaryPrimitives.WriteInt32LittleEndian(OriginalMetadata.AsSpan(descriptor, 4), encoded.Length);
                 BinaryPrimitives.WriteInt32LittleEndian(OriginalMetadata.AsSpan(descriptor + 4, 4), relativeOffset);
                 encoded.CopyTo(OriginalMetadata.AsSpan(LiteralDataOffset + relativeOffset));

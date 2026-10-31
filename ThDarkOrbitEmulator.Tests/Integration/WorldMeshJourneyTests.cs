@@ -111,8 +111,8 @@ public sealed class WorldMeshJourneyTests
                 var owner = snapshot.Leases.Single(l => l.MapId == company.Map).NodeId;
                 var nodeIndex = int.Parse(owner[5..]) - 1;
                 var address = xml.Root!.Elements("map")
-                    .Single(e => (int)e.Attribute("ID")! == company.Map)
-                    .Attribute("GameServerIP")!.Value;
+                    .Single(e => (int)e.Attribute("id")! == company.Map)
+                    .Element("gameserverIP")!.Value;
                 Assert.That(address, Is.EqualTo($"127.0.0.1:{((IPEndPoint)listeners[nodeIndex].LocalEndpoint).Port}"));
                 using var client = new TcpClient();
                 await client.ConnectAsync(IPAddress.Loopback,
@@ -199,8 +199,8 @@ public sealed class WorldMeshJourneyTests
         {
             var lease = three.Leases.Single(l => l.MapId == company.Map);
             var node = three.Nodes.Single(n => n.NodeId == lease.NodeId);
-            var address = xml.Root!.Elements("map").Single(e => (int)e.Attribute("ID")! == company.Map)
-                .Attribute("GameServerIP")!.Value;
+            var address = xml.Root!.Elements("map").Single(e => (int)e.Attribute("id")! == company.Map)
+                .Element("gameserverIP")!.Value;
             Assert.That(address, Is.EqualTo($"127.0.0.1:{node.WorldTcpPort}"));
             var entry = await HttpAsync("enter", null, $"fixture-{index}", auth, resolver, stores[index]);
             using var state = JsonDocument.Parse(entry.Body);
@@ -230,12 +230,13 @@ public sealed class WorldMeshJourneyTests
         Assert.That(four.Leases.GroupBy(l => l.NodeId).Select(g => g.Count()), Has.All.EqualTo(4));
         Assert.That(four.Leases.Count(l => three.Leases.Single(old => old.MapId == l.MapId).NodeId != l.NodeId),
             Is.GreaterThan(0));
-        var portal = WorldMapInstance.Starter(1).Portals.First(p =>
-            four.Leases.Single(l => l.MapId == p.DestinationMapId).NodeId !=
-            four.Leases.Single(l => l.MapId == 1).NodeId);
-        await stores[0].TeleportAsync(100, 1, portal.X, portal.Y, false, default);
+        var (sourceMapId, portal) = Enumerable.Range(1, 16)
+            .SelectMany(id => WorldMapInstance.Starter(id).Portals.Select(p => (MapId: id, Portal: p)))
+            .First(x => four.Leases.Single(l => l.MapId == x.Portal.DestinationMapId).NodeId !=
+                four.Leases.Single(l => l.MapId == x.MapId).NodeId);
+        await stores[0].TeleportAsync(100, sourceMapId, portal.X, portal.Y, false, default);
         using var meshService = new ServiceCollection().AddSingleton<IServerMeshRegistry>(mesh[0]).BuildServiceProvider();
-        var jump = await HttpAsync("jump", $"{{\"portalId\":{portal.Id}}}", "fixture-0",
+        var jump = await HttpAsync("jump", $"{{\"portalId\":{portal.Id},\"mapId\":{sourceMapId}}}", "fixture-0",
             auth, resolver, stores[1], meshService);
         using (var arrival = JsonDocument.Parse(jump.Body))
         {

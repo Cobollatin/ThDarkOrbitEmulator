@@ -1544,7 +1544,7 @@ public class ApiServiceVerticalSliceTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(endpoint, Does.Contain("Post(\"/Bigpoint\")").And.Contain("RoutePrefixOverride(\"Sas/Authentication\")")
+            Assert.That(endpoint, Does.Contain("Post(\"/Bigpoint\", \"/Local\")").And.Contain("RoutePrefixOverride(\"Sas/Authentication\")")
                 .And.Contain("AllowAnonymous()"));
             Assert.That(sources, Has.None.Contain("Identity.Infrastructure").And.None.Contain("DbContext")
                 .And.None.Contain("CreateUserAsync").And.None.Contain("ValidateCredentialsQuery")
@@ -1956,11 +1956,11 @@ public class ApiServiceVerticalSliceTests
         {
             Assert.That(Directory.GetFiles(root, "*.cs").Select(Path.GetFileName),
                 Is.EquivalentTo(new[] { "LegacyMapsPhpEndpoint.cs", "LegacyMapsXmlEndpoint.cs", "LocalMapsXml.cs" }));
-            Assert.That(php, Does.Contain("Get(\"/maps.php\");"));
-            Assert.That(xml, Does.Contain("Get(\"/maps.xml\");"));
+            Assert.That(php, Does.Contain("Get(\"/xml/maps.php\", \"/spacemap/xml/maps.php\");"));
+            Assert.That(xml, Does.Contain("Get(\"/xml/maps.xml\", \"/spacemap/xml/maps.xml\");"));
             foreach (var endpoint in new[] { php, xml })
             {
-                Assert.That(endpoint, Does.Contain("RoutePrefixOverride(\"xml\");")
+                Assert.That(endpoint, Does.Contain("RoutePrefixOverride(string.Empty);")
                     .And.Contain("AllowAnonymous();")
                     .And.Contain("WithTags(\"DNS:gbl3.darkorbit.com\")")
                     .And.Contain("LocalMapsXml.WriteResponseAsync(HttpContext.Response, world, registry, ct)"));

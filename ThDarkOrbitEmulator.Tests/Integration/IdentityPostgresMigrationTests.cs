@@ -98,7 +98,7 @@ public class IdentityPostgresMigrationTests
         {
             Assert.That(accountsTable, Is.EqualTo("identity.accounts"));
             Assert.That(economyLedger, Is.EqualTo("economy.ledger"));
-            Assert.That(migrationCount, Is.EqualTo(34));
+            Assert.That(migrationCount, Is.EqualTo(46));
             Assert.That(gameUserIdDefault, Does.Contain("identity.game_user_id_seq"));
             Assert.That(companyColumn, Is.EqualTo("character varying"));
             Assert.That(savedCompany, Is.EqualTo("tst"));

@@ -42,21 +42,21 @@ public sealed class WorldPortalOperationEndpointTests
         try
         {
             using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
-            const string route = "/api/v1/backoffice/world/maps/2/portals";
+            const string route = "/api/v1/backoffice/world/maps/1/portals";
             Assert.That((await client.GetAsync(route, ct)).StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
             client.DefaultRequestHeaders.Add("X-Test-Admin", "yes");
-            Assert.That((await client.PutAsJsonAsync(route + "/201", new PortalOperationOverride(false), ct)).StatusCode,
+            Assert.That((await client.PutAsJsonAsync(route + "/1", new PortalOperationOverride(false), ct)).StatusCode,
                 Is.EqualTo(HttpStatusCode.NoContent));
             Assert.That((await client.GetFromJsonAsync<WorldPortal[]>(route, ct))!.Single().Working, Is.False);
             var replica = new WorldPortalOperations(app.Services.GetRequiredService<Microsoft.Extensions.Caching.Distributed.IDistributedCache>());
-            Assert.That((await replica.MapAsync(2, ct)).AllowsPortalRepair, Is.False);
+            Assert.That((await replica.MapAsync(1, ct)).AllowsPortalRepair, Is.False);
             Assert.That((await client.PutAsJsonAsync(route + "/999", new PortalOperationOverride(true), ct)).StatusCode,
                 Is.EqualTo(HttpStatusCode.NotFound));
             Assert.That((await client.GetAsync("/api/v1/backoffice/world/maps/99/portals", ct)).StatusCode,
                 Is.EqualTo(HttpStatusCode.NotFound));
-            Assert.That((await client.PutAsJsonAsync(route + "/201", new PortalOperationOverride(true), ct)).StatusCode,
+            Assert.That((await client.PutAsJsonAsync(route + "/1", new PortalOperationOverride(true), ct)).StatusCode,
                 Is.EqualTo(HttpStatusCode.NoContent));
-            Assert.That((await replica.MapAsync(2, ct)).AllowsPortalRepair, Is.True);
+            Assert.That((await replica.MapAsync(1, ct)).AllowsPortalRepair, Is.True);
         }
         finally { await app.StopAsync(ct); }
     }

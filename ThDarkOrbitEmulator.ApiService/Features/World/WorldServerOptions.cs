@@ -13,6 +13,11 @@ public sealed class WorldServerOptions
     public string? DynamicTcpPortRange { get; set; }
     public string Version { get; set; } = "local-1";
     public int MaximumPacketBytes { get; set; } = 65536;
+    // Testing aid: the native Unity path places the x-1 home stations (maps 1, 5, 9) at the map center.
+    public bool CenterHomeStation { get; set; }
+    // Local-only aid: the Unity client keeps its 2D/3D choice (Settings.Force2D) in memory and never writes
+    // PlayerPrefs, so the server mirrors DisplaySettingsRequest.displayUse2d into this Windows user's PlayerPrefs.
+    public bool SyncClientForce2D { get; set; }
 
     public void Validate()
     {

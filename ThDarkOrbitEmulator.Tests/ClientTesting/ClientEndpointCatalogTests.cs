@@ -116,6 +116,8 @@ public class ClientEndpointCatalogTests
 
     [TestCase("game-xml-maps-xml", "/xml/maps.xml")]
     [TestCase("game-xml-maps-php", "/xml/maps.php")]
+    [TestCase("game-xml-spacemap-maps-xml", "/spacemap/xml/maps.xml")]
+    [TestCase("game-xml-spacemap-maps-php", "/spacemap/xml/maps.php")]
     [TestCase("game-xml-expedition-boxes", "/xml/events/expedition/expedition-boxes.xml")]
     public void LegacyMapsRoute_ReachesApiServiceOnlyForGet(string routeName, string path)
     {

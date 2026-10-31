@@ -23,10 +23,10 @@ public class LocalMapsXmlResponseTests
         var snapshot = new ServerMeshSnapshot([node], [new ServerMapLease(1, "owner", 1, now.AddMinutes(1))]);
         var xml = XDocument.Parse(LocalMapsXml.XmlFor(new WorldServerOptions
             { Enabled = true, Port = 60954 }, snapshot));
-        Assert.That((string?)xml.Root!.Elements("map").Single(map => (string?)map.Attribute("ID") == "1")
-            .Attribute("GameServerIP"), Is.EqualTo("127.0.0.1:61001"));
-        Assert.That((string?)xml.Root!.Elements("map").Single(map => (string?)map.Attribute("ID") == "5")
-            .Attribute("GameServerIP"), Is.EqualTo("127.0.0.1:60954"));
+        Assert.That((string?)xml.Root!.Elements("map").Single(map => (string?)map.Attribute("id") == "1")
+            .Element("gameserverIP"), Is.EqualTo("127.0.0.1:61001"));
+        Assert.That((string?)xml.Root!.Elements("map").Single(map => (string?)map.Attribute("id") == "5")
+            .Element("gameserverIP"), Is.EqualTo("127.0.0.1:60954"));
     }
 
     [Test]
@@ -94,15 +94,15 @@ public class LocalMapsXmlResponseTests
     }
 
     [Test]
-    public void Xml_MapsCarryOnlyClientPatternAttributes()
+    public void Xml_MapsUseOfficialIdAttributeAndGameServerElement()
     {
         foreach (var map in XDocument.Parse(LocalMapsXml.Xml).Root!.Elements("map"))
         {
-            Assert.That(map.Attributes().Select(a => a.Name.LocalName), Is.EqualTo(new[] { "ID", "GameServerIP" }));
-            Assert.That(map.Nodes(), Is.Empty);
-            Assert.That(IPAddress.TryParse((string)map.Attribute("GameServerIP")!, out var ip), Is.True);
+            Assert.That(map.Attributes().Select(a => a.Name.LocalName), Is.EqualTo(new[] { "id" }));
+            Assert.That(map.Elements().Select(e => e.Name.LocalName), Is.EqualTo(new[] { "gameserverIP" }));
+            Assert.That(IPAddress.TryParse((string)map.Element("gameserverIP")!, out var ip), Is.True);
             Assert.That(IPAddress.IsLoopback(ip!), Is.True);
-            Assert.That((string)map.Attribute("ID")!, Does.Match("^[1-9][0-9]{0,3}$"));
+            Assert.That((string)map.Attribute("id")!, Does.Match("^[1-9][0-9]{0,3}$"));
         }
     }
 
@@ -110,7 +110,7 @@ public class LocalMapsXmlResponseTests
     public void Catalogue_IsUniqueNumericallyOrderedAndCoversEveryStarterMap()
     {
         var ids = XDocument.Parse(LocalMapsXml.Xml).Root!.Elements("map")
-            .Select(map => (string)map.Attribute("ID")!).ToArray();
+            .Select(map => (string)map.Attribute("id")!).ToArray();
 
         Assert.That(ids, Is.Unique);
         Assert.That(ids.Select(int.Parse), Is.Ordered);

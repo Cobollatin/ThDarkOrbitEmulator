@@ -261,7 +261,7 @@ public sealed class WorldHttpBridgeTests
         var cache = services.GetRequiredService<IDistributedCache>();
         var store = new WorldSessionStore(cache, new NpcMutex());
         await cache.SetStringAsync("world:position:73", JsonSerializer.Serialize(new WorldPosition(2, 2500, 1300)));
-        var response = await SendAsync("POST", "jump", "{\"portalId\":101,\"mapId\":1}",
+        var response = await SendAsync("POST", "jump", "{\"portalId\":1,\"mapId\":1}",
             new Auth(), new Resolver(), store);
         Assert.That(response.Response.StatusCode, Is.EqualTo(409));
         using var json = JsonDocument.Parse(Body(response));
@@ -376,7 +376,7 @@ public sealed class WorldHttpBridgeTests
         var wallet = new Wallet();
         var collectibles = new WorldCollectibles(cache, mutex, wallet, TimeProvider.System);
         var stale = await first.EnterAsync(new WorldPilot(73, "mmo", 1, 1, "ship", 0, 0)
-            { X = 19500, Y = 1300, AccountId = Guid.NewGuid() }, default);
+            { X = 19500, Y = 11000, AccountId = Guid.NewGuid() }, default);
         await second.PersistAsync(stale with { MapId = 2, X = 2500, Y = 1300 }, default);
         Assert.ThrowsAsync<WorldMapChangedException>(async () =>
             await collectibles.CollectAsync(stale, 1001, first, default, expectedMapId: 1));
@@ -392,11 +392,11 @@ public sealed class WorldHttpBridgeTests
         var first = new WorldSessionStore(cache, mutex);
         var second = new WorldSessionStore(cache, mutex);
         var stale = await first.EnterAsync(new WorldPilot(73, "mmo", 1, 1, "ship", 0, 0)
-            { X = 19500, Y = 1300 }, default);
+            { X = 19500, Y = 11000 }, default);
         await second.PersistAsync(stale with { MapId = 2, X = 2500, Y = 1300 }, default);
 
         Assert.ThrowsAsync<WorldMapChangedException>(async () =>
-            await first.JumpAsync(stale, 101, null, default, expectedMapId: 1));
+            await first.JumpAsync(stale, 1, null, default, expectedMapId: 1));
         Assert.That(await cache.GetStringAsync("world:position:73"), Does.Contain("\"MapId\":2"));
     }
 
@@ -1173,7 +1173,7 @@ public sealed class WorldHttpBridgeTests
         await using var app = builder.Build();
         WorldHttpBridge.Map(app);
         await app.Services.GetRequiredService<IDistributedCache>().SetStringAsync("world:position:73",
-            JsonSerializer.Serialize(new WorldPosition(1, 19500, 1300)), ct);
+            JsonSerializer.Serialize(new WorldPosition(1, 19500, 11000)), ct);
         await app.StartAsync(ct);
         try
         {
@@ -1224,7 +1224,7 @@ public sealed class WorldHttpBridgeTests
         await using var app = builder.Build();
         WorldHttpBridge.Map(app);
         await app.Services.GetRequiredService<IDistributedCache>().SetStringAsync("world:position:73",
-            JsonSerializer.Serialize(new WorldPosition(1, 19500, 1300)), ct);
+            JsonSerializer.Serialize(new WorldPosition(1, 19500, 11000)), ct);
         await app.StartAsync(ct);
         try
         {
@@ -1585,7 +1585,7 @@ public sealed class WorldHttpBridgeTests
         await using var replicaA = BuildReplica(cacheA, muxA);
         await using var replicaB = BuildReplica(cacheB, muxB);
         await cacheA.SetStringAsync("world:position:73",
-            JsonSerializer.Serialize(new WorldPosition(1, 19500, 1300)), ct);
+            JsonSerializer.Serialize(new WorldPosition(1, 19500, 11000)), ct);
         await replicaA.StartAsync(ct);
         await replicaB.StartAsync(ct);
         try
@@ -1736,18 +1736,18 @@ public sealed class WorldHttpBridgeTests
                  new ServerMapLease(2, "node-b", 1, now.AddMinutes(1))]))).BuildServiceProvider();
         var auth = new Auth();
         var resolver = new Resolver();
-        var distant = await SendAsync("POST", "jump", "{\"portalId\":101}", auth, resolver, first,
+        var distant = await SendAsync("POST", "jump", "{\"portalId\":1}", auth, resolver, first,
             services: mesh);
         Assert.That(distant.Response.StatusCode, Is.EqualTo(409));
         await first.PersistAsync(new WorldPilot(73, "mmo", 1, 1, "ship", 0, 0)
-            { X = 19500, Y = 1300 }, default);
-        var jumped = await SendAsync("POST", "jump", "{\"portalId\":101}", auth, resolver, first,
+            { X = 19500, Y = 11000 }, default);
+        var jumped = await SendAsync("POST", "jump", "{\"portalId\":1}", auth, resolver, first,
             services: mesh);
         Assert.That(jumped.Response.StatusCode, Is.EqualTo(200));
         using (var json = JsonDocument.Parse(Body(jumped)))
         {
             Assert.That(json.RootElement.GetProperty("map").GetProperty("id").GetInt32(), Is.EqualTo(2));
-            Assert.That(json.RootElement.GetProperty("pilot").GetProperty("x").GetInt32(), Is.EqualTo(2500));
+            Assert.That(json.RootElement.GetProperty("pilot").GetProperty("x").GetInt32(), Is.EqualTo(2100));
             Assert.That(json.RootElement.GetProperty("jump").GetProperty("targetNodeId").GetString(),
                 Is.EqualTo("node-b"));
             Assert.That(json.RootElement.GetProperty("jump").GetProperty("targetTcpHostPort").GetString(),
@@ -1874,7 +1874,7 @@ public sealed class WorldHttpBridgeTests
         {
             ("move", "{\"x\":4000,\"y\":3000}"),
             ("config", "{\"configuration\":2}"),
-            ("jump", "{\"portalId\":101}")
+            ("jump", "{\"portalId\":1}")
         })
         {
             var rejected = await SendAsync("POST", route, payload, auth, resolver, store,

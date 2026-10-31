@@ -153,7 +153,7 @@ public sealed class LocalGalaxyGatePostgresTests
         }, ct);
         await SpinUntilAsync(h, "alpha", 34);
         await ActivateAsync(h, h.Gates, "alpha");
-        var entry = WorldMapInstance.Starter(1).Portals.Single(p => p.DestinationMapId == 101);
+        var entry = WorldMapInstance.GateEntrances(1).Single(p => p.DestinationMapId == 101);
         pilot = (await world.JumpAsync(pilot, entry.Id, null, ct))!.Pilot;
         var npc = (await combat.VisibleAsync(pilot, ct)).Single();
         var targetKey = $"world:gate:target:{pilot.UserId}";
@@ -189,7 +189,7 @@ public sealed class LocalGalaxyGatePostgresTests
             Stats = new WorldShipStats(300, 1000, 0, 100, 100, [])
         };
         pilot = await world.EnterAsync(pilot, ct);
-        var portal = WorldMapInstance.Starter(1).Portals.Single(p => p.DestinationMapId == 101);
+        var portal = WorldMapInstance.GateEntrances(1).Single(p => p.DestinationMapId == 101);
         Assert.That(await world.JumpAsync(pilot, portal.Id, null, ct), Is.Null);
         await SpinUntilAsync(h, "alpha", 34);
         await ActivateAsync(h, h.Gates, "alpha");

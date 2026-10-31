@@ -15,7 +15,29 @@ public sealed class HomeEndpoint(ILogger<HomeEndpoint> logger,
     EconomyStore economyStore) : EndpointWithoutRequest
 {
     private static readonly string HomeHtml = MockResponseHelpers.LoadCapturedBody("_reversing\\Requests\\home_html_raw.log");
-    private const string FallbackHtml = "<!doctype html><html><head><title>Space Emulator Portal | Local Login (Placeholder)</title></head><body></body></html>";
+    // Used when the git-ignored portal capture is absent: a minimal working login form so the
+    // client's embedded WebView can still sign in against the local identity store.
+    private const string FallbackHtml = """
+        <!doctype html>
+        <html><head><meta charset="utf-8"><title>Space Emulator Portal | Local Login (Placeholder)</title>
+        <style>
+        body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#050a18;color:#dbe7f5;font-family:Segoe UI,Arial,sans-serif}
+        form{width:320px;padding:28px;border:1px solid #23324a;border-radius:10px;background:#0c1528}
+        h1{margin:0 0 4px;font-size:22px}p{margin:0 0 18px;color:#8ea3bd;font-size:13px}
+        label{display:block;margin:12px 0 4px;font-size:14px}
+        input{box-sizing:border-box;width:100%;padding:9px;border:1px solid #2e4262;border-radius:6px;background:#030712;color:#fff;font-size:14px}
+        button{width:100%;margin-top:18px;padding:10px;border:0;border-radius:6px;background:#1d63ff;color:#fff;font-size:15px;cursor:pointer}
+        #err{display:none;margin-top:12px;color:#ff7a7a;font-size:13px}
+        </style></head>
+        <body><form method="post" action="/Sas/Authentication/Local">
+        <h1>Sign in</h1><p>Space Emulator local account</p>
+        <label for="username">Username</label><input id="username" name="username" autocomplete="username" required autofocus>
+        <label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required>
+        <button type="submit">Sign in</button><div id="err">Invalid username or password.</div>
+        </form>
+        <script>if(/[?&]loginError=/.test(location.search))document.getElementById('err').style.display='block';</script>
+        </body></html>
+        """;
 
     public static string GetBody(HttpRequest request, string? capturedHtml)
         => string.IsNullOrWhiteSpace(capturedHtml)

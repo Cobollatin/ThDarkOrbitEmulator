@@ -14,7 +14,8 @@ public sealed class SasAuthenticationEndpoint(
 {
     public override void Configure()
     {
-        Post("/Bigpoint");
+        // "/Local" is the brand-neutral alias posted by the self-contained fallback login page.
+        Post("/Bigpoint", "/Local");
         RoutePrefixOverride("Sas/Authentication");
         AllowAnonymous();
         Description(description => description.WithTags("DNS:sas.bpsecure.com"));

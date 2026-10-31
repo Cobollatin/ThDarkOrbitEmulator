@@ -8,8 +8,8 @@ public sealed class LegacyMapsXmlEndpoint(ThDarkOrbitEmulator.ApiService.Feature
 {
     public override void Configure()
     {
-        Get("/maps.xml");
-        RoutePrefixOverride("xml");
+        Get("/xml/maps.xml", "/spacemap/xml/maps.xml");
+        RoutePrefixOverride(string.Empty);
         AllowAnonymous();
         Description(description => description.WithTags("DNS:gbl3.darkorbit.com"));
     }

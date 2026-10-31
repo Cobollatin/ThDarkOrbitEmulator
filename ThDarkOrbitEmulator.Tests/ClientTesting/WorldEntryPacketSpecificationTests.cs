@@ -46,8 +46,8 @@ public sealed class WorldEntryPacketSpecificationTests
         {
             Assert.That(Fields(packets[0]), Is.EqualTo((5, 321, 654, 3)));
             Assert.That(Fields(packets[1]), Is.EqualTo((88, 10, 20, 30)));
-            Assert.That(Fields(packets[2]), Is.EqualTo((91, 1, 2, 6)));
-            Assert.That(Fields(packets[3]), Is.EqualTo((92, 3, 4, 7)));
+            Assert.That(WorldPayload.Decode(packets[2].Payload, r => (WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r), r.ReadBoolean())), Is.EqualTo((91, 1, 2, 6, true)));
+            Assert.That(WorldPayload.Decode(packets[3].Payload, r => (WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r), r.ReadBoolean())), Is.EqualTo((92, 3, 4, 7, true)));
         });
     }
 

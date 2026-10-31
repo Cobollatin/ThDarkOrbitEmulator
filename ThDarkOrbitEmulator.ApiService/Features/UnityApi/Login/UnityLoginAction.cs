@@ -14,7 +14,7 @@ public static class UnityLoginAction
     public static async Task<string?> HandleAsync(HttpContext context, string? dosid,
         IGameAuthSessionStore sessions, LocalHangarStore hangars, LocalAccountPreferencesStore preferences,
         CancellationToken ct, IServerMeshRegistry? registry = null, WorldServerOptions? world = null,
-        CockpitCatalogStore? catalog = null)
+        CockpitCatalogStore? catalog = null, WorldSessionStore? worldSessions = null)
     {
         var response = context.Response;
         response.Headers.CacheControl = CacheControl;
@@ -62,6 +62,7 @@ public static class UnityLoginAction
         return UnityLoginPayloadBuilder.Build(session, context.Request, activeSlot, language,
             registry is null ? null : await registry.GetSnapshotAsync(ct), world,
             catalog is null ? null : await catalog.HangarsAsync(session, activeSlot, ct), instance,
-            languages?.Where(item => item.Enabled).Select(item => item.Code).ToHashSet(StringComparer.Ordinal));
+            languages?.Where(item => item.Enabled).Select(item => item.Code).ToHashSet(StringComparer.Ordinal),
+            worldSessions is null ? 0 : await worldSessions.UnityDisplay2dAsync(session.GameUserId, ct));
     }
 }

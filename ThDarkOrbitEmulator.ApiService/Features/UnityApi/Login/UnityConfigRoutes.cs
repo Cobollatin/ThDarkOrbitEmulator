@@ -66,19 +66,11 @@ public static class UnityConfigRoutes
         }).AllowAnonymous();
 
         app.MapPost("/unityApi/setLang.php", async (HttpContext context, IGameAuthSessionStore sessions,
-            CockpitCatalogStore catalog, LocalAccountPreferencesStore preferences, CancellationToken ct) =>
+            LocalAccountPreferencesStore preferences, CancellationToken ct) =>
         {
-            var session = await SessionAsync(context, sessions, ct);
-            if (session is null) return Results.Unauthorized();
-            if (!context.Request.HasFormContentType) return Results.BadRequest();
-            var form = await context.Request.ReadFormAsync(ct);
-            if (form.Count != 1 || !form.TryGetValue("lang", out var langs) || langs.Count != 1
-                || langs[0] is not { } language
-                || !(await catalog.LanguagesAsync(ct)).Any(item => item.Enabled && item.Code == language)) return Results.BadRequest();
-            var saved = await preferences.GetAsync(session.AccountId, ct);
-            await preferences.SaveAsync(session.AccountId, language, saved.SoundEnabled.ToString().ToLowerInvariant(),
-                saved.NotificationsEnabled.ToString().ToLowerInvariant(), ct);
-            return Results.Json(new { result = true, data = new { language } });
+            var status = await SetLangEndpoint.SaveAsync(context.Request, sessions, preferences, ct);
+            return status == StatusCodes.Status200OK ? Results.Json(new { result = true })
+                : Results.StatusCode(status);
         }).AllowAnonymous();
 
         app.MapGet("/unityApi/evoucher.php", async (HttpContext context, IGameAuthSessionStore sessions, CancellationToken ct) =>
