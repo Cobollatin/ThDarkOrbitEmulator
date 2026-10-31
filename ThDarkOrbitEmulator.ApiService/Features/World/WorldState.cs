@@ -1353,16 +1353,25 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
 
     public async Task SendMoveAsync(WorldConnection observer, WorldRemoteMove remoteMove, CancellationToken ct)
     {
+        await observer.RemoteMoveDeliveryGate.WaitAsync(ct);
         try
         {
-            await observer.SendAsync(WorldCommandId.MoveCommand, MovePayload(remoteMove.Move), ct);
             var observerId = observer.Pilot.UserId;
+            var userId = remoteMove.Move.UserId;
+            if (remoteMove.Travel is { } currentTravel
+                && remoteAnnounced.GetOrAdd(observerId, _ => new()).TryGetValue(userId, out var sentTravel)
+                && sentTravel == currentTravel) return;
+            if (remoteMove.Travel is null
+                && remotePositions.GetOrAdd(observerId, _ => new()).TryGetValue(userId, out var sentPosition)
+                && sentPosition == (remoteMove.Move.X, remoteMove.Move.Y)) return;
+            await observer.SendAsync(WorldCommandId.MoveCommand, MovePayload(remoteMove.Move), ct);
             if (remoteMove.Travel is { } travel)
-                remoteAnnounced.GetOrAdd(observerId, _ => new())[remoteMove.Move.UserId] = travel;
-            remotePositions.GetOrAdd(observerId, _ => new())[remoteMove.Move.UserId] =
+                remoteAnnounced.GetOrAdd(observerId, _ => new())[userId] = travel;
+            remotePositions.GetOrAdd(observerId, _ => new())[userId] =
                 (remoteMove.Move.X, remoteMove.Move.Y);
         }
         catch (IOException) { /* The next observer poll retries an undelivered move. */ }
+        finally { observer.RemoteMoveDeliveryGate.Release(); }
     }
 
     private static byte[] MovePayload(WorldMoveResult move) => WorldPayload.Encode(w =>

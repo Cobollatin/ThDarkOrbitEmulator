@@ -324,6 +324,34 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task ConcurrentRemoteMoveDelivery_SendsTrajectoryOnce()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var owner = new WorldSessionStore(cache);
+        var observerNode = new WorldSessionStore(cache);
+        var remote = await owner.EnterAsync(new WorldPilot(955, "remote", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
+        var observer = remote with { UserId = 956 };
+        await owner.MoveAsync(remote, 4000, 2500, null, default);
+        var move = (await observerNode.ObserveRemoteMovesAsync(observer, default)).Single();
+        using var wire = new PauseFirstWriteStream();
+        var connection = new WorldConnection(observer, new WorldPacketWriter(wire));
+
+        var first = observerNode.SendMoveAsync(connection, move, default);
+        await wire.FirstWriteStarted;
+        var second = observerNode.SendMoveAsync(connection, move, default);
+        wire.Resume();
+        await Task.WhenAll(first, second);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+        Assert.That(await reader.ReadAsync(), Is.Null);
+        Assert.That(await observerNode.ObserveRemoteMovesAsync(observer, default), Is.Empty);
+    }
+
+    [Test]
     public async Task RemoteCloakChanges_ReachObservers_AndHeartbeatKeepsSharedState()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
