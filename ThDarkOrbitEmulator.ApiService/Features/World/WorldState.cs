@@ -1131,21 +1131,17 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         var current = ParseTravel(saved, pilot.MapId);
         if (current is null)
         {
-            announcedTravel.TryRemove(pilot.UserId, out _);
             var stationary = SavedStationaryPosition(saved, pilot.MapId);
             if (stationary is not null && announcedPosition.TryGetValue(pilot.UserId, out var previousPosition)
                 && previousPosition != stationary.Value)
             {
-                announcedPosition[pilot.UserId] = stationary.Value;
-                travel.TryRemove(pilot.UserId, out _);
                 return new WorldMoveResult(pilot.UserId, stationary.Value.X, stationary.Value.Y, 0, false);
             }
+            announcedTravel.TryRemove(pilot.UserId, out _);
             return null;
         }
         if (announcedTravel.TryGetValue(pilot.UserId, out var previous) && previous == current)
             return null;
-        announcedTravel[pilot.UserId] = current;
-        announcedPosition[pilot.UserId] = (current.TargetX, current.TargetY);
         travel[pilot.UserId] = current;
         var position = current.PositionAt(DateTimeOffset.UtcNow);
         var distance = Math.Sqrt(Math.Pow(current.TargetX - position.X, 2)
@@ -2172,11 +2168,33 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         }
         var payload = MovePayload(move);
         var audience = connections.Values.Where(c => c.Pilot.MapId == pilot.MapId &&
-            (!WorldMapInstance.IsGate(pilot.MapId) || c.Pilot.AccountId == pilot.AccountId)).ToArray();
+            (!WorldMapInstance.IsGate(pilot.MapId) || c.Pilot.AccountId == pilot.AccountId))
+            .OrderBy(c => localMutation || c.Pilot.UserId == pilot.UserId ? 0 : 1).ToArray();
         foreach (var observer in audience)
         {
-            try { await observer.SendAsync(WorldCommandId.MoveCommand, payload, ct); }
-            catch (IOException) { /* A disconnected observer is removed by its handler. */ }
+            try
+            {
+                await observer.SendAsync(WorldCommandId.MoveCommand, payload, ct);
+                if (!localMutation && observer.Pilot.UserId == pilot.UserId)
+                {
+                    var saved = await cache.GetStringAsync(Key(pilot.UserId), ct);
+                    if (ParseTravel(saved, pilot.MapId) is null
+                        && SavedStationaryPosition(saved, pilot.MapId) == (move.X, move.Y))
+                    {
+                        announcedTravel.TryRemove(pilot.UserId, out _);
+                        travel.TryRemove(pilot.UserId, out _);
+                    }
+                    else if (travel.TryGetValue(pilot.UserId, out var deliveredTravel)
+                        && (deliveredTravel.TargetX, deliveredTravel.TargetY) == (move.X, move.Y))
+                        announcedTravel[pilot.UserId] = deliveredTravel;
+                    announcedPosition[pilot.UserId] = (move.X, move.Y);
+                }
+            }
+            catch (IOException)
+            {
+                // Retry an external move when its owning socket did not receive it.
+                if (!localMutation && observer.Pilot.UserId == pilot.UserId) return;
+            }
         }
         if (CompanionPositions(pilot).Count > 0)
             await BroadcastCompanionsAsync(pilot, ct);
