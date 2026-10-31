@@ -1358,6 +1358,9 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         {
             var observerId = observer.Pilot.UserId;
             var userId = remoteMove.Move.UserId;
+            // Movement has no meaning to a client until creation was delivered.
+            // Leave the trajectory unannounced so the next poll can retry it.
+            if (!remoteVisible.GetOrAdd(observerId, _ => new()).ContainsKey(userId)) return;
             // A selected move may outlive the pilot's shared map membership. The
             // saved position remains after logout, so travel alone is insufficient.
             var present = await ReadPresenceAsync(observer.Pilot.MapId, ct);

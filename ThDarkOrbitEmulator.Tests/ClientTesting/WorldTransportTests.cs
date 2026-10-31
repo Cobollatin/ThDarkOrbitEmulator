@@ -114,6 +114,8 @@ public class WorldTransportTests
 
             await nodeB.MoveAsync(entered, 4000, 2500, null, CancellationToken.None);
             var travel = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
+            if (travel.Command == WorldCommandId.CloakStateCommand)
+                travel = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
             Assert.That(travel.Command, Is.EqualTo(WorldCommandId.MoveCommand));
             await nodeB.TeleportAsync(851, 1, 3400, 2100, false, CancellationToken.None);
             var snap = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
@@ -283,6 +285,45 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task RemoteMove_WaitsForPilotCreation_ThenDeliversOnce()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var owner = new WorldSessionStore(cache);
+        var observerNode = new WorldSessionStore(cache);
+        var remote = await owner.EnterAsync(new WorldPilot(963, "remote", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
+        var observer = remote with { UserId = 964 };
+        await owner.MoveAsync(remote, 4000, 2500, null, default);
+        var selected = (await observerNode.ObserveRemoteMovesAsync(observer, default)).Single();
+        using var wire = new MemoryStream();
+        var connection = new WorldConnection(observer, new WorldPacketWriter(wire));
+
+        await observerNode.SendMoveAsync(connection, selected, default);
+        Assert.That(wire.Length, Is.Zero);
+
+        await observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+        foreach (var move in await observerNode.ObserveRemoteMovesAsync(observer, default))
+            await observerNode.SendMoveAsync(connection, move, default);
+        foreach (var move in await observerNode.ObserveRemoteMovesAsync(observer, default))
+            await observerNode.SendMoveAsync(connection, move, default);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.PilotCreateCommand));
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.CloakStateCommand));
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    private static async Task AnnounceRemotePilotAsync(WorldSessionStore node, WorldPilot observer)
+    {
+        using var wire = new MemoryStream();
+        await node.ObserveRemotePilotsAsync(observer,
+            new WorldConnection(observer, new WorldPacketWriter(wire)), default);
+    }
+
+    [Test]
     public async Task FailedRemoteMoveWrite_IsRetriedOnce()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
@@ -336,6 +377,7 @@ public class WorldTransportTests
         { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
         var observer = remote with { UserId = 956 };
         await owner.MoveAsync(remote, 4000, 2500, null, default);
+        await AnnounceRemotePilotAsync(observerNode, observer);
         var move = (await observerNode.ObserveRemoteMovesAsync(observer, default)).Single();
         using var wire = new PauseFirstWriteStream();
         var connection = new WorldConnection(observer, new WorldPacketWriter(wire));
@@ -364,6 +406,7 @@ public class WorldTransportTests
         { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
         var observer = remote with { UserId = 958 };
         await owner.MoveAsync(remote, 4000, 2500, null, default);
+        await AnnounceRemotePilotAsync(observerNode, observer);
         var stale = (await observerNode.ObserveRemoteMovesAsync(observer, default)).Single();
         await owner.MoveAsync(remote, 5000, 3000, null, default);
         using var wire = new MemoryStream();
@@ -404,6 +447,7 @@ public class WorldTransportTests
         { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
         var observer = remote with { UserId = 960 };
         await owner.MoveAsync(remote, 4000, 2500, null, default);
+        await AnnounceRemotePilotAsync(observerNode, observer);
         var selected = (await observerNode.ObserveRemoteMovesAsync(observer, default)).Single();
         await owner.LeaveAsync(remote, null, default);
 
@@ -425,6 +469,7 @@ public class WorldTransportTests
         { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
         var observer = remote with { UserId = 962 };
         await owner.MoveAsync(remote, 4000, 2500, null, default);
+        await AnnounceRemotePilotAsync(observerNode, observer);
         var selected = (await observerNode.ObserveRemoteMovesAsync(observer, default)).Single();
         await Task.Delay(200);
 
