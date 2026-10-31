@@ -335,6 +335,42 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task RemotePilot_CloakedAfterSnapshot_UpdatesVisibleObserver()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var owner = new WorldSessionStore(cache);
+        var observerNode = new WorldSessionStore(cache);
+        var remote = await owner.EnterAsync(new WorldPilot(977, "remote", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
+        var observer = remote with { UserId = 978 };
+        using var wire = new MemoryStream();
+        var connection = new WorldConnection(observer, new WorldPacketWriter(wire));
+        await observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+        remote = await owner.SetCloakAsync(remote, true, default);
+        await observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+        await observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+        remote = await owner.SetCloakAsync(remote, false, default);
+        await observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.PilotCreateCommand));
+        var initial = await reader.ReadAsync();
+        Assert.That(initial?.Command, Is.EqualTo(WorldCommandId.CloakStateCommand));
+        Assert.That(WorldPayload.Decode(initial!.Value.Payload, r =>
+            (WorldPayload.ReadInt64(r), r.ReadBoolean())), Is.EqualTo((977L, false)));
+        var cloak = await reader.ReadAsync();
+        Assert.That(cloak?.Command, Is.EqualTo(WorldCommandId.CloakStateCommand));
+        Assert.That(WorldPayload.Decode(cloak!.Value.Payload, r =>
+            (WorldPayload.ReadInt64(r), r.ReadBoolean())), Is.EqualTo((977L, true)));
+        var revealed = await reader.ReadAsync();
+        Assert.That(revealed?.Command, Is.EqualTo(WorldCommandId.CloakStateCommand));
+        Assert.That(WorldPayload.Decode(revealed!.Value.Payload, r =>
+            (WorldPayload.ReadInt64(r), r.ReadBoolean())), Is.EqualTo((977L, false)));
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
     public async Task RemotePilot_LeftWhileCreationWaitsForSocket_IsNotCreated()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

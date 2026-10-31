@@ -1208,14 +1208,14 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             await connection.RemoteMoveDeliveryGate.WaitAsync(ct);
             try
             {
+                // Cloak changes can arrive while this map snapshot is still cached.
+                // Read current membership before sending updates to an announced pilot.
+                var currentPresence = await ReadPresenceAsync(observer.MapId, ct);
+                if (!currentPresence.TryGetValue(remote.UserId, out var currentEntry)
+                    || DateTimeOffset.UtcNow - currentEntry.SeenAtUtc >= TimeSpan.FromMinutes(2))
+                    continue;
                 if (!visible.ContainsKey(remote.UserId))
                 {
-                    // The snapshot can outlive a departure while this socket waits
-                    // for another delivery. Check membership inside its send gate.
-                    var currentPresence = await ReadPresenceAsync(observer.MapId, ct);
-                    if (!currentPresence.TryGetValue(remote.UserId, out var currentEntry)
-                        || DateTimeOffset.UtcNow - currentEntry.SeenAtUtc >= TimeSpan.FromMinutes(2))
-                        continue;
                     // A departed pilot may have returned while this map snapshot is cached.
                     // Build the first creation from current presence and position.
                     remote = currentEntry.Pilot;
@@ -1244,6 +1244,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                         catch (JsonException) { }
                     }
                 }
+                else remote = remote with { IsInvisible = currentEntry.Pilot.IsInvisible };
                 present.Add(remote.UserId);
                 if (visible.TryAdd(remote.UserId, 0))
                 {
