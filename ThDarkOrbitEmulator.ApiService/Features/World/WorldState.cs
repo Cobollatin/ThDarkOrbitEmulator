@@ -1273,13 +1273,19 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         }
         foreach (var id in visible.Keys.Where(id => !present.Contains(id)).ToArray())
         {
-            await connection.SendAsync(WorldCommandId.PilotRemoveCommand,
-                WorldPayload.Encode(w => WorldPayload.WriteInt64(w, id)), ct);
-            visible.TryRemove(id, out _);
-            cloaks.TryRemove(id, out _);
-            heals.TryRemove(id, out _);
-            remoteAnnounced.GetOrAdd(observer.UserId, _ => new()).TryRemove(id, out _);
-            remotePositions.GetOrAdd(observer.UserId, _ => new()).TryRemove(id, out _);
+            await connection.RemoteMoveDeliveryGate.WaitAsync(ct);
+            try
+            {
+                if (!visible.ContainsKey(id)) continue;
+                await connection.SendAsync(WorldCommandId.PilotRemoveCommand,
+                    WorldPayload.Encode(w => WorldPayload.WriteInt64(w, id)), ct);
+                visible.TryRemove(id, out _);
+                cloaks.TryRemove(id, out _);
+                heals.TryRemove(id, out _);
+                remoteAnnounced.GetOrAdd(observer.UserId, _ => new()).TryRemove(id, out _);
+                remotePositions.GetOrAdd(observer.UserId, _ => new()).TryRemove(id, out _);
+            }
+            finally { connection.RemoteMoveDeliveryGate.Release(); }
         }
     }
 

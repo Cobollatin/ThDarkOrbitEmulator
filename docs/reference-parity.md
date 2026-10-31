@@ -1,4 +1,6 @@
-# Reference parity — iteration 211
+# Reference parity — iteration 212
+
+Iteration 212 serializes remote pilot removal with creation and movement on each observer socket. Two polls can independently select the same departed pilot from their snapshots; the removal gate now rechecks local visibility before writing, so only one removal is delivered and movement cannot pass it. A focused concurrent transport test verifies one removal, and the failed-write retry test still passes. The older server removes departing ships from its map roster; neither reference specifies this distributed socket ordering or an installed Unity removal packet.
 
 Iteration 211 checks shared map membership inside the observer socket's delivery gate before first creating a remote pilot. A cached visibility snapshot can select a pilot while another packet occupies the socket; if that pilot leaves during the wait, creation is skipped. The focused transport test holds the gate through departure and checks that no packet is emitted. The older server removes departing ships from its map roster, while neither reference defines this distributed ordering or an installed Unity creation packet.
 
