@@ -1277,6 +1277,12 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             try
             {
                 if (!visible.ContainsKey(id)) continue;
+                // A pilot can return while an older absent snapshot waits for this socket.
+                // Preserve the announced ship when current shared membership is live.
+                var currentPresence = await ReadPresenceAsync(observer.MapId, ct);
+                if (currentPresence.TryGetValue(id, out var currentEntry)
+                    && DateTimeOffset.UtcNow - currentEntry.SeenAtUtc < TimeSpan.FromMinutes(2))
+                    continue;
                 await connection.SendAsync(WorldCommandId.PilotRemoveCommand,
                     WorldPayload.Encode(w => WorldPayload.WriteInt64(w, id)), ct);
                 visible.TryRemove(id, out _);
