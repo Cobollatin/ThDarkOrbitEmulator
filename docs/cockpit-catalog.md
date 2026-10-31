@@ -243,8 +243,7 @@ native code and metadata evidence, not a captured START socket exchange.
 `PacketParser.Parse` (`0xF45420`) reads a **three-byte big-endian length** from
 its circular buffer before copying that many body bytes. `TcpChannel.Send`
 (`0xF49E90`) serializes `IModule.write` and reserves a three-byte frame header,
-with a special extra byte for `VersionRequest`. The precise first outbound
-frame bytes and server responses still require a native capture. The local
+with a special extra zero byte before the module ID for `VersionRequest`. The local
 world listener's four-byte length, two-byte big-endian command ID and
 `local-1` version are incompatible with these native module definitions.
 The listener now recognizes the native three-byte length and optional version
@@ -254,6 +253,15 @@ module `0x0007` with the documented bit rotations. It resolves `userID` and
 framed login status followed by the server commands documented below. Native gameplay and end-to-end Unity
 START remain unverified. The four-byte local
 protocol and its 4,096-byte prelogin cap remain available on the same port.
+
+The installed version preamble (extra zero byte before `0x029A`) now routes to
+`RunUnityAsync`; previously it fell into `NativeWorldHandshake`, which sent the
+login response before ship initialization and omitted the Unity HUD/map burst.
+That path now sends `ShipInitializationCommand` before `LoginResponse`, and replies
+to `MoveRequest` with `HeroMoveCommand` and `MoveCommand` using the saved movement
+result. A loopback socket test verifies this framing, ordering, ship identity,
+coordinates and positive duration. Rendering and click movement in the installed
+client have not yet been observed after this correction.
 
 ### Server command factory and inbound readers
 

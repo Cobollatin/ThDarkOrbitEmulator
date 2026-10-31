@@ -268,6 +268,17 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
             catch (EndOfStreamException) { return; }
             catch (NativeWorldProtocolException native)
             {
+                // The installed client prefixes VersionRequest with an extra zero byte. Route that
+                // first frame to the Unity session; the older three-byte diagnostic path stays below.
+                if (native.FirstBytes[3] == 0)
+                {
+                    var length = native.FirstBytes[2];
+                    var body = new byte[length];
+                    await stream.ReadExactlyAsync(body.AsMemory(1), ct);
+                    if (length < 3 || body[1] != 0x02 || body[2] != 0x9a) return;
+                    await RunUnityAsync(stream, body.AsMemory(3), ct);
+                    return;
+                }
                 await new NativeWorldHandshake(resolver, options, sessions, auth).RunAsync(stream, native.FirstBytes, ct);
                 return;
             }
@@ -620,7 +631,9 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
         var writer = new UnityWorldFrameWriter(stream);
         var reader = new UnityWorldFrameReader(stream, options.MaximumPacketBytes);
         var clientVersion = new UnityModuleReader(versionPayload).String();
-        await writer.WriteAsync(UnityWorldModules.Version(clientVersion, true), ct);
+        var versionAccepted = clientVersion == NativeWorldHandshake.ClientVersion;
+        await writer.WriteAsync(UnityWorldModules.Version(clientVersion, versionAccepted), ct);
+        if (!versionAccepted) return;
         WorldPilot? connected = null;
         CancellationTokenSource? beaconCts = null;
         Task beacon = Task.CompletedTask;
@@ -665,6 +678,12 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                     UnityLoginRequest login;
                     try { login = UnityLoginRequest.Read(packet.Value.Payload); }
                     catch (EndOfStreamException) { return; }
+                    if (auth is not null)
+                    {
+                        var gameSession = await auth.TryGetByDosidAsync(login.SessionId, ct);
+                        if (gameSession is null || gameSession.GameUserId != login.UserId ||
+                            gameSession.InstanceId <= 0 || gameSession.InstanceId != login.InstanceId) return;
+                    }
                     var (pilot, _) = await resolver.ResolveAsync(login.UserId, login.SessionId, ct);
                     if (pilot is null) return;
                     connected = sessions is null ? pilot : await sessions.EnterAsync(pilot, ct);
@@ -738,8 +757,10 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                     UnityMoveRequest move;
                     try { move = UnityMoveRequest.Read(packet.Value.Payload); }
                     catch (EndOfStreamException) { return; }
-                    // The connection is not attached, so legacy-format broadcasts never reach this socket.
-                    await sessions.MoveAsync(connected, move.TargetX, move.TargetY, null, ct);
+                    var accepted = await sessions.MoveAsync(connected, move.TargetX, move.TargetY, null, ct);
+                    await writer.WriteAsync(UnityWorldModules.HeroMove(accepted.X, accepted.Y), ct);
+                    await writer.WriteAsync(UnityWorldModules.Move(checked((int)connected.UserId), accepted.X,
+                        accepted.Y, accepted.TimeToTargetMs), ct);
                 }
                 else if (moduleId == UnityWorldModuleId.HangarListRequest && connected is not null)
                 {

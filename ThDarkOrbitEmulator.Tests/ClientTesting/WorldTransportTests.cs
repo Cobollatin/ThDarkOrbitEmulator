@@ -3527,6 +3527,84 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task Loopback_UnityMove_AcknowledgesVisibleHeroWithAuthoritativeDestination()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var sessions = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var pilot = new WorldPilot(42, "mmo", 1, 1, "ship_phoenix", 0, 0)
+        {
+            UserName = "Pilot", FactionId = 1, X = 2000, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 100, 0, 30, [])
+        };
+        var authSession = new GameAuthSession { GameUserId = 42, Dosid = "opaque", InstanceId = 1,
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5) };
+        var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), sessions,
+            auth: new FakeSessions(authSession));
+        using (client)
+        using (server)
+        {
+            var stream = client.GetStream();
+            await WriteNativeAsync(stream, UnityWorldModuleId.VersionRequest,
+                new UnityModuleWriter(0).String(NativeWorldHandshake.ClientVersion).ToArray()[2..], preamble: true);
+            Assert.That((await ReadNativeAsync(stream).WaitAsync(TimeSpan.FromSeconds(2))).Module,
+                Is.EqualTo(UnityWorldModuleId.VersionCommand));
+            await WriteNativeAsync(stream, UnityWorldModuleId.LoginRequest,
+                new UnityModuleWriter(0).RotatedInt(42, 3).Short((short)BitOperations.RotateLeft(1u, 7))
+                    .String("opaque").String(NativeWorldHandshake.ClientVersion).RotatedInt(1, 12).Bool(false).ToArray()[2..]);
+            var reader = new UnityWorldFrameReader(stream);
+            var firstEntry = (await reader.ReadAsync().WaitAsync(TimeSpan.FromSeconds(2)))!.Value;
+            Assert.That((ushort)firstEntry.Command, Is.EqualTo(UnityWorldModuleId.ShipInitializationCommand),
+                "the installed client needs scene initialization before the login HUD response");
+            var sawShip = false;
+            var sawLogin = false;
+            var pendingEntry = firstEntry;
+            for (var i = 0; i < 30 && (!sawShip || !sawLogin); i++)
+            {
+                var packet = pendingEntry;
+                if ((ushort)packet.Command == UnityWorldModuleId.ShipInitializationCommand)
+                {
+                    var hero = new UnityModuleReader(packet.Payload);
+                    Assert.That(hero.RotatedInt(14), Is.EqualTo(42));
+                    Assert.That(hero.String(), Is.EqualTo("Pilot"));
+                    Assert.That(hero.String(), Is.EqualTo("ship_phoenix"));
+                    sawShip = true;
+                }
+                if ((ushort)packet.Command == UnityWorldModuleId.LoginResponse) sawLogin = true;
+                if (!sawShip || !sawLogin)
+                    pendingEntry = (await reader.ReadAsync().WaitAsync(TimeSpan.FromSeconds(2)))!.Value;
+            }
+            Assert.That(sawShip && sawLogin, Is.True, "Unity entry must initialize the hero and accept login");
+
+            await WriteNativeAsync(stream, UnityWorldModuleId.MoveRequest,
+                new UnityModuleWriter(0).RotatedInt(9999, 11).RotatedInt(1400, 17)
+                    .RotatedInt(2300, 13).RotatedInt(9999, 10).ToArray()[2..]);
+            var sawHeroMove = false;
+            var sawMove = false;
+            for (var i = 0; i < 30 && (!sawHeroMove || !sawMove); i++)
+            {
+                var packet = (await reader.ReadAsync().WaitAsync(TimeSpan.FromSeconds(2)))!.Value;
+                if ((ushort)packet.Command == UnityWorldModuleId.HeroMoveCommand)
+                {
+                    var move = new UnityModuleReader(packet.Payload);
+                    Assert.That((move.RotatedInt(9), move.RotatedInt(25)), Is.EqualTo((2300, 1400)));
+                    sawHeroMove = true;
+                }
+                if ((ushort)packet.Command == UnityWorldModuleId.MoveCommand)
+                {
+                    var move = new UnityModuleReader(packet.Payload);
+                    Assert.That(move.RotatedInt(16), Is.EqualTo(42));
+                    Assert.That((move.RotatedInt(13), move.RotatedInt(16)), Is.EqualTo((2300, 1400)));
+                    Assert.That(move.RotatedInt(18), Is.GreaterThan(0));
+                    sawMove = true;
+                }
+            }
+            Assert.That(sawHeroMove && sawMove, Is.True, "Unity must receive its accepted movement");
+            client.Client.Shutdown(SocketShutdown.Send);
+            await worker.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+    }
+
+    [Test]
     public async Task Loopback_NativeLogin_AuthenticatesSessionAndSendsMapAndShip()
     {
         var session = new GameAuthSession { AccountId = Guid.NewGuid(), GameUserId = 42,
@@ -3539,7 +3617,7 @@ public class WorldTransportTests
         {
             var stream = client.GetStream();
             await WriteNativeAsync(stream, NativeWorldHandshake.VersionRequest,
-                WorldPayload.Encode(w => WorldPayload.WriteString(w, NativeWorldHandshake.ClientVersion)), true);
+                WorldPayload.Encode(w => WorldPayload.WriteString(w, NativeWorldHandshake.ClientVersion)));
             Assert.That((await ReadNativeAsync(stream)).Module, Is.EqualTo(NativeWorldHandshake.VersionCommand));
             await WriteNativeAsync(stream, NativeWorldHandshake.LoginRequest, WorldPayload.Encode(w =>
             {

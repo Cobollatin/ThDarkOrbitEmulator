@@ -15,6 +15,8 @@ public static class UnityWorldModuleId
     public const ushort LogoutCancelRequest = 15;
     public const ushort ShipInitializationCommand = 49;
     public const ushort MoveRequest = 82;
+    public const ushort MoveCommand = 90;
+    public const ushort HeroMoveCommand = 29;
     public const ushort VersionRequest = 666;
     public const ushort VersionCommand = 667;
     public const ushort LoginResponse = 19206;
@@ -863,5 +865,20 @@ public static class UnityWorldModules
             .RotatedInt(0, 23)
             .RotatedInt(0, 31)
             .Byte(0)
+            .ToArray();
+
+    // MoveCommand.read and HeroMoveCommand.read apply the inverse rotation to each field.
+    public static byte[] Move(int userId, int x, int y, int timeToTargetMs) =>
+        new UnityModuleWriter(UnityWorldModuleId.MoveCommand)
+            .RotatedInt(userId, 16)
+            .RotatedInt(x, 13)
+            .RotatedInt(y, 16)
+            .RotatedInt(timeToTargetMs, 18)
+            .ToArray();
+
+    public static byte[] HeroMove(int x, int y) =>
+        new UnityModuleWriter(UnityWorldModuleId.HeroMoveCommand)
+            .RotatedInt(x, 9)
+            .RotatedInt(y, 25)
             .ToArray();
 }

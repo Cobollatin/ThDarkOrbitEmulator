@@ -4,12 +4,12 @@
 
 Recovered from `GameAssembly.dll` (Cpp2IL + disassembly) and verified against DarkOrbit Unity 1.1.93 on `127.0.0.1:60954`; implemented in `UnityWorldProtocol.cs` and `WorldSessionHandler.RunUnityAsync`.
 
-- Framing: the client's first frame (VersionRequest) has a 4-byte big-endian length. Every later frame in both directions has a 3-byte big-endian length (`TcpChannel.Send`, `PacketParser.Parse`). The body starts with a 2-byte module ID.
+- Framing: the client's first VersionRequest has a 3-byte big-endian body length and an extra zero byte before its 2-byte module ID. Every later frame in both directions has a 3-byte big-endian length (`TcpChannel.Send`, `PacketParser.Parse`).
 - Encoding: ints are rotated per field (the client applies rotate-right; the server sends rotate-left). 64-bit fields travel as big-endian doubles. Strings are a 2-byte length + UTF-8. Lists are a 1-byte count, then each item as module ID + fields.
 - `VersionRequest` 666 (version string) → `VersionCommand` 667 (version string, equal bool).
 - `LoginRequest` 7: userID int rotl 3, factionID short rotl 7, sessionID (dosid) string, version string, instanceId int rotl 12, isMiniClient bool.
 - `ShipInitializationCommand` 49: 34 fields in `ShipInitializationCommand.read` order; see `UnityWorldModules.ShipInitialization`. `refreshMap` must be `true` on first entry. Otherwise `ShipInitializationCommandHandler` looks up an existing hero, throws a NullReferenceException, and disconnects. With `true` it calls `SceneChangeTo` and the client renders the hero on the map.
-- After the ship initializes, the client sends nothing further. Map objects, HUD and settings modules are not implemented yet.
+- The installed first-frame shape now enters `RunUnityAsync`: it sends ship initialization before the successful login response, followed by HUD and map modules. `MoveRequest` uses the saved server origin and receives `HeroMoveCommand` and `MoveCommand` with the accepted destination and duration. A loopback socket test decodes the full entry and movement flow. A signed-in client render and click on the installed executable still need direct observation.
 
 ## World-97 map conflict owner routing (2026-10-24)
 

@@ -1,4 +1,6 @@
-# Reference parity — iteration 222
+# Reference parity — iteration 223
+
+Iteration 223 routes the installed Unity version preamble to the Unity world session. The older native handshake answered login before ship initialization and never sent the Unity HUD or map burst. The Unity session now acknowledges an accepted click with `HeroMoveCommand` and `MoveCommand` using the server's saved destination and duration. A loopback socket test verifies entry order, ship identity and movement fields. This follows the IL2CPP reader layouts in `docs/cockpit-catalog.md`; an installed-client visual check remains outstanding.
 
 Iteration 222 rejects a local movement broadcast when its travel was superseded by a newer trip to the same destination. Destination-only checks could send the older duration and then mark the newer trip delivered, leaving the client behind the server. The move result now carries its travel identity for delivery checks without adding it to JSON responses or wire payloads. A focused test verifies that only the newer duration reaches the owning socket. The older server records a new movement start time for each command; its Flash movement packet does not define the installed Unity layout or this shared-delivery rule.
 
