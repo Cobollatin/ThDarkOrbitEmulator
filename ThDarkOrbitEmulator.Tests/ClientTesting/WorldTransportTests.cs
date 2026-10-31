@@ -208,6 +208,37 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task LocalMove_FailedOwningSocketWrite_IsRetriedOnce()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var pilot = await store.EnterAsync(new WorldPilot(984, "pilot", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
+        using var wire = new FailNextWriteStream();
+        store.Attach(new WorldConnection(pilot, new WorldPacketWriter(wire)));
+        await store.PrimeObservedTravelAsync(pilot, default);
+
+        var move = await store.MoveAsync(pilot, 4000, 2500, null, default);
+        wire.FailNext();
+        await store.BroadcastMoveAsync(pilot, move, default);
+        var retry = await store.ObserveExternalMoveAsync(pilot, default);
+        Assert.That(retry, Is.Not.Null);
+        await store.BroadcastMoveAsync(pilot, retry!, default, localMutation: false);
+        Assert.That(await store.ObserveExternalMoveAsync(pilot, default), Is.Null);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        var packet = await reader.ReadAsync();
+        Assert.That(packet?.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+        var delivered = WorldPayload.Decode(packet!.Value.Payload, r =>
+            (Id: WorldPayload.ReadInt64(r), X: WorldPayload.ReadInt32(r),
+                Y: WorldPayload.ReadInt32(r), Duration: WorldPayload.ReadInt32(r)));
+        Assert.That(delivered.Id, Is.EqualTo(984));
+        Assert.That((delivered.X, delivered.Y), Is.EqualTo((4000, 2500)));
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
     public async Task Loopback_PilotMovingOnAnotherNode_ReachesLocalTcpObserverOnce()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

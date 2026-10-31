@@ -2161,21 +2161,16 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     public async Task BroadcastMoveAsync(WorldPilot pilot, WorldMoveResult move, CancellationToken ct,
         bool localMutation = true)
     {
-        if (localMutation && travel.TryGetValue(pilot.UserId, out var current))
-        {
-            announcedTravel[pilot.UserId] = current;
-            announcedPosition[pilot.UserId] = (current.TargetX, current.TargetY);
-        }
         var payload = MovePayload(move);
         var audience = connections.Values.Where(c => c.Pilot.MapId == pilot.MapId &&
             (!WorldMapInstance.IsGate(pilot.MapId) || c.Pilot.AccountId == pilot.AccountId))
-            .OrderBy(c => localMutation || c.Pilot.UserId == pilot.UserId ? 0 : 1).ToArray();
+            .OrderBy(c => c.Pilot.UserId == pilot.UserId ? 0 : 1).ToArray();
         foreach (var observer in audience)
         {
             try
             {
                 await observer.SendAsync(WorldCommandId.MoveCommand, payload, ct);
-                if (!localMutation && observer.Pilot.UserId == pilot.UserId)
+                if (observer.Pilot.UserId == pilot.UserId)
                 {
                     var saved = await cache.GetStringAsync(Key(pilot.UserId), ct);
                     if (ParseTravel(saved, pilot.MapId) is null
@@ -2192,8 +2187,8 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             }
             catch (IOException)
             {
-                // Retry an external move when its owning socket did not receive it.
-                if (!localMutation && observer.Pilot.UserId == pilot.UserId) return;
+                // Retry a move when its owning socket did not receive it.
+                if (observer.Pilot.UserId == pilot.UserId) return;
             }
         }
         if (CompanionPositions(pilot).Count > 0)

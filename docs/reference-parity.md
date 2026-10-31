@@ -1,4 +1,6 @@
-# Reference parity — iteration 219
+# Reference parity — iteration 220
+
+Iteration 220 retries a locally initiated move when its owning TCP socket write fails. The move now reaches the owner before local observers, and its delivery marker advances only after that write succeeds. The existing shared-travel observer can then resend the move once without duplicating it on later polls. A focused transport test covers the failed local write, successful retry, and duplicate suppression. The older server broadcasts movement on each change; its Flash command does not establish the installed Unity packet or this retry rule.
 
 Iteration 219 retries an external browser move when its owning TCP socket write fails. The socket's movement delivery marker now advances after a successful write; the owner is sent first so a failed owner write does not duplicate a move to local observers on retry. A focused test fails the first write, verifies one retry, then verifies duplicate suppression. The older server broadcasts movement to nearby players, but its Flash packet does not establish the installed Unity layout or this distributed retry rule.
 
