@@ -1388,7 +1388,15 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             if (remoteMove.Travel is null
                 && remotePositions.GetOrAdd(observerId, _ => new()).TryGetValue(userId, out var sentPosition)
                 && sentPosition == (remoteMove.Move.X, remoteMove.Move.Y)) return;
-            await observer.SendAsync(WorldCommandId.MoveCommand, MovePayload(remoteMove.Move), ct);
+            var move = remoteMove.Move;
+            if (remoteMove.Travel is { } activeTravel)
+            {
+                var position = activeTravel.PositionAt(DateTimeOffset.UtcNow);
+                var remaining = Math.Sqrt(Math.Pow(activeTravel.TargetX - position.X, 2)
+                    + Math.Pow(activeTravel.TargetY - position.Y, 2));
+                move = move with { TimeToTargetMs = WorldMovement.DurationMilliseconds(remaining, activeTravel.Speed) };
+            }
+            await observer.SendAsync(WorldCommandId.MoveCommand, MovePayload(move), ct);
             if (remoteMove.Travel is { } travel)
                 remoteAnnounced.GetOrAdd(observerId, _ => new())[userId] = travel;
             remotePositions.GetOrAdd(observerId, _ => new())[userId] =

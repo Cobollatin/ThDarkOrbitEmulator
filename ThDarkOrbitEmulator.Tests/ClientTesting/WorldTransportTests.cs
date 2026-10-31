@@ -415,6 +415,39 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task RemoteMove_DeliveryUsesRemainingTravelTime()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var owner = new WorldSessionStore(cache);
+        var observerNode = new WorldSessionStore(cache);
+        var remote = await owner.EnterAsync(new WorldPilot(961, "remote", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
+        var observer = remote with { UserId = 962 };
+        await owner.MoveAsync(remote, 4000, 2500, null, default);
+        var selected = (await observerNode.ObserveRemoteMovesAsync(observer, default)).Single();
+        await Task.Delay(200);
+
+        using var wire = new MemoryStream();
+        var connection = new WorldConnection(observer, new WorldPacketWriter(wire));
+        await observerNode.SendMoveAsync(connection, selected, default);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        var packet = await reader.ReadAsync();
+        Assert.That(packet?.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+        var duration = WorldPayload.Decode(packet!.Value.Payload, r =>
+        {
+            WorldPayload.ReadInt64(r);
+            WorldPayload.ReadInt32(r);
+            WorldPayload.ReadInt32(r);
+            return WorldPayload.ReadInt32(r);
+        });
+        Assert.That(duration, Is.InRange(1, selected.Move.TimeToTargetMs - 100));
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
     public async Task RemoteCloakChanges_ReachObservers_AndHeartbeatKeepsSharedState()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
