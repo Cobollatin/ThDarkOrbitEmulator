@@ -1243,33 +1243,33 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                         throw;
                     }
                 }
-            }
-            finally { connection.RemoteMoveDeliveryGate.Release(); }
-            await connection.HealDeliveryGate.WaitAsync(ct);
-            try
-            {
-                // Membership may come from a cached map snapshot while heals keep advancing.
-                var current = await ReadOwnHealRuntimeAsync(remote, ct);
-                if (current is not null)
+                await connection.HealDeliveryGate.WaitAsync(ct);
+                try
                 {
-                    heals.TryGetValue(remote.UserId, out var announcedHeal);
-                    foreach (var heal in UnannouncedHeals(current, announcedHeal))
+                    // Membership may come from a cached map snapshot while heals keep advancing.
+                    var current = await ReadOwnHealRuntimeAsync(remote, ct);
+                    if (current is not null)
                     {
-                        await SendHealAsync(connection, remote.UserId, heal, ct);
-                        heals[remote.UserId] = heal.Id;
+                        heals.TryGetValue(remote.UserId, out var announcedHeal);
+                        foreach (var heal in UnannouncedHeals(current, announcedHeal))
+                        {
+                            await SendHealAsync(connection, remote.UserId, heal, ct);
+                            heals[remote.UserId] = heal.Id;
+                        }
                     }
                 }
-            }
-            finally { connection.HealDeliveryGate.Release(); }
-            if (!cloaks.TryGetValue(remote.UserId, out var announced) || announced != remote.IsInvisible)
-            {
-                await connection.SendAsync(WorldCommandId.CloakStateCommand, WorldPayload.Encode(w =>
+                finally { connection.HealDeliveryGate.Release(); }
+                if (!cloaks.TryGetValue(remote.UserId, out var announced) || announced != remote.IsInvisible)
                 {
-                    WorldPayload.WriteInt64(w, remote.UserId);
-                    w.Write(remote.IsInvisible);
-                }), ct);
-                cloaks[remote.UserId] = remote.IsInvisible;
+                    await connection.SendAsync(WorldCommandId.CloakStateCommand, WorldPayload.Encode(w =>
+                    {
+                        WorldPayload.WriteInt64(w, remote.UserId);
+                        w.Write(remote.IsInvisible);
+                    }), ct);
+                    cloaks[remote.UserId] = remote.IsInvisible;
+                }
             }
+            finally { connection.RemoteMoveDeliveryGate.Release(); }
         }
         foreach (var id in visible.Keys.Where(id => !present.Contains(id)).ToArray())
         {

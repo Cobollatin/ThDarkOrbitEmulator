@@ -719,6 +719,43 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task RemotePilotRemoval_WaitsForCreationFollowup()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var owner = new WorldSessionStore(cache);
+        var observerNode = new WorldSessionStore(cache);
+        var pilot = await owner.EnterAsync(new WorldPilot(955, "remote", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
+        var observer = pilot with { UserId = 956 };
+        using var wire = new PauseSecondWriteStream();
+        var connection = new WorldConnection(observer, new WorldPacketWriter(wire));
+        var creation = observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+        await wire.SecondWriteStarted;
+        try
+        {
+            Assert.That(creation.IsCompleted, Is.False);
+            await owner.LeaveAsync(pilot, null, default);
+            await Task.Delay(WorldSessionStore.RemoteSnapshotTtl + TimeSpan.FromMilliseconds(100));
+            var removal = observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+            Assert.That(removal.IsCompleted, Is.False);
+            wire.Resume();
+            await Task.WhenAll(creation, removal);
+        }
+        finally
+        {
+            wire.Resume();
+        }
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.PilotCreateCommand));
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.CloakStateCommand));
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.PilotRemoveCommand));
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
     public async Task RemoteStationHeal_ReachesVisibleObserverOnce()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
@@ -4040,6 +4077,25 @@ public class WorldTransportTests
                 started.SetResult();
                 await resumed.Task.WaitAsync(cancellationToken);
                 if (failFirstOnResume) throw new IOException("Simulated packet delivery failure.");
+            }
+            await base.WriteAsync(buffer, cancellationToken);
+        }
+    }
+
+    private sealed class PauseSecondWriteStream : MemoryStream
+    {
+        private readonly TaskCompletionSource started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource resumed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int writes;
+        public Task SecondWriteStarted => started.Task;
+        public void Resume() => resumed.TrySetResult();
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref writes) == 2)
+            {
+                started.SetResult();
+                await resumed.Task.WaitAsync(cancellationToken);
             }
             await base.WriteAsync(buffer, cancellationToken);
         }
