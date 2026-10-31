@@ -1176,12 +1176,21 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         var heals = remoteHeals.GetOrAdd(observer.UserId, _ => new());
         var now = DateTimeOffset.UtcNow;
         var present = new HashSet<long>();
+        Dictionary<long, WorldPresence>? currentPresence = null;
         foreach (var (entry, saved, runtime) in snapshot.Entries)
         {
             var remote = entry.Pilot;
             if (remote.UserId == observer.UserId || connections.ContainsKey(remote.UserId)
                 || WorldMapInstance.IsGate(observer.MapId) && remote.AccountId != observer.AccountId
                 || now - entry.SeenAtUtc >= TimeSpan.FromMinutes(2)) continue;
+            // A cached snapshot may still contain a pilot who has left. Verify
+            // membership before the first creation packet reaches this socket.
+            if (!visible.ContainsKey(remote.UserId))
+            {
+                currentPresence ??= await ReadPresenceAsync(observer.MapId, ct);
+                if (!currentPresence.TryGetValue(remote.UserId, out var currentEntry)
+                    || now - currentEntry.SeenAtUtc >= TimeSpan.FromMinutes(2)) continue;
+            }
             if (saved is not null)
             {
                 try
