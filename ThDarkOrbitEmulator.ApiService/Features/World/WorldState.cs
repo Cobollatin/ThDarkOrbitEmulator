@@ -1365,12 +1365,15 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         var positions = remotePositions.GetOrAdd(observer.UserId, _ => new());
         var now = DateTimeOffset.UtcNow;
         var moves = new List<WorldRemoteMove>();
-        foreach (var (entry, saved, _) in (await RemoteSnapshotAsync(observer.MapId, ct)).Entries)
+        foreach (var (entry, _, _) in (await RemoteSnapshotAsync(observer.MapId, ct)).Entries)
         {
             var remote = entry.Pilot with { MapId = observer.MapId };
             if (remote.UserId == observer.UserId || connections.ContainsKey(remote.UserId)
                 || WorldMapInstance.IsGate(observer.MapId) && remote.AccountId != observer.AccountId
                 || now - entry.SeenAtUtc >= TimeSpan.FromMinutes(2)) continue;
+            // The map roster can stay cached while its pilot starts or changes course.
+            // Select movement from the current shared position; delivery checks it again.
+            var saved = await cache.GetStringAsync(Key(remote.UserId), ct);
             var current = ParseTravel(saved, remote.MapId);
             if (current is null)
             {
