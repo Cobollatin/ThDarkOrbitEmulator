@@ -16,7 +16,11 @@ public sealed record WorldTravel(int MapId, double StartX, double StartY, int Ta
     }
 }
 
-public sealed record WorldMoveResult(long UserId, int X, int Y, int TimeToTargetMs, bool RadiationWarning);
+public sealed record WorldMoveResult(long UserId, int X, int Y, int TimeToTargetMs, bool RadiationWarning)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public WorldTravel? Travel { get; init; }
+}
 
 public static class WorldMovement
 {

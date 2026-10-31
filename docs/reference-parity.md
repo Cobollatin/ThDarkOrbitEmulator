@@ -1,4 +1,6 @@
-# Reference parity — iteration 221
+# Reference parity — iteration 222
+
+Iteration 222 rejects a local movement broadcast when its travel was superseded by a newer trip to the same destination. Destination-only checks could send the older duration and then mark the newer trip delivered, leaving the client behind the server. The move result now carries its travel identity for delivery checks without adding it to JSON responses or wire payloads. A focused test verifies that only the newer duration reaches the owning socket. The older server records a new movement start time for each command; its Flash movement packet does not define the installed Unity layout or this shared-delivery rule.
 
 Iteration 221 records movement delivery per local socket. A repeated broadcast now retries an observer whose write failed without resending to the owner or observers that received the same travel. It also skips a destination superseded in shared travel before broadcast. Focused transport tests cover failed observer delivery, duplicate suppression, and an older destination overtaken by a newer move. The older server broadcasts movement to nearby players; its Flash command does not define the installed Unity packet or these shared-delivery rules.
 

@@ -1147,7 +1147,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         var distance = Math.Sqrt(Math.Pow(current.TargetX - position.X, 2)
             + Math.Pow(current.TargetY - position.Y, 2));
         return new WorldMoveResult(pilot.UserId, current.TargetX, current.TargetY,
-            WorldMovement.DurationMilliseconds(distance, current.Speed), false);
+            WorldMovement.DurationMilliseconds(distance, current.Speed), false) { Travel = current };
     }
 
     private static (int X, int Y)? SavedStationaryPosition(string? saved, int mapId)
@@ -1612,7 +1612,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             await cache.SetStringAsync(Key(pilot.UserId), JsonSerializer.Serialize(next),
                 new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
             await PersistRuntimeAsync(pilot, ct);
-            return result with { RadiationWarning = warning };
+            return result with { RadiationWarning = warning, Travel = next };
         }
         finally { gate.Release(); }
     }
@@ -1668,7 +1668,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             await cache.SetStringAsync(Key(pilot.UserId), JsonSerializer.Serialize(retimed),
                 new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
             await PersistRuntimeAsync(pilot, ct);
-            return new(true, 0, move);
+            return new(true, 0, move with { Travel = retimed });
         }
         finally { gate.Release(); }
     }
@@ -1702,7 +1702,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             await cache.SetStringAsync(Key(pilot.UserId), JsonSerializer.Serialize(next),
                 new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromDays(30) }, ct);
             await PersistRuntimeAsync(pilot, ct);
-            return move;
+            return move with { Travel = next };
         }
         finally { gate.Release(); }
     }
@@ -2161,7 +2161,6 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     public async Task BroadcastMoveAsync(WorldPilot pilot, WorldMoveResult move, CancellationToken ct,
         bool localMutation = true)
     {
-        var payload = MovePayload(move);
         var audience = connections.Values.Where(c => c.Pilot.MapId == pilot.MapId &&
             (!WorldMapInstance.IsGate(pilot.MapId) || c.Pilot.AccountId == pilot.AccountId))
             .OrderBy(c => c.Pilot.UserId == pilot.UserId ? 0 : 1).ToArray();
@@ -2172,6 +2171,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             {
                 var saved = await cache.GetStringAsync(Key(pilot.UserId), ct);
                 var current = ParseTravel(saved, pilot.MapId);
+                if (move.Travel is not null && current != move.Travel) continue;
                 if (current is not null && (current.TargetX, current.TargetY) != (move.X, move.Y)
                     || current is null && SavedStationaryPosition(saved, pilot.MapId) != (move.X, move.Y))
                     continue;
@@ -2183,7 +2183,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
                             .TryGetValue(pilot.UserId, out var remote) && remote == current;
                     if (delivered) continue;
                 }
-                await observer.SendAsync(WorldCommandId.MoveCommand, payload, ct);
+                await observer.SendAsync(WorldCommandId.MoveCommand, MovePayload(move), ct);
                 if (observer.Pilot.UserId == pilot.UserId)
                 {
                     if (current is null

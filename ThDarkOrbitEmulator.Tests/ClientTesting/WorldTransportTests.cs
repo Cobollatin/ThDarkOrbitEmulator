@@ -302,6 +302,40 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task LocalMove_SupersededAtSameDestination_DoesNotAnnounceOldTravel()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var pilot = await store.EnterAsync(new WorldPilot(989, "pilot", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
+        using var wire = new MemoryStream();
+        store.Attach(new WorldConnection(pilot, new WorldPacketWriter(wire)));
+        await store.PrimeObservedTravelAsync(pilot, default);
+
+        var stale = await store.MoveAsync(pilot, 4000, 2500, null, default,
+            DateTimeOffset.UtcNow - TimeSpan.FromSeconds(2));
+        var latest = await store.MoveAsync(pilot, 4000, 2500, null, default);
+        Assert.That(stale.Travel, Is.Not.EqualTo(latest.Travel));
+        await store.BroadcastMoveAsync(pilot, stale, default);
+        await store.BroadcastMoveAsync(pilot, latest, default);
+        Assert.That(await store.ObserveExternalMoveAsync(pilot, default), Is.Null);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        var packet = (await reader.ReadAsync())!.Value;
+        Assert.That(packet.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+        var duration = WorldPayload.Decode(packet.Payload, r =>
+        {
+            WorldPayload.ReadInt64(r);
+            WorldPayload.ReadInt32(r);
+            WorldPayload.ReadInt32(r);
+            return WorldPayload.ReadInt32(r);
+        });
+        Assert.That(duration, Is.EqualTo(latest.TimeToTargetMs));
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
     public async Task Loopback_PilotMovingOnAnotherNode_ReachesLocalTcpObserverOnce()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
