@@ -239,6 +239,69 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task LocalMove_FailedObserverWrite_RetryDoesNotDuplicateOwnerOrOtherObservers()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        WorldPilot Pilot(long id) => new(id, "pilot", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) };
+        var pilot = await store.EnterAsync(Pilot(985), default);
+        var observer = await store.EnterAsync(Pilot(986), default);
+        var other = await store.EnterAsync(Pilot(987), default);
+        using var ownerWire = new MemoryStream();
+        using var observerWire = new FailNextWriteStream();
+        using var otherWire = new MemoryStream();
+        store.Attach(new WorldConnection(pilot, new WorldPacketWriter(ownerWire)));
+        store.Attach(new WorldConnection(observer, new WorldPacketWriter(observerWire)));
+        store.Attach(new WorldConnection(other, new WorldPacketWriter(otherWire)));
+        await store.PrimeObservedTravelAsync(pilot, default);
+
+        var move = await store.MoveAsync(pilot, 4000, 2500, null, default);
+        observerWire.FailNext();
+        await store.BroadcastMoveAsync(pilot, move, default);
+        await store.BroadcastMoveAsync(pilot, move, default);
+
+        foreach (var wire in new MemoryStream[] { ownerWire, observerWire, otherWire })
+        {
+            wire.Position = 0;
+            var reader = new WorldPacketReader(wire);
+            Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+            Assert.That(await reader.ReadAsync(), Is.Null);
+        }
+    }
+
+    [Test]
+    public async Task LocalMove_SupersededBeforeBroadcast_DoesNotSendOldDestination()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
+        var pilot = await store.EnterAsync(new WorldPilot(988, "pilot", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
+        using var wire = new MemoryStream();
+        store.Attach(new WorldConnection(pilot, new WorldPacketWriter(wire)));
+        await store.PrimeObservedTravelAsync(pilot, default);
+
+        var stale = await store.MoveAsync(pilot, 4000, 2500, null, default);
+        var latest = await store.MoveAsync(pilot, 5000, 2600, null, default);
+        await store.BroadcastMoveAsync(pilot, stale, default);
+        await store.BroadcastMoveAsync(pilot, latest, default);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        var packet = (await reader.ReadAsync())!.Value;
+        var destination = WorldPayload.Decode(packet.Payload, r =>
+        {
+            WorldPayload.ReadInt64(r);
+            var x = WorldPayload.ReadInt32(r);
+            var y = WorldPayload.ReadInt32(r);
+            WorldPayload.ReadInt32(r);
+            return (x, y);
+        });
+        Assert.That(destination, Is.EqualTo((5000, 2600)));
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
     public async Task Loopback_PilotMovingOnAnotherNode_ReachesLocalTcpObserverOnce()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

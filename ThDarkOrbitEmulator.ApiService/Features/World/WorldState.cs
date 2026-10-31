@@ -2167,29 +2167,44 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             .OrderBy(c => c.Pilot.UserId == pilot.UserId ? 0 : 1).ToArray();
         foreach (var observer in audience)
         {
+            await observer.RemoteMoveDeliveryGate.WaitAsync(ct);
             try
             {
+                var saved = await cache.GetStringAsync(Key(pilot.UserId), ct);
+                var current = ParseTravel(saved, pilot.MapId);
+                if (current is not null && (current.TargetX, current.TargetY) != (move.X, move.Y)
+                    || current is null && SavedStationaryPosition(saved, pilot.MapId) != (move.X, move.Y))
+                    continue;
+                if (current is not null && (current.TargetX, current.TargetY) == (move.X, move.Y))
+                {
+                    var delivered = observer.Pilot.UserId == pilot.UserId
+                        ? announcedTravel.TryGetValue(pilot.UserId, out var own) && own == current
+                        : remoteAnnounced.GetOrAdd(observer.Pilot.UserId, _ => new())
+                            .TryGetValue(pilot.UserId, out var remote) && remote == current;
+                    if (delivered) continue;
+                }
                 await observer.SendAsync(WorldCommandId.MoveCommand, payload, ct);
                 if (observer.Pilot.UserId == pilot.UserId)
                 {
-                    var saved = await cache.GetStringAsync(Key(pilot.UserId), ct);
-                    if (ParseTravel(saved, pilot.MapId) is null
+                    if (current is null
                         && SavedStationaryPosition(saved, pilot.MapId) == (move.X, move.Y))
                     {
                         announcedTravel.TryRemove(pilot.UserId, out _);
                         travel.TryRemove(pilot.UserId, out _);
                     }
-                    else if (travel.TryGetValue(pilot.UserId, out var deliveredTravel)
-                        && (deliveredTravel.TargetX, deliveredTravel.TargetY) == (move.X, move.Y))
-                        announcedTravel[pilot.UserId] = deliveredTravel;
+                    else if (current is not null)
+                        announcedTravel[pilot.UserId] = current;
                     announcedPosition[pilot.UserId] = (move.X, move.Y);
                 }
+                else if (current is not null && (current.TargetX, current.TargetY) == (move.X, move.Y))
+                    remoteAnnounced.GetOrAdd(observer.Pilot.UserId, _ => new())[pilot.UserId] = current;
             }
             catch (IOException)
             {
                 // Retry a move when its owning socket did not receive it.
                 if (observer.Pilot.UserId == pilot.UserId) return;
             }
+            finally { observer.RemoteMoveDeliveryGate.Release(); }
         }
         if (CompanionPositions(pilot).Count > 0)
             await BroadcastCompanionsAsync(pilot, ct);
