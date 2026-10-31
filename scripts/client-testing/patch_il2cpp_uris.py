@@ -22,12 +22,20 @@ import json
 import shutil
 import struct
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Iterable
 from urllib.parse import urlparse
 
 
 EXPECTED_ORIG_METADATA_SHA256 = "a9df074bb27ea58dbd19f322a6c6b45438fe198c74cc2f78a1d33f29604e3055"
+# Unmodified global-metadata.dat builds known to be safe to patch. Literal indices differ per build,
+# so targets are located by their exact original value (see resolve_literal_indices).
+KNOWN_ORIG_METADATA_SHA256: dict[str, str] = {
+    EXPECTED_ORIG_METADATA_SHA256: "baseline build (portal literal index 24853)",
+    "a0726c248d765b7782ca5045e17521bfa1477428a06ed84a26707cb9569ba1a2": "1.1.92, 2026-03-10 build (portal literal index 24820)",
+    "796e531afd56fbae3bc8ae39c6813d8ded8935346a1bea55b748801e9f6a605c": "1.1.93, 2026-03-31 build (portal literal index 24820)",
+}
 IL2CPP_MAGIC = 0xFAB11BAF
 
 
@@ -42,19 +50,19 @@ class LiteralTarget:
     def build_replacement(self, base_url: str) -> str:
         base_no_slash = base_url.rstrip("/")
         base_with_slash = base_no_slash + "/"
-        if self.index == 24853:
+        if self.name == "PortalBaseUrl":
             return base_with_slash
-        if self.index == 24854:
+        if self.name == "ExternalDownloadUrl":
             return f"{base_no_slash}/index.es?action=externalDownload"
-        if self.index == 24847:
+        if self.name == "LocalhostHttpsUrl":
             return base_with_slash if len(base_with_slash.encode("utf-8")) <= self.original_capacity else self.original_value
-        if self.index in (24838, 24839):
+        if self.name in ("AliCdnDevUrl", "AliCdnProdUrl"):
             return base_with_slash
-        if self.index == 24843:
+        if self.name == "BpSecureCdnOrigin":
             return base_no_slash
-        if self.index == 24844:
+        if self.name == "BpSecureClanLogoUrl":
             return f"{base_no_slash}/do_img/global/clanLogo/"
-        if self.index == 24851:
+        if self.name == "SteamPartnerTokenUrl":
             return f"{base_no_slash}/?token="
         return self.original_value
 
@@ -93,9 +101,39 @@ def read_il2cpp_header(data: bytes | bytearray) -> tuple[int, int, int, int, int
         raise ValueError(f"Unsupported IL2CPP metadata version: {version} (expected 31).")
     if lit_off + lit_size > len(data) or data_off + data_size > len(data):
         raise ValueError("IL2CPP string literal table or data section exceeds file bounds.")
-    if lit_size % 8 or lit_size // 8 <= max(target.index for target in LITERAL_TARGETS):
+    if lit_size % 8 or lit_size == 0:
         raise ValueError("IL2CPP string literal descriptor table is incomplete.")
     return version, lit_off, lit_size, data_off, data_size
+
+
+def resolve_literal_targets(data: bytes | bytearray) -> tuple[LiteralTarget, ...]:
+    """Locate each target by its exact original value; each must occur exactly once."""
+    _, lit_off, lit_size, data_off, data_size = read_il2cpp_header(data)
+    wanted = {t.original_value.encode("utf-8"): t for t in LITERAL_TARGETS}
+    found: dict[str, list[int]] = {t.name: [] for t in LITERAL_TARGETS}
+    lengths = {len(k) for k in wanted}
+    for index in range(lit_size // 8):
+        length, rel_off = struct.unpack_from("<II", data, lit_off + index * 8)
+        if length not in lengths or rel_off + length > data_size:
+            continue
+        abs_off = data_off + rel_off
+        target = wanted.get(bytes(data[abs_off : abs_off + length]))
+        if target is not None:
+            found[target.name].append(index)
+
+    problems = [f"{name} ({'missing' if not idx else 'ambiguous: ' + str(idx)})" for name, idx in found.items() if len(idx) != 1]
+    if problems:
+        raise ValueError(
+            "IL2CPP string literal descriptor table is incomplete or unrecognized; cannot locate "
+            + ", ".join(problems)
+        )
+    return tuple(replace(t, index=found[t.name][0]) for t in LITERAL_TARGETS)
+
+
+def normalize_expected(expected_sha256: str | Iterable[str]) -> frozenset[str]:
+    if isinstance(expected_sha256, str):
+        return frozenset({expected_sha256.lower()})
+    return frozenset(h.lower() for h in expected_sha256)
 
 
 def read_literal(data: bytes | bytearray, lit_off: int, data_off: int, index: int) -> tuple[int, int, int, str]:
@@ -156,16 +194,17 @@ def write_literal_in_place(
     }
 
 
-def ensure_backup(path: Path, expected_sha256: str | None = None) -> tuple[Path, bool]:
+def ensure_backup(path: Path, expected_sha256: str | Iterable[str] | None = None) -> tuple[Path, bool]:
     bak = backup_path_for(path)
     created = False
     if not bak.exists():
         if expected_sha256 is not None:
+            allowed = normalize_expected(expected_sha256)
             actual = sha256_file(path)
-            if actual.lower() != expected_sha256.lower():
+            if actual.lower() not in allowed:
                 raise RuntimeError(
                     f"Refusing to create initial backup for {path.name}: current SHA-256 ({actual}) "
-                    f"does not match expected original SHA-256 ({expected_sha256})."
+                    f"does not match expected original SHA-256 ({', '.join(sorted(allowed))})."
                 )
         shutil.copy2(path, bak)
         created = True
@@ -281,7 +320,8 @@ def verify_console_reset(exe_path: Path, boot_path: Path) -> None:
             raise RuntimeError(f"Reset hash mismatch: {path}")
 
 
-def collect_status(client_root: Path, target_base_url: str, expected_sha256: str = EXPECTED_ORIG_METADATA_SHA256) -> dict:
+def collect_status(client_root: Path, target_base_url: str, expected_sha256: str | Iterable[str] = KNOWN_ORIG_METADATA_SHA256) -> dict:
+    allowed = normalize_expected(expected_sha256)
     metadata_path = client_root / "DarkOrbit_Data" / "il2cpp_data" / "Metadata" / "global-metadata.dat"
     config_path = client_root / "DarkOrbit_Data" / "StreamingAssets" / "config.txt"
     update_path = client_root / "update.ini"
@@ -290,7 +330,7 @@ def collect_status(client_root: Path, target_base_url: str, expected_sha256: str
 
     files_report = []
     for label, fpath, expected_orig in (
-        ("global-metadata.dat", metadata_path, expected_sha256),
+        ("global-metadata.dat", metadata_path, allowed),
         ("config.txt", config_path, None),
         ("update.ini", update_path, None),
     ):
@@ -300,7 +340,7 @@ def collect_status(client_root: Path, target_base_url: str, expected_sha256: str
         cur_sha = sha256_file(fpath) if exists else None
         bak_sha = sha256_file(bak) if bak_exists else None
         is_original = (
-            (cur_sha is not None and expected_orig is not None and cur_sha.lower() == expected_orig.lower())
+            (cur_sha is not None and expected_orig is not None and cur_sha.lower() in expected_orig)
             or (cur_sha is not None and bak_sha is not None and cur_sha.lower() == bak_sha.lower())
             or (cur_sha is not None and expected_orig is None and not bak_exists)
         )
@@ -314,13 +354,14 @@ def collect_status(client_root: Path, target_base_url: str, expected_sha256: str
                 "backup_path": str(bak),
                 "backup_exists": bak_exists,
                 "backup_sha256": bak_sha,
-                "expected_original_sha256": expected_orig,
+                "expected_original_sha256": sorted(expected_orig) if expected_orig is not None else None,
                 "state": "ORIGINAL" if is_original else "PATCHED",
             }
         )
 
     literals_report = []
     header_info = {}
+    resolution_error = None
     if metadata_path.exists():
         raw = metadata_path.read_bytes()
         version, lit_off, lit_size, data_off, data_size = read_il2cpp_header(raw)
@@ -332,7 +373,13 @@ def collect_status(client_root: Path, target_base_url: str, expected_sha256: str
             "stringLiteralDataSize": data_size,
             "literalCount": lit_size // 8,
         }
-        for target in LITERAL_TARGETS:
+        meta_bak = backup_path_for(metadata_path)
+        try:
+            targets = resolve_literal_targets(meta_bak.read_bytes() if meta_bak.exists() else raw)
+        except ValueError as exc:
+            targets = ()
+            resolution_error = str(exc)
+        for target in targets:
             length, rel_off, abs_off, val = read_literal(raw, lit_off, data_off, target.index)
             planned = target.build_replacement(target_base_url)
             literals_report.append(
@@ -357,6 +404,7 @@ def collect_status(client_root: Path, target_base_url: str, expected_sha256: str
         "client_root": str(client_root),
         "target_base_url": target_base_url,
         "il2cpp_header": header_info,
+        "literal_resolution_error": resolution_error,
         "files": files_report,
         "literals": literals_report,
         "config_txt": {"localHost": cfg_kv.get("localHost", "")},
@@ -373,7 +421,8 @@ def collect_status(client_root: Path, target_base_url: str, expected_sha256: str
     }
 
 
-def apply_patches(client_root: Path, target_base_url: str, patch_cdn: bool, expected_sha256: str = EXPECTED_ORIG_METADATA_SHA256) -> dict:
+def apply_patches(client_root: Path, target_base_url: str, patch_cdn: bool, expected_sha256: str | Iterable[str] = KNOWN_ORIG_METADATA_SHA256) -> dict:
+    allowed = normalize_expected(expected_sha256)
     parsed = urlparse(target_base_url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise ValueError(f"Invalid --target-base-url '{target_base_url}'. Expected e.g. 'https://localhost:60952'.")
@@ -393,18 +442,19 @@ def apply_patches(client_root: Path, target_base_url: str, patch_cdn: bool, expe
         if not required.exists():
             raise FileNotFoundError(f"Required client file not found: {required}")
 
-    # Reject damaged metadata before creating any backups.
-    read_il2cpp_header(metadata_path.read_bytes())
+    # Reject damaged or unrecognized metadata before creating any backups.
+    meta_bak_path = backup_path_for(metadata_path)
+    targets = resolve_literal_targets((meta_bak_path if meta_bak_path.exists() else metadata_path).read_bytes())
 
-    meta_bak, _ = ensure_backup(metadata_path, expected_sha256)
+    meta_bak, _ = ensure_backup(metadata_path, allowed)
     cfg_bak, _ = ensure_backup(config_path)
     upd_bak, _ = ensure_backup(update_path)
 
     orig_meta_bytes = meta_bak.read_bytes()
     orig_meta_sha = hashlib.sha256(orig_meta_bytes).hexdigest()
-    if orig_meta_sha.lower() != expected_sha256.lower():
+    if orig_meta_sha.lower() not in allowed:
         raise RuntimeError(
-            f"Backup {meta_bak} SHA-256 ({orig_meta_sha}) does not match expected original ({expected_sha256})."
+            f"Backup {meta_bak} SHA-256 ({orig_meta_sha}) does not match expected original ({', '.join(sorted(allowed))})."
         )
 
     # Always start from the clean original metadata bytes so repeated Apply runs (with or without -PatchCdn) are idempotent
@@ -412,7 +462,7 @@ def apply_patches(client_root: Path, target_base_url: str, patch_cdn: bool, expe
     _, lit_off, _, data_off, _ = read_il2cpp_header(working)
 
     changes = []
-    for target in LITERAL_TARGETS:
+    for target in targets:
         if target.category == "cdn" and not patch_cdn:
             continue
         replacement = target.build_replacement(base_no_slash)
@@ -435,13 +485,14 @@ def apply_patches(client_root: Path, target_base_url: str, patch_cdn: bool, expe
     patch_console(exe_path, boot_path)
     apply_console_launcher(client_root)
 
-    status = collect_status(client_root, base_no_slash, expected_sha256)
+    status = collect_status(client_root, base_no_slash, allowed)
     status["applied_changes"] = changes
     status["patch_cdn"] = patch_cdn
     return status
 
 
-def reset_patches(client_root: Path, target_base_url: str, expected_sha256: str = EXPECTED_ORIG_METADATA_SHA256) -> dict:
+def reset_patches(client_root: Path, target_base_url: str, expected_sha256: str | Iterable[str] = KNOWN_ORIG_METADATA_SHA256) -> dict:
+    allowed = normalize_expected(expected_sha256)
     metadata_path = client_root / "DarkOrbit_Data" / "il2cpp_data" / "Metadata" / "global-metadata.dat"
     config_path = client_root / "DarkOrbit_Data" / "StreamingAssets" / "config.txt"
     update_path = client_root / "update.ini"
@@ -450,7 +501,7 @@ def reset_patches(client_root: Path, target_base_url: str, expected_sha256: str 
 
     restored = []
     for fpath, expected_sha in (
-        (metadata_path, expected_sha256),
+        (metadata_path, allowed),
         (config_path, None),
         (update_path, None),
         (exe_path, None),
@@ -462,15 +513,15 @@ def reset_patches(client_root: Path, target_base_url: str, expected_sha256: str 
             restored.append(fpath.name)
         if expected_sha is not None and fpath.exists():
             actual = sha256_file(fpath)
-            if actual.lower() != expected_sha.lower():
+            if actual.lower() not in expected_sha:
                 raise RuntimeError(
                     f"SHA-256 verification failed after restoring {fpath.name}: "
-                    f"got {actual}, expected {expected_sha}."
+                    f"got {actual}, expected {', '.join(sorted(expected_sha))}."
                 )
 
     reset_console_launcher(client_root)
 
-    status = collect_status(client_root, target_base_url, expected_sha256)
+    status = collect_status(client_root, target_base_url, allowed)
     verify_console_reset(exe_path, boot_path)
     status["restored_files"] = restored
     return status
@@ -532,7 +583,7 @@ def main() -> int:
     parser.add_argument(
         "--patch-cdn",
         action="store_true",
-        help="Also patch CDN and Steam partner literals (24838, 24839, 24843, 24844, 24851).",
+        help="Also patch CDN and Steam partner literals (AliCdn*, BpSecure*, SteamPartnerTokenUrl).",
     )
     parser.add_argument(
         "--json",
@@ -546,7 +597,7 @@ def main() -> int:
     args = parser.parse_args()
 
     client_root = Path(args.client_root).resolve()
-    expected_sha256 = EXPECTED_ORIG_METADATA_SHA256
+    expected_sha256: str | Iterable[str] = KNOWN_ORIG_METADATA_SHA256
     if args.fixture_original_sha256 is not None:
         repo_root = Path(__file__).resolve().parents[2]
         if not client_root.is_relative_to(repo_root) or client_root == repo_root:

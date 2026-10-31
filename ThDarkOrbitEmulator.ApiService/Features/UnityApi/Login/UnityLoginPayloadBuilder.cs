@@ -14,7 +14,7 @@ public static class UnityLoginPayloadBuilder
     public static string Build(GameAuthSession session, HttpRequest request, int activeHangarSlot = LocalHangars.DefaultSlot,
         string language = "es", ServerMeshSnapshot? mesh = null, WorldServerOptions? world = null,
         IReadOnlyList<UnityHangar>? hangars = null, string instanceName = "Local emulator",
-        IReadOnlySet<string>? enabledLanguages = null)
+        IReadOnlySet<string>? enabledLanguages = null, int display2d = 0)
     {
         var now = DateTimeOffset.UtcNow;
         var originalHost = request.Headers["X-Original-Host"].ToString();
@@ -58,7 +58,8 @@ public static class UnityLoginPayloadBuilder
             CrossdomainHash = CapturedAssetHashes.CrossdomainHash,
             ShowAdvertisingHint = false, GameclientAllowedInitDelay = "10",
             EventStreamContext = "", RequestScheme = scheme, SharedImages = host,
-            UseDeviceFonts = 0, Display2d = 2, Theme = "default",
+            // display2d feeds Settings.UserType: 1 forces 3D, 2 forces 2D, 0 keeps the client's force2D PlayerPref.
+            UseDeviceFonts = 0, Display2d = display2d is 1 or 2 ? display2d : 0, Theme = "default",
             Platform = "UNITY_CLIENT", UserProfileImage = "", AutoStartEnabled = 0,
             MapId = starterMap, GameServerIp = gameServer,
             Hangars = new UnityHangarsEnvelope { Data = new UnityHangarsData

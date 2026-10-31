@@ -36,7 +36,7 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(852, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            for (var i = 0; i < 6; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
 
             await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
             {
@@ -101,7 +101,7 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(850, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            for (var i = 0; i < 6; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
 
             var entered = await nodeB.EnterAsync(remote, CancellationToken.None);
             var spawn = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
@@ -146,7 +146,7 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(805, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            for (var i = 0; i < 6; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
 
             await browserStore.MoveAsync(pilot, 5000, 1300, null, CancellationToken.None);
             var first = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
@@ -189,7 +189,7 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(806, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            for (var i = 0; i < 6; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
 
             var entered = await nodeB.EnterAsync(remote, CancellationToken.None);
             var spawn = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
@@ -384,7 +384,7 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(803, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            for (var i = 0; i < 6; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
 
             async Task AssertAttributesAsync(int speed, int laser)
             {
@@ -435,7 +435,7 @@ public class WorldTransportTests
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(853, "opaque", "local-1"));
             var entry = new List<WorldPacket>();
-            for (var i = 0; i < 7; i++) entry.Add((await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value);
+            for (var i = 0; i < 6; i++) entry.Add((await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value);
             Assert.That(entry.Single(p => p.Command == WorldCommandId.SafeZoneCommand).Payload.ToArray(), Is.EqualTo(new byte[] { 1 }));
             await Task.Delay(1200);
             Assert.That(client.Available, Is.Zero);
@@ -478,7 +478,7 @@ public class WorldTransportTests
         var variables = new LiveVariables();
         var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>(), variables: variables);
         var pilot = new WorldPilot(804, "mmo", 1, 1, "ship", 0, 0)
-        { X = 18800, Y = 1300, BaseSpeedAtLoad = 300, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) };
+        { X = 18800, Y = 11000, BaseSpeedAtLoad = 300, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) };
         var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), store,
             variables: variables);
         using (client) using (server)
@@ -489,10 +489,10 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(804, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            var jump = WorldPayload.Encode(w => WorldPayload.WriteInt32(w, 101));
+            for (var i = 0; i < 6; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            var jump = WorldPayload.Encode(w => WorldPayload.WriteInt32(w, 1));
 
-            // Portal 101 is 700 units away: outside the default 500 radius.
+            // Portal 1 is 700 units away: outside the default 500 radius.
             await output.WriteAsync(WorldCommandId.JumpRequest, jump);
             var rejected = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
             Assert.That(rejected.Command, Is.EqualTo(WorldCommandId.LoginErrorCommand));
@@ -531,7 +531,7 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(804, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            for (var i = 0; i < 6; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
             await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
             {
                 WorldPayload.WriteInt32(w, 2000); WorldPayload.WriteInt32(w, 1300);
@@ -599,7 +599,7 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(802, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++) await input.ReadAsync();
+            for (var i = 0; i < 6; i++) await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.AdminCommandRequest,
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, $"/var set {key} 2")));
             Assert.That((await input.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.AdminCommandResponse));
@@ -636,7 +636,7 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(801, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++) await input.ReadAsync();
+            for (var i = 0; i < 6; i++) await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.AdminCommandRequest,
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "/var set world.movement.speed_multiplier 2")));
             var reply = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
@@ -682,7 +682,7 @@ public class WorldTransportTests
             Assert.That((await input.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.VersionCommand));
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(801, "opaque", "local-1"));
             Assert.That((await input.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.LoginResponse));
-            for (var i = 0; i < 6; i++) await input.ReadAsync();
+            for (var i = 0; i < 5; i++) await input.ReadAsync();
 
             await output.WriteAsync(WorldCommandId.AdminCommandRequest, payload);
             var response = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
@@ -713,7 +713,7 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(802, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++) await input.ReadAsync();
+            for (var i = 0; i < 6; i++) await input.ReadAsync();
 
             foreach (var payload in new[] { new byte[] { 0, 1, 0xff },
                          WorldPayload.Encode(w => WorldPayload.WriteString(w, "/var list")) })
@@ -755,7 +755,7 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(744, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            for (var i = 0; i < 6; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
             var spawn = (await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value;
             Assert.That(spawn.Command, Is.EqualTo(WorldCommandId.ShipCreateCommand));
             Assert.That(BinaryPrimitives.ReadInt32BigEndian(spawn.Payload.Span[..4]), Is.EqualTo(spawned.Id));
@@ -835,7 +835,7 @@ public class WorldTransportTests
         var initial = await registry.HeartbeatAsync(Node("a", now));
         var original = initial.Leases.Single(l => l.MapId == 1);
         var pilot = new WorldPilot(903, "mmo", 1, 1, "ship", 0, 0)
-        { X = 19500, Y = 1300, Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
+        { X = 19500, Y = 11000, Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
         var stale = new WorldSessionStore(cache, mutex);
         await stale.EnterAsync(pilot, default);
         await registry.HeartbeatAsync(Node("b", now));
@@ -849,10 +849,10 @@ public class WorldTransportTests
         Assert.ThrowsAsync<WorldLeaseLostException>(async () =>
             await stale.SwitchAsync(pilot, 2, default, fence: oldFence));
         Assert.ThrowsAsync<WorldLeaseLostException>(async () =>
-            await stale.JumpAsync(pilot, 101, registry, default, oldFence));
+            await stale.JumpAsync(pilot, 1, registry, default, oldFence));
         var reopened = new WorldSessionStore(cache, mutex);
         var restored = await reopened.RestoreAsync(pilot, default);
-        Assert.That((restored.MapId, restored.X, restored.Y), Is.EqualTo((1, 19500, 1300)));
+        Assert.That((restored.MapId, restored.X, restored.Y), Is.EqualTo((1, 19500, 11000)));
         Assert.That(reopened.Configuration(pilot.UserId), Is.EqualTo(1));
         var newFence = new WorldLeaseFence(registry, "b", replacement.Epoch);
         var moved = await reopened.MoveAsync(restored, 18000, 1300, null, default, fence: newFence);
@@ -906,7 +906,7 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(901, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++)
+            for (var i = 0; i < 6; i++)
                 await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
             await registry.HeartbeatAsync(Node("b", now));
             await registry.SetDrainingAsync("a");
@@ -937,7 +937,7 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(901, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++)
+            for (var i = 0; i < 6; i++)
                 await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
             await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
             {
@@ -976,7 +976,7 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(902, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            for (var i = 0; i < 6; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5));
 
             var moved = await new WorldSessionStore(cache, mutex)
                 .TeleportAsync(902, 5, 3400, 2100, true, default);
@@ -1028,7 +1028,7 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(122, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++) await input.ReadAsync();
+            for (var i = 0; i < 6; i++) await input.ReadAsync();
             var spawn = (await input.ReadAsync())!.Value;
             Assert.That(spawn.Command, Is.EqualTo(WorldCommandId.ShipCreateCommand));
             Assert.That(BinaryPrimitives.ReadInt32BigEndian(spawn.Payload.Span[..4]), Is.EqualTo(npc.Id));
@@ -1268,7 +1268,7 @@ public class WorldTransportTests
             [new ServerMapLease(1, "node-a", 1, now.AddMinutes(1)),
                 new ServerMapLease(2, "node-b", 1, now.AddMinutes(1))]));
         var pilot = new WorldPilot(121, "mmo", 1, 1, "ship", 0, 0)
-            { X = 19500, Y = 1300, Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
+            { X = 19500, Y = 11000, Stats = new WorldShipStats(300, 1000, 0, 0, 0, []) };
         var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), store,
             registry, "node-a");
         using (client)
@@ -1280,9 +1280,9 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(121, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++) await input.ReadAsync();
+            for (var i = 0; i < 6; i++) await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.JumpRequest,
-                WorldPayload.Encode(w => WorldPayload.WriteInt32(w, 101)));
+                WorldPayload.Encode(w => WorldPayload.WriteInt32(w, 1)));
             var changed = (await input.ReadAsync())!.Value;
             Assert.That(WorldPayload.Decode(changed.Payload, r =>
                 (WorldPayload.ReadInt32(r), WorldPayload.ReadString(r), WorldPayload.ReadString(r))),
@@ -1307,7 +1307,7 @@ public class WorldTransportTests
         var store = new WorldSessionStore(services.GetRequiredService<IDistributedCache>());
         var pilot = new WorldPilot(119, "mmo", 1, 1, "ship", 0, 0)
         {
-            X = 19500, Y = 1300, Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+            X = 19500, Y = 11000, Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
         };
         var (client, server, worker) = await ConnectAsync(new FakeResolver((pilot, default)), store);
         using (client)
@@ -1319,16 +1319,16 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(119, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++) await input.ReadAsync();
+            for (var i = 0; i < 6; i++) await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.JumpRequest,
-                WorldPayload.Encode(w => WorldPayload.WriteInt32(w, 101)));
+                WorldPayload.Encode(w => WorldPayload.WriteInt32(w, 1)));
             var changed = (await input.ReadAsync())!.Value;
             Assert.That(changed.Command, Is.EqualTo(WorldCommandId.MapChangeCommand));
             Assert.That(WorldPayload.Decode(changed.Payload, r =>
                 (WorldPayload.ReadInt32(r), WorldPayload.ReadString(r), WorldPayload.ReadString(r))),
                 Is.EqualTo((2, string.Empty, string.Empty)));
             Assert.That((await input.ReadAsync())!.Value.Command, Is.EqualTo(WorldCommandId.MapInitializationCommand));
-            for (var i = 0; i < 3; i++) await input.ReadAsync();
+            for (var i = 0; i < 5; i++) await input.ReadAsync();
             var hero = (await input.ReadAsync())!.Value;
             Assert.That(hero.Command, Is.EqualTo(WorldCommandId.HeroInitCommand));
             using var heroStream = new MemoryStream(hero.Payload.ToArray());
@@ -1339,7 +1339,7 @@ public class WorldTransportTests
                 WorldPayload.ReadInt32(r); return (WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r),
                     WorldPayload.ReadInt32(r));
             }))(heroReader);
-            Assert.That(arrival, Is.EqualTo((2, 2500, 1300)));
+            Assert.That(arrival, Is.EqualTo((2, 2100, 1900)));
             client.Client.Shutdown(SocketShutdown.Send);
             await worker;
         }
@@ -1437,7 +1437,7 @@ public class WorldTransportTests
             Assert.That(WorldPayload.Decode(station.Payload, r => (WorldPayload.ReadInt32(r),
                 WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r), WorldPayload.ReadInt32(r))),
                 Is.EqualTo((500, 2000, 1300, 1000)));
-            foreach (var destination in new[] { 6, 7 })
+            foreach (var destination in new[] { 6 })
             {
                 var gate = (await input.ReadAsync())!.Value;
                 Assert.That(gate.Command, Is.EqualTo(WorldCommandId.JumpgateCreateCommand));
@@ -1638,7 +1638,7 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(89, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++) await input.ReadAsync();
+            for (var i = 0; i < 6; i++) await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
             {
                 WorldPayload.WriteInt32(w, 9999); // untrusted reported X
@@ -1685,7 +1685,7 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(90, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++) await input.ReadAsync();
+            for (var i = 0; i < 6; i++) await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.MoveRequest, WorldPayload.Encode(w =>
             {
                 WorldPayload.WriteInt32(w, 2000); WorldPayload.WriteInt32(w, 1300);
@@ -1746,7 +1746,7 @@ public class WorldTransportTests
                 WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
             await input.ReadAsync();
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(504, "opaque", "local-1"));
-            for (var i = 0; i < 7; i++) await input.ReadAsync();
+            for (var i = 0; i < 6; i++) await input.ReadAsync();
             var spawned = (await input.ReadAsync())!.Value;
             Assert.That(spawned.Command, Is.EqualTo(WorldCommandId.CompanionStateCommand));
             var original = WorldPayload.Decode(spawned.Payload, r =>
@@ -1799,7 +1799,7 @@ public class WorldTransportTests
                     WorldPayload.Encode(w => WorldPayload.WriteString(w, "local-1")));
                 await reader.ReadAsync();
                 await writer.WriteAsync(WorldCommandId.LoginRequest, Login(id, "opaque", "local-1"));
-                for (var i = 0; i < 7; i++) await reader.ReadAsync();
+                for (var i = 0; i < 6; i++) await reader.ReadAsync();
                 return reader;
             }
             var firstReader = await LoginPilot(first.Client, 91);
@@ -2050,7 +2050,7 @@ public class WorldTransportTests
             await output.WriteAsync(WorldCommandId.LoginRequest, Login(42, "opaque", "local-1"));
             Assert.That((await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value.Command,
                 Is.EqualTo(WorldCommandId.LoginResponse));
-            for (var i = 0; i < 6; i++)
+            for (var i = 0; i < 5; i++)
                 Assert.That((await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5)))!.Value.Command,
                     Is.Not.EqualTo(WorldCommandId.LoginErrorCommand));
 
@@ -2202,8 +2202,8 @@ public class WorldTransportTests
         var options = new WorldServerOptions { Enabled = true, Port = 61000 };
         var xml = System.Xml.Linq.XDocument.Parse(LocalMapsXml.XmlFor(options));
         foreach (var company in CompanyCatalog.Companies)
-            Assert.That(xml.Root!.Elements("map").Single(e => (string)e.Attribute("ID")! == company.StarterMap)
-                .Attribute("GameServerIP")!.Value, Is.EqualTo("127.0.0.1:61000"));
+            Assert.That(xml.Root!.Elements("map").Single(e => (string)e.Attribute("id")! == company.StarterMap)
+                .Element("gameserverIP")!.Value, Is.EqualTo("127.0.0.1:61000"));
     }
 
     [TestCase(null, WorldLoginError.UnknownSession)]

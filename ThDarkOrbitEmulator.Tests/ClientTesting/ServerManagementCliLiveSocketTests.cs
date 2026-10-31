@@ -215,7 +215,7 @@ public class ServerManagementCliLiveSocketTests
                 WorldPayload.WriteInt64(w, pilot.UserId); WorldPayload.WriteString(w, "opaque");
                 WorldPayload.WriteString(w, "local-1"); WorldPayload.WriteString(w, "test-instance");
             }));
-            for (var i = 0; i < 7; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5), ct);
+            for (var i = 0; i < 6; i++) await input.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5), ct);
 
             // A leading '!' marks a command the CLI must reject; the result is then {exitCode, stderr}.
             async Task<JsonElement> CliAsync(string commandText)
@@ -759,7 +759,7 @@ public class ServerManagementCliLiveSocketTests
             WorldPayload.WriteInt64(w, socketPilot.UserId); WorldPayload.WriteString(w, "opaque");
             WorldPayload.WriteString(w, "local-1"); WorldPayload.WriteString(w, "test-instance");
         }));
-        for (var i = 0; i < 7; i++) await packets.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5), ct);
+        for (var i = 0; i < 6; i++) await packets.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5), ct);
         await replicaA.StartAsync(ct);
         await replicaB.StartAsync(ct);
         try
@@ -903,7 +903,7 @@ public class ServerManagementCliLiveSocketTests
             WorldPayload.WriteInt64(w, socketPilot.UserId); WorldPayload.WriteString(w, "opaque");
             WorldPayload.WriteString(w, "local-1"); WorldPayload.WriteString(w, "test-instance");
         }));
-        for (var i = 0; i < 7; i++) await packets.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5), ct);
+        for (var i = 0; i < 6; i++) await packets.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5), ct);
         await replicaA.StartAsync(ct);
         await replicaB.StartAsync(ct);
         try
@@ -1116,7 +1116,7 @@ public class ServerManagementCliLiveSocketTests
                 WorldPayload.WriteInt64(w, pilot.UserId); WorldPayload.WriteString(w, "opaque");
                 WorldPayload.WriteString(w, "local-1"); WorldPayload.WriteString(w, "test-instance");
             }));
-            for (var i = 0; i < 7; i++) await reader.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5), ct);
+            for (var i = 0; i < 6; i++) await reader.ReadAsync().WaitAsync(TimeSpan.FromSeconds(5), ct);
             return (client, worker, reader, sender);
         }
 

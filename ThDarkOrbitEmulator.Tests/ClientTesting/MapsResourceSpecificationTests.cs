@@ -95,5 +95,5 @@ public sealed class MapsResourceSpecificationTests
 
     private static Dictionary<string, string> Addresses(string xml)
         => XDocument.Parse(xml).Root!.Elements("map").ToDictionary(
-            element => (string)element.Attribute("ID")!, element => (string)element.Attribute("GameServerIP")!);
+            element => (string)element.Attribute("id")!, element => (string)element.Element("gameserverIP")!);
 }

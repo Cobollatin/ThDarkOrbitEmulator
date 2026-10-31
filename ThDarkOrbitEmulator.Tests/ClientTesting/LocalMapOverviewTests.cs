@@ -14,8 +14,8 @@ public class LocalMapOverviewTests
     {
         var xml = XDocument.Parse(LocalMapsXml.Xml);
         var wireMaps = xml.Root!.Elements("map").Select(element => (
-            Id: (string?)element.Attribute("ID"),
-            Server: (string?)element.Attribute("GameServerIP"))).ToArray();
+            Id: (string?)element.Attribute("id"),
+            Server: (string?)element.Element("gameserverIP"))).ToArray();
 
         Assert.That(wireMaps.Select(map => map.Id), Is.EqualTo(new[] { "1", "5", "9", "13" }));
         Assert.That(wireMaps.All(map => map.Server == "127.0.0.1"), Is.True);

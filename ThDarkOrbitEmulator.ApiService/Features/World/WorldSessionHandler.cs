@@ -436,6 +436,11 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
                 await ErrorAsync(writer, WorldLoginError.UnknownCommand, ct);
                 return;
             }
+            if (!versionAccepted && (ushort)packet.Value.Command == UnityWorldModuleId.VersionRequest)
+            {
+                await RunUnityAsync(stream, packet.Value.Payload, ct);
+                return;
+            }
             try
             {
                 switch (packet.Value.Command)
@@ -539,9 +544,244 @@ public sealed class WorldSessionHandler(IWorldPilotResolver resolver, WorldServe
         } }
     }
 
+    // Real Unity client session: recovered module ids and serialization (see UnityWorldProtocol).
+    private async Task RunUnityAsync(Stream stream, ReadOnlyMemory<byte> versionPayload, CancellationToken ct)
+    {
+        var writer = new UnityWorldFrameWriter(stream);
+        var reader = new UnityWorldFrameReader(stream, options.MaximumPacketBytes);
+        var clientVersion = new UnityModuleReader(versionPayload).String();
+        await writer.WriteAsync(UnityWorldModules.Version(clientVersion, true), ct);
+        WorldPilot? connected = null;
+        CancellationTokenSource? beaconCts = null;
+        Task beacon = Task.CompletedTask;
+        int? activatedAssetId = null;
+        var jumpLockedUntil = DateTime.MinValue;
+        var displaySettingsSeen = false;
+
+        async Task StopBeaconAsync()
+        {
+            if (beaconCts is null) return;
+            beaconCts.Cancel();
+            try { await beacon; } catch (Exception e) when (e is OperationCanceledException or IOException) { }
+            beaconCts.Dispose();
+            beaconCts = null;
+        }
+
+        // Map assets (home base, portals) and the beacon loop; the client clears them on every scene change.
+        async Task EnterMapAsync(WorldPilot pilot)
+        {
+            await StopBeaconAsync();
+            var map = await RuntimeMapAsync(pilot.MapId, ct);
+            if (map.HasHomeStation)
+                foreach (var building in UnityWorldModules.HomeBase(map.HomeStation, map.FactionId))
+                    await writer.WriteAsync(building, ct);
+            foreach (var portal in map.Portals)
+                await writer.WriteAsync(UnityWorldModules.Jumpgate(portal), ct);
+            beaconCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            beacon = UnityBeaconAsync(writer, pilot, map, beaconCts.Token);
+        }
+
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                WorldPacket? packet;
+                try { packet = await reader.ReadAsync(ct); }
+                catch (Exception e) when (e is EndOfStreamException or InvalidDataException or IOException) { return; }
+                if (packet is null) return;
+                var moduleId = (ushort)packet.Value.Command;
+                if (moduleId == UnityWorldModuleId.LoginRequest && connected is null)
+                {
+                    UnityLoginRequest login;
+                    try { login = UnityLoginRequest.Read(packet.Value.Payload); }
+                    catch (EndOfStreamException) { return; }
+                    var (pilot, _) = await resolver.ResolveAsync(login.UserId, login.SessionId, ct);
+                    if (pilot is null) return;
+                    connected = sessions is null ? pilot : await sessions.EnterAsync(pilot, ct);
+                    var stats = connected.Stats;
+                    await writer.WriteAsync(UnityWorldModules.ShipInitialization(connected, stats, stats.MaxShield,
+                        stats.MaxHitPoints, connected.X, connected.Y), ct);
+                    var ui = await UnityUiSettingsStore.Shared.LoadAsync(connected.UserId, sessions, ct);
+                    // The main HUD is built from the feature menu when LoginResponse is handled.
+                    await writer.WriteAsync(UnityWorldModules.UILayout(ui.Layout), ct);
+                    await writer.WriteAsync(UnityWorldModules.LoginResponse(), ct);
+                    await writer.WriteAsync(UnityWorldModules.ItemsMenu(ui), ct);
+                    await writer.WriteAsync(UnityWorldModules.KeyBindings(), ct);
+                    foreach (var (itemId, state) in ui.Windows())
+                        await writer.WriteAsync(UnityWorldModules.WindowItem(itemId, state), ct);
+                    await EnterMapAsync(connected);
+                }
+                else if (connected is not null && moduleId == UnityWorldModuleId.DisplaySettingsRequest)
+                {
+                    try
+                    {
+                        var display = UnityDisplaySettingsRequest.Read(packet.Value.Payload);
+                        // The copy sent right after login carries the client's default, not the saved choice.
+                        var isLoginEcho = !displaySettingsSeen;
+                        displaySettingsSeen = true;
+                        if (!isLoginEcho)
+                        {
+                            // Saving a 2D/3D change makes the client relog; the login payload's display2d applies it.
+                            if (sessions is not null)
+                                await sessions.SaveUnityDisplay2dAsync(connected.UserId, display.Use2D, ct);
+                            if (options.SyncClientForce2D && OperatingSystem.IsWindows())
+                                UnityClientPlayerPrefs.TrySetForce2D(display.Use2D);
+                        }
+                    }
+                    catch (EndOfStreamException) { return; }
+                }
+                else if (connected is not null && moduleId is UnityWorldModuleId.MenuActionRequest
+                             or UnityWorldModuleId.WindowSettingsRequest or UnityWorldModuleId.UIWindowUpdateRequest
+                             or UnityWorldModuleId.SlotBarConfigSetRequest)
+                {
+                    var ui = UnityUiSettingsStore.Shared.For(connected.UserId);
+                    try
+                    {
+                        switch (moduleId)
+                        {
+                            case UnityWorldModuleId.MenuActionRequest:
+                                var action = UnityMenuActionRequest.Read(packet.Value.Payload);
+                                if (ui.Select(action.MenuItemId) is { } selection)
+                                {
+                                    if (selection.Previous is not null)
+                                        await writer.WriteAsync(UnityWorldModules.AmmoStatus(selection.Previous, false), ct);
+                                    await writer.WriteAsync(UnityWorldModules.AmmoStatus(action.MenuItemId, true), ct);
+                                }
+                                break;
+                            case UnityWorldModuleId.WindowSettingsRequest:
+                                ui.Layout = UnityWindowSettingsRequest.Read(packet.Value.Payload);
+                                break;
+                            case UnityWorldModuleId.UIWindowUpdateRequest:
+                                var window = UnityWindowUpdateRequest.Read(packet.Value.Payload);
+                                ui.SetWindow(window.ItemId, window.State);
+                                break;
+                            default:
+                                ui.MoveSlot(UnitySlotBarConfigSetRequest.Read(packet.Value.Payload));
+                                break;
+                        }
+                        await UnityUiSettingsStore.Shared.SaveAsync(connected.UserId, sessions, ct);
+                    }
+                    catch (EndOfStreamException) { return; }
+                }
+                else if (moduleId == UnityWorldModuleId.MoveRequest && connected is not null && sessions is not null)
+                {
+                    UnityMoveRequest move;
+                    try { move = UnityMoveRequest.Read(packet.Value.Payload); }
+                    catch (EndOfStreamException) { return; }
+                    // The connection is not attached, so legacy-format broadcasts never reach this socket.
+                    await sessions.MoveAsync(connected, move.TargetX, move.TargetY, null, ct);
+                }
+                else if (moduleId == UnityWorldModuleId.HangarListRequest && connected is not null)
+                {
+                    await writer.WriteAsync(UnityWorldModules.ShopItemList("ship", connected.ShipId), ct);
+                    await writer.WriteAsync(UnityWorldModules.HangarShips(connected.ShipId, 1), ct);
+                }
+                else if (moduleId == UnityWorldModuleId.HangarShipDetailRequest && connected is not null)
+                {
+                    var stats = sessions?.ActiveStats(connected) ?? connected.Stats;
+                    await writer.WriteAsync(UnityWorldModules.HangarShipDetail(connected.ShipId, 1, true, stats,
+                        sessions?.CurrentHitPoints(connected) ?? stats.MaxHitPoints,
+                        sessions?.CurrentShield(connected) ?? stats.MaxShield), ct);
+                }
+                else if (moduleId == UnityWorldModuleId.HangarShipEquipmentRequest && connected is not null)
+                {
+                    HangarShipConfig[] configs =
+                    [
+                        new(1, true, [], []),
+                        new(2, false, [], []),
+                    ];
+                    await writer.WriteAsync(UnityWorldModules.HangarShipEquipment(connected.ShipId, 1, 1, 1, configs), ct);
+                }
+                else if (moduleId == UnityWorldModuleId.MapAssetActivationRequest && connected is not null)
+                {
+                    // Clicking a gate bubble is followed by the client's own JumpRequest, so only remember the gate.
+                    try { activatedAssetId = UnityMapAssetActivationRequest.Read(packet.Value.Payload).MapAssetId; }
+                    catch (EndOfStreamException) { return; }
+                }
+                else if (moduleId == UnityWorldModuleId.JumpRequest && connected is not null && sessions is not null)
+                {
+                    // Requests queued during the previous jump would otherwise bounce the ship straight back.
+                    if (DateTime.UtcNow < jumpLockedUntil) continue;
+                    var map = await RuntimeMapAsync(connected.MapId, ct);
+                    // The Unity request has no payload: prefer the clicked gate, else the nearest portal in range.
+                    var (x, y) = sessions.CurrentPosition(connected);
+                    var portal = map.Portals
+                        .Select(p => (Portal: p, Distance: (long)(x - p.X) * (x - p.X) + (long)(y - p.Y) * (y - p.Y)))
+                        .Where(p => p.Distance <= (long)p.Portal.JumpRadius * p.Portal.JumpRadius)
+                        .OrderBy(p => p.Portal.Id == activatedAssetId ? 0 : 1)
+                        .ThenBy(p => p.Distance)
+                        .Select(p => p.Portal)
+                        .FirstOrDefault();
+                    activatedAssetId = null;
+                    var jump = portal is null ? null : await sessions.JumpAsync(connected, portal.Id, registry, ct);
+                    if (jump is null)
+                    {
+                        await writer.WriteAsync(UnityWorldModules.JumpDenied(), ct);
+                        continue;
+                    }
+                    await StopBeaconAsync();
+                    await writer.WriteAsync(UnityWorldModules.JumpInitiated(jump.Pilot.MapId, portal!.Id), ct);
+                    // Let the client play the portal animation before the scene switch.
+                    await Task.Delay(UnityJumpDelay, ct);
+                    connected = jump.Pilot;
+                    var stats = connected.Stats;
+                    await writer.WriteAsync(UnityWorldModules.ShipInitialization(connected, stats, stats.MaxShield,
+                        stats.MaxHitPoints, connected.X, connected.Y), ct);
+                    await EnterMapAsync(connected);
+                    jumpLockedUntil = DateTime.UtcNow + UnityJumpDelay;
+                }
+            }
+        }
+        finally
+        {
+            await StopBeaconAsync();
+            if (connected is not null && sessions is not null)
+                await sessions.LeaveAsync(connected, null, CancellationToken.None);
+        }
+    }
+
+    private static readonly TimeSpan UnityJumpDelay = TimeSpan.FromSeconds(3);
+
+    // Pushes BeaconCommand whenever the ship crosses the home station's peace radius or a portal's jump radius,
+    // and enables the click bubble of each building or portal while the ship is in range of it.
+    private async Task UnityBeaconAsync(UnityWorldFrameWriter writer, WorldPilot pilot, WorldMapInstance map,
+        CancellationToken ct)
+    {
+        (bool Peace, bool Gate)? last = null;
+        var station = map.HomeStation;
+        var assets = (map.HasHomeStation ? UnityWorldModules.HomeBaseLayout(station) : [])
+            .Select(asset => (asset.Id, asset.X, asset.Y, Radius: station.PeaceRadius))
+            .Concat(map.Portals.Select(portal => (portal.Id, portal.X, portal.Y, Radius: portal.JumpRadius)))
+            .ToArray();
+        var available = new HashSet<int>();
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(500));
+        do
+        {
+            var (x, y) = sessions is null ? (pilot.X, pilot.Y) : sessions.CurrentPosition(pilot);
+            long dx = x - station.X, dy = y - station.Y;
+            var peace = map.HasHomeStation && dx * dx + dy * dy <= (long)station.PeaceRadius * station.PeaceRadius;
+            var gate = map.Portals.Any(p => (long)(x - p.X) * (x - p.X) + (long)(y - p.Y) * (y - p.Y)
+                <= (long)p.JumpRadius * p.JumpRadius);
+            if (last != (peace, gate))
+            {
+                last = (peace, gate);
+                await writer.WriteAsync(UnityWorldModules.Beacon(x, y, peace, gate), ct);
+            }
+            foreach (var asset in assets)
+            {
+                var inRange = (long)(x - asset.X) * (x - asset.X) + (long)(y - asset.Y) * (y - asset.Y)
+                    <= (long)asset.Radius * asset.Radius;
+                if (inRange ? available.Add(asset.Id) : available.Remove(asset.Id))
+                    await writer.WriteAsync(UnityWorldModules.MapAssetActionAvailable(asset.Id, inRange), ct);
+            }
+        } while (await timer.WaitForNextTickAsync(ct));
+    }
+
     private async Task<WorldMapInstance> RuntimeMapAsync(int mapId, CancellationToken ct)
     {
         var map = WorldMapInstance.Starter(mapId);
+        if (options.CenterHomeStation && map.HasHomeStation)
+            map = map with { HomeStation = map.HomeStation with { X = map.Width / 2, Y = map.Height / 2 } };
         if (variables is null) return map;
         var peace = (int)await variables.NumberAsync("world.station.peace_radius", ct);
         var jump = (int)await variables.NumberAsync("world.portal.jump_radius", ct);

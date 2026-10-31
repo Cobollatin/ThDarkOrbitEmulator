@@ -11,7 +11,8 @@ public sealed class UnityLoginEndpoint(
     IGameAuthSessionStore gameAuthSessionStore,
     LocalHangarStore localHangarStore,
     LocalAccountPreferencesStore preferencesStore, IServerMeshRegistry registry,
-    WorldServerOptions world, CockpitCatalogStore catalog) : EndpointWithoutRequest<UnityLoginResponse>
+    WorldServerOptions world, CockpitCatalogStore catalog,
+    WorldSessionStore worldSessions) : EndpointWithoutRequest<UnityLoginResponse>
 {
     public override void Configure()
     {
@@ -33,7 +34,7 @@ public sealed class UnityLoginEndpoint(
             !string.IsNullOrWhiteSpace(dosid));
 
         var innerPayload = await UnityLoginAction.HandleAsync(HttpContext, dosid, gameAuthSessionStore,
-            localHangarStore, preferencesStore, ct, registry, world, catalog);
+            localHangarStore, preferencesStore, ct, registry, world, catalog, worldSessions);
         if (innerPayload is null)
         {
             logger.LogWarning("UnityApi login rejected: missing, oversized or unknown dosid session.");

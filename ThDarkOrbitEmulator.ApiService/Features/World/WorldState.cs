@@ -21,13 +21,80 @@ public sealed record WorldMapInstance(int MapId, int FactionId, int Width, int H
         _ => throw new ArgumentOutOfRangeException(nameof(mapId))
     };
 
+    // Only the x-1 (1, 5, 9) and x-8 (20, 24, 28) maps have a home station.
+    public bool HasHomeStation => MapId is 1 or 5 or 9 or 20 or 24 or 28;
+
+    private const int MapWidth = 21000, MapHeight = 13100;
+
+    // Jumpgates from the client's spacemap-config.xml: (gate key, map, destination map, tooltip x, tooltip y).
+    // Tooltip coordinates span 315x210 and are scaled to map units; every gate has a reverse gate.
+    private static readonly (int Key, int Map, int To, int X, int Y)[] Gates =
+    [
+        (1, 1, 2, 293, 177),
+        (2, 2, 1, 31, 30),
+        (3, 2, 3, 293, 30),
+        (5, 2, 4, 293, 177),
+        (4, 3, 2, 31, 177),
+        (7, 3, 7, 293, 30),
+        (27, 3, 4, 293, 177),
+        (6, 4, 2, 31, 30),
+        (11, 4, 12, 293, 177),
+        (28, 4, 3, 293, 30),
+        (31, 4, 13, 301, 92),
+        (16, 5, 6, 31, 177),
+        (10, 6, 7, 31, 177),
+        (15, 6, 5, 293, 30),
+        (17, 6, 8, 293, 177),
+        (8, 7, 3, 31, 177),
+        (9, 7, 6, 293, 30),
+        (25, 7, 8, 293, 177),
+        (18, 8, 6, 31, 30),
+        (19, 8, 11, 31, 177),
+        (26, 8, 7, 293, 30),
+        (33, 8, 14, 158, 184),
+        (24, 9, 10, 31, 30),
+        (14, 10, 12, 31, 30),
+        (22, 10, 11, 293, 30),
+        (23, 10, 9, 293, 177),
+        (20, 11, 8, 31, 30),
+        (21, 11, 10, 293, 177),
+        (30, 11, 12, 31, 177),
+        (12, 12, 4, 31, 30),
+        (13, 12, 10, 293, 177),
+        (29, 12, 11, 293, 30),
+        (35, 12, 15, 158, 23),
+        (32, 13, 4, 23, 92),
+        (37, 13, 14, 293, 30),
+        (42, 13, 15, 293, 177),
+        (43, 13, 16, 166, 104),
+        (34, 14, 8, 158, 23),
+        (38, 14, 13, 31, 177),
+        (39, 14, 15, 293, 177),
+        (45, 14, 16, 166, 104),
+        (36, 15, 12, 301, 92),
+        (40, 15, 14, 31, 30),
+        (41, 15, 13, 31, 177),
+        (47, 15, 16, 166, 104),
+        (44, 16, 13, 152, 104),
+        (46, 16, 14, 173, 91),
+        (48, 16, 15, 173, 112),
+    ];
+
+    private static (int X, int Y) GatePosition((int Key, int Map, int To, int X, int Y) gate) =>
+        ((int)Math.Round(gate.X * MapWidth / 315.0 / 100) * 100, (int)Math.Round(gate.Y * MapHeight / 210.0 / 100) * 100);
+
+    // Ships arrive on the reverse gate of the destination map.
+    private static WorldPortal Portal((int Key, int Map, int To, int X, int Y) gate)
+    {
+        var (x, y) = GatePosition(gate);
+        var (arrivalX, arrivalY) = GatePosition(Gates.Single(g => g.Map == gate.To && g.To == gate.Map));
+        return new WorldPortal(gate.Key, x, y, gate.To, arrivalX, arrivalY);
+    }
+
     private static WorldMapInstance Create(int map, int faction, bool adjacent) =>
-        new(map, faction, 21000, 13100,
+        new(map, faction, MapWidth, MapHeight,
             new WorldStation(map * 100, adjacent ? 19000 : 2000, 1300, 1000),
-            adjacent
-                ? [new WorldPortal(map * 100 + 1, 1500, 1300, map - 1, 18500, 1300)]
-                : [new WorldPortal(map * 100 + 1, 19500, 1300, map + 1, 2500, 1300),
-                   new WorldPortal(map * 100 + 2, 19500, 11800, map + 2, 2500, 11800)]);
+            Gates.Where(gate => gate.Map == map).Select(Portal).ToArray());
 }
 
 public sealed record WorldShipStats(int Speed, long MaxHitPoints, long MaxShield, int CargoCapacity,
@@ -159,6 +226,19 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private static string Key(long userId) => $"world:position:{userId}";
     private static string RuntimeKey(long userId) => $"world:runtime:{userId}";
     private static string PresenceKey(int mapId) => $"world:presence:map:{mapId}";
+    private static string UnityUiKey(long userId) => $"world:unity-ui:{userId}";
+
+    public Task<string?> UnityUiSettingsAsync(long userId, CancellationToken ct) =>
+        cache.GetStringAsync(UnityUiKey(userId), ct);
+    public Task SaveUnityUiSettingsAsync(long userId, string json, CancellationToken ct) =>
+        cache.SetStringAsync(UnityUiKey(userId), json, ct);
+
+    // Saved 2D/3D choice as the login display2d value: 1 = 3D, 2 = 2D, 0 = never chosen.
+    public async Task<int> UnityDisplay2dAsync(long userId, CancellationToken ct) =>
+        await cache.GetStringAsync(UnityDisplayKey(userId), ct) switch { "1" => 1, "2" => 2, _ => 0 };
+    public Task SaveUnityDisplay2dAsync(long userId, bool use2d, CancellationToken ct) =>
+        cache.SetStringAsync(UnityDisplayKey(userId), use2d ? "2" : "1", ct);
+    private static string UnityDisplayKey(long userId) => $"world:unity-display2d:{userId}";
 
     public IReadOnlyList<WorldPilot> Connected(int mapId) => connected.TryGetValue(mapId, out var pilots)
         ? pilots.Values.ToArray() : [];

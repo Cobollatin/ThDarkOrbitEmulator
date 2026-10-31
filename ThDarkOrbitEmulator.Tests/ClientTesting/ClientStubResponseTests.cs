@@ -121,7 +121,7 @@ public class ClientStubResponseTests
         Assert.That(payload["languageXmlHash"], Is.Null);
         Assert.That(payload["useHash"]!.GetValue<int>(), Is.EqualTo(1));
         Assert.That(payload["autoStartEnabled"]!.GetValue<int>(), Is.EqualTo(0));
-        Assert.That(payload["display2d"]!.GetValue<int>(), Is.EqualTo(2));
+        Assert.That(payload["display2d"]!.GetValue<int>(), Is.EqualTo(0));
         Assert.That(payload["fullscreen"]!.GetValue<int>(), Is.EqualTo(1));
         Assert.That(payload["browser"]!.GetValue<string>(), Is.EqualTo("Unknown"));
         Assert.That(payload["gameclientAllowedInitDelay"]!.GetValue<string>(), Is.EqualTo("10"));
