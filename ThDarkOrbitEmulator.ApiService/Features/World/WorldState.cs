@@ -1400,7 +1400,10 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             var position = current.PositionAt(now);
             var distance = Math.Sqrt(Math.Pow(current.TargetX - position.X, 2)
                 + Math.Pow(current.TargetY - position.Y, 2));
-            if (distance > 0)
+            // A short trip may finish between polls. The observer still needs its
+            // final position if it last saw this pilot before the trip began.
+            if (distance > 0 || positions.TryGetValue(remote.UserId, out var announcedPosition)
+                && announcedPosition != (current.TargetX, current.TargetY))
                 moves.Add(new WorldRemoteMove(new WorldMoveResult(remote.UserId,
                     current.TargetX, current.TargetY,
                     WorldMovement.DurationMilliseconds(distance, current.Speed), false), current));

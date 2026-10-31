@@ -511,6 +511,39 @@ public class WorldTransportTests
     }
 
     [Test]
+    public async Task RemoteMovement_CompletedBetweenPolls_SendsFinalPositionOnce()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var owner = new WorldSessionStore(cache);
+        var observerNode = new WorldSessionStore(cache);
+        var remote = await owner.EnterAsync(new WorldPilot(981, "remote", 1, 1, "ship", 0, 0)
+        { X = 1000, Y = 1000, Stats = new WorldShipStats(300, 1000, 0, 0, 30, []) }, default);
+        var observer = remote with { UserId = 982 };
+        using var wire = new MemoryStream();
+        var connection = new WorldConnection(observer, new WorldPacketWriter(wire));
+        await observerNode.ObserveRemotePilotsAsync(observer, connection, default);
+
+        await owner.MoveAsync(remote, 1010, 1000, null, default,
+            DateTimeOffset.UtcNow - TimeSpan.FromSeconds(1));
+        foreach (var move in await observerNode.ObserveRemoteMovesAsync(observer, default))
+            await observerNode.SendMoveAsync(connection, move, default);
+        Assert.That(await observerNode.ObserveRemoteMovesAsync(observer, default), Is.Empty);
+
+        wire.Position = 0;
+        var reader = new WorldPacketReader(wire);
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.PilotCreateCommand));
+        Assert.That((await reader.ReadAsync())?.Command, Is.EqualTo(WorldCommandId.CloakStateCommand));
+        var packet = await reader.ReadAsync();
+        Assert.That(packet?.Command, Is.EqualTo(WorldCommandId.MoveCommand));
+        var position = WorldPayload.Decode(packet!.Value.Payload, r =>
+            (Id: WorldPayload.ReadInt64(r), X: WorldPayload.ReadInt32(r),
+                Y: WorldPayload.ReadInt32(r), Duration: WorldPayload.ReadInt32(r)));
+        Assert.That(position, Is.EqualTo((981L, 1010, 1000, 0)));
+        Assert.That(await reader.ReadAsync(), Is.Null);
+    }
+
+    [Test]
     public async Task FailedRemoteMoveWrite_IsRetriedOnce()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
