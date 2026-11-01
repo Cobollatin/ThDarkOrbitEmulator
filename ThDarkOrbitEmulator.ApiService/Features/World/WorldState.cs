@@ -2427,16 +2427,6 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         {
             var (x, y) = CurrentPosition(observer.Pilot);
             if ((long)(x - npc.X) * (x - npc.X) + (long)(y - npc.Y) * (y - npc.Y) > 5000L * 5000) continue;
-            if (!observer.KnownNpcs.TryGetValue(npc.Id, out var known) || !known)
-            {
-                try
-                {
-                    await observer.SendAsync(WorldCommandId.ShipCreateCommand, WorldNpcPackets.Create(npc), ct);
-                    observer.KnownNpcs[npc.Id] = true;
-                    observer.NpcVitals[npc.Id] = (npc.Hp, npc.Shield);
-                }
-                catch (IOException) { continue; }
-            }
             try { await observer.SendAsync(WorldCommandId.MoveCommand, payload, ct); }
             catch (IOException) { }
         }
@@ -2447,13 +2437,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         var payload = WorldNpcPackets.Create(npc);
         foreach (var observer in connections.Values.Where(c => c.Pilot.MapId == mapId).ToArray())
         {
-            if (observer.KnownNpcs.TryGetValue(npc.Id, out var known) && known) continue;
-            try
-            {
-                await observer.SendAsync(WorldCommandId.ShipCreateCommand, payload, ct);
-                observer.KnownNpcs[npc.Id] = true;
-                observer.NpcVitals[npc.Id] = (npc.Hp, npc.Shield);
-            }
+            try { await observer.SendAsync(WorldCommandId.ShipCreateCommand, payload, ct); }
             catch (IOException) { }
         }
     }

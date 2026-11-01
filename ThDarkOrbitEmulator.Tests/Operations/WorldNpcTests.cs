@@ -6,54 +6,6 @@ using ThDarkOrbitEmulator.Cluster.Infrastructure;
 
 namespace ThDarkOrbitEmulator.Tests.Operations;
 
-public sealed class WorldStateNpcSyncTests
-{
-    [Test]
-    public async Task BroadcastNpcMoveAsync_ResendsShipCreate_IfObserverMissedSpawn()
-    {
-        using var provider = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
-        var cache = provider.GetRequiredService<IDistributedCache>();
-        var sessions = new WorldSessionStore(cache);
-        
-        var pilot = new WorldPilot(91, "mmo", 1, 1, "ship", 100, 100) { MapId = 1, X = 100, Y = 100 };
-        await sessions.EnterAsync(pilot, default);
-        
-        var stream = new MemoryStream();
-        var writer = new WorldPacketWriter(stream, 4096);
-        var connection = new WorldConnection(pilot, writer);
-        sessions.Attach(connection);
-        
-        var npc = new WorldNpc(42, "Streuner", "npc_streuner", 100, 100, 50, 50, 0, 0, 400, 1, 400, 2);
-        
-        // First move frame triggers ShipCreateCommand before MoveCommand because known is false
-        await sessions.BroadcastNpcMoveAsync(1, npc, default);
-        
-        stream.Position = 0;
-        var reader = new WorldPacketReader(stream, 4096);
-        
-        var packet1 = await reader.ReadAsync(default);
-        Assert.That(packet1, Is.Not.Null);
-        Assert.That(packet1.Value.Command, Is.EqualTo(WorldCommandId.ShipCreateCommand));
-        
-        var packet2 = await reader.ReadAsync(default);
-        Assert.That(packet2, Is.Not.Null);
-        Assert.That(packet2.Value.Command, Is.EqualTo(WorldCommandId.MoveCommand));
-        
-        Assert.That(connection.KnownNpcs[npc.Id], Is.True);
-        Assert.That(connection.NpcVitals[npc.Id], Is.EqualTo((npc.Hp, npc.Shield)));
-        
-        // Next move frame only sends MoveCommand
-        stream.SetLength(0);
-        await sessions.BroadcastNpcMoveAsync(1, npc, default);
-        
-        stream.Position = 0;
-        var packet3 = await reader.ReadAsync(default);
-        Assert.That(packet3, Is.Not.Null);
-        Assert.That(packet3.Value.Command, Is.EqualTo(WorldCommandId.MoveCommand));
-        Assert.That(stream.Position, Is.EqualTo(stream.Length));
-    }
-}
-
 public sealed class WorldNpcTests
 {
     [Test]
