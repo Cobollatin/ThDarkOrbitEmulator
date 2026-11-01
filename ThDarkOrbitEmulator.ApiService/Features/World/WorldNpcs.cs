@@ -95,7 +95,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
     private static string Key(int map, int id) => $"world:npc:v2:{map}:{id}";
     private static string TargetKey(long userId) => $"world:npc:target:{userId}";
     private static string LaserKey(long userId) => $"world:npc:laser:{userId}";
-    private sealed record ActiveLaser(int MapId, int NpcId, long Cycle, long NextShotUnixMs);
+    private sealed record ActiveLaser(int MapId, int NpcId, long Cycle, long NextShotUnixMs,
+        Guid AttackId);
     private sealed record LauncherLoad(int Count, long UpdatedAtUnixMs);
     private static string LauncherAutoKey(long userId) => $"world:launcher:auto:{userId}";
     private static string RocketAutoKey(long userId) => $"world:rocket:auto:{userId}";
@@ -300,7 +301,8 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         }
         await cache.SetStringAsync(LaserKey(pilot.UserId),
             JsonSerializer.Serialize(new ActiveLaser(pilot.MapId, npcId, Cycle,
-                clock.GetUtcNow().ToUnixTimeMilliseconds() + Math.Max(1, settings.LaserCooldownMilliseconds))),
+                clock.GetUtcNow().ToUnixTimeMilliseconds() + Math.Max(1, settings.LaserCooldownMilliseconds),
+                Guid.NewGuid())),
             new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5) }, ct);
     }
 
@@ -330,14 +332,18 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             var now = clock.GetUtcNow().ToUnixTimeMilliseconds();
             if (now < active.NextShotUnixMs) continue;
             // Reserve the interval before firing so a failed broadcast cannot repeat damage.
+            string reserved;
             await using (var held = await mutex.AcquireAsync(ct))
             {
                 if (await cache.GetStringAsync(LaserKey(pilot.UserId), ct) != stored) continue;
-                await cache.SetStringAsync(LaserKey(pilot.UserId), JsonSerializer.Serialize(active with
-                { NextShotUnixMs = now + Math.Max(1, settings.LaserCooldownMilliseconds) }),
+                reserved = JsonSerializer.Serialize(active with
+                { NextShotUnixMs = now + Math.Max(1, settings.LaserCooldownMilliseconds) });
+                await cache.SetStringAsync(LaserKey(pilot.UserId), reserved,
                     new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5) }, ct);
             }
-            var hit = await AttackAsync(pilot, active.NpcId, sessions, ct, fence, mapId);
+            var hit = await AttackAsync(pilot, active.NpcId, sessions, ct, fence, mapId,
+                expectedLaserState: reserved);
+            if (hit.Status == "stopped") continue;
             if (hit.Status != "hit" || hit.Destroyed)
             {
                 await StopLaserAsync(pilot, ct);
@@ -346,7 +352,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             if (await AutoRocketEnabledAsync(pilot.UserId, ct))
             {
                 var rocket = await AttackAsync(pilot, active.NpcId, sessions, ct, fence, mapId,
-                    rocket: true);
+                    rocket: true, expectedLaserState: reserved);
                 if (rocket.Destroyed)
                 {
                     await StopLaserAsync(pilot, ct);
@@ -357,7 +363,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 (await LauncherStatusAsync(pilot.UserId, ct)).Loaded == Math.Clamp(settings.LauncherCapacity, 1, 20))
             {
                 var volley = await AttackAsync(pilot, active.NpcId, sessions, ct, fence, mapId,
-                    launcher: true);
+                    launcher: true, expectedLaserState: reserved);
                 if (volley.Destroyed)
                     await StopLaserAsync(pilot, ct);
             }
@@ -525,7 +531,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         WorldSessionStore sessions, CancellationToken ct, WorldLeaseFence? fence = null,
         int? expectedMapId = null, bool rocket = false, bool pulse = false,
         Guid? pulseActionId = null, long? expectedGeneration = null, bool resumePulse = false,
-        bool launcher = false)
+        bool launcher = false, string? expectedLaserState = null)
     {
         if (pilot.AccountId == Guid.Empty) return new("invalid");
         WorldNpc? npc;
@@ -550,6 +556,9 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 throw new WorldMapChangedException();
             }
             if (!resumePulse && sessions.CurrentHitPoints(pilot) <= 0) return new("destroyed_pilot");
+            if (expectedLaserState is not null &&
+                (await cache.GetStringAsync(LaserKey(pilot.UserId), ct) != expectedLaserState ||
+                 !await IsSelectedAsync(pilot, npcId, ct))) return new("stopped");
             key = Key(pilot.MapId, npcId);
             var stored = await cache.GetStringAsync(key, ct);
             var saved = stored is null ? null : JsonSerializer.Deserialize<Vital>(stored);

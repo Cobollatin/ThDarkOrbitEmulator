@@ -121,6 +121,43 @@ public sealed class WorldRocketAndNpcAggroTests
     }
 
     [Test]
+    public async Task ReservedLaserShotDoesNotHitAfterTargetChange()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new Mutex();
+        var clock = new Clock();
+        var npcs = CreateNpcs(cache, mutex, new Rewards(), clock, new WorldNpcOptions
+        {
+            Templates = [new("Scout", "npc_scout", 2, 300, 0, 0, 0, 0, 0, 0)],
+            LaserCooldownMilliseconds = 1000, AggroRange = 0
+        });
+        var targets = await npcs.VisibleAsync(1, default);
+        var sessions = new WorldSessionStore(cache, mutex, clock: clock);
+        var pilot = await sessions.EnterAsync(Pilot(targets[0].X, targets[0].Y) with
+        { Stats = new WorldShipStats(300, 1000, 0, 100, 1, []) }, default);
+        await npcs.SelectAsync(pilot, targets[0].Id, default);
+        await npcs.StartLaserAsync(pilot, targets[0].Id, default, sessions);
+        var reservedShot = await cache.GetStringAsync($"world:npc:laser:{pilot.UserId}");
+
+        await npcs.SelectAsync(pilot, targets[1].Id, default);
+        var hit = await npcs.AttackAsync(pilot, targets[0].Id, sessions, default,
+            expectedLaserState: reservedShot);
+
+        Assert.That(hit.Status, Is.EqualTo("stopped"));
+        Assert.That((await npcs.VisibleAsync(1, default)).Single(n => n.Id == targets[0].Id).Hp,
+            Is.EqualTo(300));
+
+        await npcs.SelectAsync(pilot, targets[0].Id, default);
+        await npcs.StartLaserAsync(pilot, targets[0].Id, default, sessions);
+        var staleHit = await npcs.AttackAsync(pilot, targets[0].Id, sessions, default,
+            expectedLaserState: reservedShot);
+        Assert.That(staleHit.Status, Is.EqualTo("stopped"));
+        Assert.That((await npcs.VisibleAsync(1, default)).Single(n => n.Id == targets[0].Id).Hp,
+            Is.EqualTo(300));
+    }
+
+    [Test]
     public async Task DelayedLaserStartDoesNotReplaceCurrentTargetLock()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
