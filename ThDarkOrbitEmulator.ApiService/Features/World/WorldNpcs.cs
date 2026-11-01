@@ -270,6 +270,10 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         }
         var target = (await VisibleAsync(pilot.MapId, ct)).FirstOrDefault(n => n.Id == npcId);
         if (target is null) return null;
+        var laser = await cache.GetStringAsync(LaserKey(pilot.UserId), ct);
+        if (laser is not null && JsonSerializer.Deserialize<ActiveLaser>(laser) is { } active &&
+            active.MapId == pilot.MapId && active.NpcId != npcId)
+            await cache.RemoveAsync(LaserKey(pilot.UserId), ct);
         await cache.SetStringAsync(TargetKey(pilot.UserId), $"{pilot.MapId}:{npcId}:{Cycle}",
             new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5) }, ct);
         return target;
