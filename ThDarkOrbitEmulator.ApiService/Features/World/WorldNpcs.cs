@@ -285,6 +285,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
         var mapId = pilot.MapId;
         pilot = await sessions.RestoreAsync(pilot, ct);
         if (pilot.MapId != mapId) throw new WorldMapChangedException();
+        if (!await IsSelectedAsync(pilot, npcId, ct)) return;
         if (await AutoLauncherEnabledAsync(pilot.UserId, ct))
         {
             var loadKey = $"world:launcher:{pilot.UserId}";
