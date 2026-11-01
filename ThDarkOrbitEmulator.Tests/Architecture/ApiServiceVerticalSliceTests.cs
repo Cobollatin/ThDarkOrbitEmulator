@@ -1997,7 +1997,7 @@ public class ApiServiceVerticalSliceTests
                 && line.Contains("WorldCommandId.", StringComparison.Ordinal)))
                 Assert.That(line, Does.Contain("WorldCommandId.ShipCreateCommand"));
             Assert.That(callSites.Count(line => line.Contains("WorldCommandId.ShipCreateCommand, WorldNpcPackets.Create(npc)",
-                StringComparison.Ordinal)), Is.EqualTo(2));
+                StringComparison.Ordinal)), Is.EqualTo(3));
         });
     }
 
