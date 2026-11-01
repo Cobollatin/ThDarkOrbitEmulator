@@ -3653,6 +3653,31 @@ public class WorldTransportTests
                 }
             }
             Assert.That(sawHeroMove && sawMove, Is.True, "Unity must accept another click while traveling");
+            await WriteNativeAsync(stream, UnityWorldModuleId.MoveRequest,
+                new UnityModuleWriter(0).RotatedInt(2000, 11).RotatedInt(1500, 17)
+                    .RotatedInt(25000, 13).RotatedInt(1300, 10).ToArray()[2..]);
+            sawHeroMove = false;
+            sawMove = false;
+            for (var i = 0; i < 30 && (!sawHeroMove || !sawMove); i++)
+            {
+                var packet = (await reader.ReadAsync().WaitAsync(TimeSpan.FromSeconds(2)))!.Value;
+                if ((ushort)packet.Command == UnityWorldModuleId.HeroMoveCommand)
+                {
+                    var move = new UnityModuleReader(packet.Payload);
+                    Assert.That((move.RotatedInt(9), move.RotatedInt(25)), Is.EqualTo((21000, 1500)));
+                    sawHeroMove = true;
+                }
+                if ((ushort)packet.Command == UnityWorldModuleId.MoveCommand)
+                {
+                    var move = new UnityModuleReader(packet.Payload);
+                    Assert.That(move.RotatedInt(16), Is.EqualTo(42));
+                    Assert.That((move.RotatedInt(13), move.RotatedInt(16)), Is.EqualTo((21000, 1500)));
+                    sawMove = true;
+                }
+            }
+            Assert.That(sawHeroMove && sawMove, Is.True, "Unity must receive the clamped map-edge destination");
+            Assert.That((await sessions.ObserveExternalMoveAsync(pilot, CancellationToken.None)) is { } saved
+                ? (saved.X, saved.Y) : (0, 0), Is.EqualTo((21000, 1500)));
             client.Client.Shutdown(SocketShutdown.Send);
             await worker.WaitAsync(TimeSpan.FromSeconds(2));
         }

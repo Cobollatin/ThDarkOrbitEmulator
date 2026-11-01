@@ -1,4 +1,6 @@
-# Reference parity — iteration 225
+# Reference parity — iteration 226
+
+Iteration 226 extends the Unity movement loopback regression to an out-of-bounds click. The server returns the map-edge destination in both native movement commands and keeps the same destination in shared travel, so a click outside the map cannot move the client hero and saved world state to different places. This remains a socket-level check; rendering and clicks in the installed client, and rank 1's native NPC pursuit distance, still require a live capture.
 
 Iteration 225 corrects the Unity login response module ID to `0xA50C`, the value recovered from the installed client's `LoginResponse.getLibcomModuleId` and already used by the native handshake. The Unity path had sent `19206`, so the client could not recognize login success and release its queued gameplay commands. The loopback test now checks the literal wire ID and zero success status independently of the server constant. Ship rendering and clicks in the installed client still need a visual run.
 
