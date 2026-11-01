@@ -73,7 +73,7 @@ public sealed class WorldCollectiblePostgresTests
             Options.Create(new WorldNpcOptions { Templates =
                 [new("Streuner", "npc_streuner", 1, 100, 0, 400, 1, 400, 2, 0)] }), TimeProvider.System);
         var npc = (await npcs.VisibleAsync(1, ct)).Single();
-        await sessions.MoveAsync(pilot, npc.X, npc.Y, null, ct, DateTimeOffset.UtcNow.AddSeconds(-100));
+        await sessions.MoveAsync(pilot, npc.X, npc.Y, null, ct, DateTimeOffset.UtcNow.AddSeconds(-1000));
         Assert.That((await npcs.AttackAsync(pilot, npc.Id, sessions, ct)).Destroyed, Is.True);
         Assert.That(await persisted.NpcKillsAsync(accountId, ct), Is.EqualTo(1));
         var balances = await persisted.BalancesAsync(accountId, ct);

@@ -3414,6 +3414,39 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     [Test]
+    public async Task StaleLaserCleanup_DoesNotStopANewerAttack()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var mutex = new TestMutex();
+        var clock = new AdvancingClock();
+        var options = Options.Create(new WorldNpcOptions
+        {
+            LaserCooldownMilliseconds = 1000,
+            Templates = [new("Scout", "npc_scout", 1, 1000, 0, 0, 0, 0, 0, 0)]
+        });
+        var first = new WorldNpcs(cache, mutex, new TestRewards(), options, clock);
+        var second = new WorldNpcs(cache, mutex, new TestRewards(), options, clock);
+        var spawn = first.Spawn(1, clock.GetUtcNow()).Single();
+        var sessions = new WorldSessionStore(cache, mutex);
+        var pilot = await sessions.EnterAsync(Pilot() with
+        {
+            AccountId = Guid.NewGuid(), X = spawn.X, Y = spawn.Y,
+            Stats = new WorldShipStats(300, 1000, 0, 100, 1, [])
+        }, default);
+        await first.SelectAsync(pilot, spawn.Id, default);
+        await first.StartLaserAsync(pilot, spawn.Id, default, sessions);
+        var staleState = await cache.GetStringAsync($"world:npc:laser:{pilot.UserId}");
+
+        await second.StartLaserAsync(pilot, spawn.Id, default, sessions);
+        await first.StopLaserAsync(pilot, default, staleState);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await second.TickLasersAsync(pilot.MapId, sessions, default);
+
+        Assert.That((await first.VisibleAsync(pilot.MapId, default)).Single().Hp, Is.EqualTo(999));
+    }
+
+    [Test]
     public async Task LaserWithoutEquippedDamage_DoesNotHitOrTriggerAutomaticWeapons()
     {
         using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();

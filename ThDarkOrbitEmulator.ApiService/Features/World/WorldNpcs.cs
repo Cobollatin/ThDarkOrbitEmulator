@@ -306,11 +306,12 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5) }, ct);
     }
 
-    public async Task StopLaserAsync(WorldPilot pilot, CancellationToken ct)
+    public async Task StopLaserAsync(WorldPilot pilot, CancellationToken ct, string? expectedState = null)
     {
         await using var held = await mutex.AcquireAsync(ct);
         var stored = await cache.GetStringAsync(LaserKey(pilot.UserId), ct);
-        if (stored is not null && JsonSerializer.Deserialize<ActiveLaser>(stored)?.MapId == pilot.MapId)
+        if (stored is not null && (expectedState is null || stored == expectedState) &&
+            JsonSerializer.Deserialize<ActiveLaser>(stored)?.MapId == pilot.MapId)
             await cache.RemoveAsync(LaserKey(pilot.UserId), ct);
     }
 
@@ -326,7 +327,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             if (active.MapId != mapId || active.Cycle != Cycle ||
                 !await IsSelectedAsync(pilot, active.NpcId, ct) || sessions.CurrentHitPoints(pilot) <= 0)
             {
-                await StopLaserAsync(pilot, ct);
+                await StopLaserAsync(pilot, ct, stored);
                 continue;
             }
             var now = clock.GetUtcNow().ToUnixTimeMilliseconds();
@@ -346,7 +347,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
             if (hit.Status == "stopped") continue;
             if (hit.Status != "hit" || hit.Destroyed)
             {
-                await StopLaserAsync(pilot, ct);
+                await StopLaserAsync(pilot, ct, reserved);
                 continue;
             }
             if (await AutoRocketEnabledAsync(pilot.UserId, ct))
@@ -355,7 +356,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                     rocket: true, expectedLaserState: reserved);
                 if (rocket.Destroyed)
                 {
-                    await StopLaserAsync(pilot, ct);
+                    await StopLaserAsync(pilot, ct, reserved);
                     continue;
                 }
             }
@@ -365,7 +366,7 @@ public sealed class WorldNpcs(IDistributedCache cache, IServerMeshMutex mutex,
                 var volley = await AttackAsync(pilot, active.NpcId, sessions, ct, fence, mapId,
                     launcher: true, expectedLaserState: reserved);
                 if (volley.Destroyed)
-                    await StopLaserAsync(pilot, ct);
+                    await StopLaserAsync(pilot, ct, reserved);
             }
         }
     }
