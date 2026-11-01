@@ -234,6 +234,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private readonly ConcurrentDictionary<long, ConcurrentDictionary<long, string>> connectedHeals = new();
     private readonly ConcurrentDictionary<long, string> announcedOwnHeals = new();
     private readonly ConcurrentDictionary<long, string> announcedRepairBots = new();
+    private readonly ConcurrentDictionary<long, bool> announcedRadiationWarnings = new();
     // Map-level fanout: every idle observer on this node shares one presence + saved-state read per map.
     public static readonly TimeSpan RemoteSnapshotTtl = TimeSpan.FromMilliseconds(500);
     public static readonly TimeSpan PresenceHeartbeatInterval = TimeSpan.FromSeconds(15);
@@ -482,6 +483,31 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             try { await ObserveOwnRepairBotAsync(pilot, connection, ct); }
             catch (IOException) { }
         }
+    }
+
+    public Task PrimeOwnRadiationWarningAsync(WorldPilot pilot, CancellationToken ct)
+    {
+        // Radiation state is tracked via the runtime snapshot in shared cache
+        // but can also be derived by RadiationWarning(pilot.UserId) on the map owner.
+        // Let's use the local state since we are the map owner.
+        announcedRadiationWarnings[pilot.UserId] = RadiationWarning(pilot.UserId);
+        return Task.CompletedTask;
+    }
+
+    public async Task ObserveOwnRadiationWarningAsync(WorldPilot pilot, WorldConnection connection, CancellationToken ct)
+    {
+        await connection.RadiationWarningDeliveryGate.WaitAsync(ct);
+        try
+        {
+            var current = RadiationWarning(pilot.UserId);
+            if (!announcedRadiationWarnings.TryGetValue(pilot.UserId, out var announced) || announced != current)
+            {
+                await connection.SendAsync(WorldCommandId.RadiationWarningCommand,
+                    new byte[] { (byte)(current ? 1 : 0) }, ct);
+                announcedRadiationWarnings[pilot.UserId] = current;
+            }
+        }
+        finally { connection.RadiationWarningDeliveryGate.Release(); }
     }
 
     public bool RepairBotActive(long userId) => repairBots.GetValueOrDefault(userId);
@@ -1178,6 +1204,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         foreach (var heals in connectedHeals.Values) heals.TryRemove(pilot.UserId, out _);
         announcedOwnHeals.TryRemove(pilot.UserId, out _);
         announcedRepairBots.TryRemove(pilot.UserId, out _);
+        announcedRadiationWarnings.TryRemove(pilot.UserId, out _);
         remotePositions.TryRemove(pilot.UserId, out _);
         configurations.TryRemove(pilot.UserId, out _);
         lastSwitches.TryRemove(pilot.UserId, out _);
@@ -1647,6 +1674,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
             ((ICollection<KeyValuePair<long, WorldConnection>>)connections)
                 .Remove(new(pilot.UserId, connection));
         announcedRepairBots.TryRemove(pilot.UserId, out _);
+        announcedRadiationWarnings.TryRemove(pilot.UserId, out _);
         if (connected.TryGetValue(pilot.MapId, out var pilots)) pilots.TryRemove(pilot.UserId, out _);
         // The destination node reads the shared position/runtime/presence on reconnect.
     }
@@ -1996,6 +2024,7 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
         radiationWarnings.TryRemove(userId, out _);
         lastHazards.TryRemove(userId, out _);
         repairBots.TryRemove(userId, out _);
+        announcedRadiationWarnings.TryRemove(userId, out _);
         await cache.RemoveAsync(CombatKey(userId), ct);
         await cache.RemoveAsync(HullRecoveryKey(userId), ct);
         await cache.RemoveAsync(ShieldRecoveryKey(userId), ct);
@@ -2234,9 +2263,17 @@ public sealed class WorldSessionStore(IDistributedCache cache, IServerMeshMutex?
     private async Task SendRadiationWarningAsync(long userId, bool warning, CancellationToken ct)
     {
         if (!connections.TryGetValue(userId, out var connection)) return;
-        try { await connection.SendAsync(WorldCommandId.RadiationWarningCommand,
-            new byte[] { (byte)(warning ? 1 : 0) }, ct); }
+        await connection.RadiationWarningDeliveryGate.WaitAsync(ct);
+        try
+        {
+            if (announcedRadiationWarnings.TryGetValue(userId, out var announced) && announced == warning)
+                return;
+            await connection.SendAsync(WorldCommandId.RadiationWarningCommand,
+                new byte[] { (byte)(warning ? 1 : 0) }, ct);
+            announcedRadiationWarnings[userId] = warning;
+        }
         catch (IOException) { }
+        finally { connection.RadiationWarningDeliveryGate.Release(); }
     }
 
     public bool SetRadiationWarning(long userId, bool warning)

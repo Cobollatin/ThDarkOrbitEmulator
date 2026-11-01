@@ -58,6 +58,7 @@ public sealed class WorldConnection(WorldPilot pilot, WorldPacketWriter writer)
     private readonly SemaphoreSlim writeGate = new(1, 1);
     internal SemaphoreSlim RepairBotDeliveryGate { get; } = new(1, 1);
     internal SemaphoreSlim HealDeliveryGate { get; } = new(1, 1);
+    internal SemaphoreSlim RadiationWarningDeliveryGate { get; } = new(1, 1);
     internal SemaphoreSlim RemoteMoveDeliveryGate { get; } = new(1, 1);
     public WorldPilot Pilot { get; set; } = pilot;
     // NPC ids this socket has been shown: true = created, false = destroy already announced.

@@ -5056,4 +5056,60 @@ public sealed class WorldAndSpacemapSpecificationTests
     }
 
     private static WorldPilot Pilot() => new(7, "mmo", 1, 1, "ship_pusat-plus", 0, 0);
+    [Test]
+    public async Task RadiationWarning_IsResentOnPollWhenDeliveryFails()
+    {
+        using var services = new ServiceCollection().AddDistributedMemoryCache().BuildServiceProvider();
+        var cache = services.GetRequiredService<IDistributedCache>();
+        var clock = new AdvancingClock();
+        var store = new WorldSessionStore(cache, clock: clock);
+        var pilot = await store.EnterAsync(Pilot() with
+        {
+            UserId = 912, X = 300, Y = 1300,
+            Stats = new WorldShipStats(300, 1000, 0, 0, 0, [])
+        }, default);
+
+        var failingStream = new FailingMemoryStream();
+        var connection = new WorldConnection(pilot, new WorldPacketWriter(failingStream));
+        store.Attach(connection);
+
+        // Pilot is in radiation zone
+        await store.MoveAsync(pilot, 0, 1300, null, default, clock.GetUtcNow());
+        clock.Advance(TimeSpan.FromSeconds(1));
+        
+        // This will trigger SendRadiationWarningAsync which will throw IOException due to FailingMemoryStream
+        failingStream.ShouldFail = true;
+        await store.TickRadiationAsync(pilot.MapId, default);
+        
+        // Ensure no bytes were written (or only partial if it failed mid-write, but mock fails immediately)
+        // Then fix stream and observe
+        failingStream.ShouldFail = false;
+        await store.ObserveOwnRadiationWarningAsync(pilot, connection, default);
+
+        failingStream.Position = 0;
+        var damage = (await new WorldPacketReader(failingStream).ReadAsync())!.Value;
+        Assert.Multiple(() =>
+        {
+            Assert.That(damage.Command, Is.EqualTo(WorldCommandId.RadiationWarningCommand));
+            Assert.That(damage.Payload.ToArray(), Is.EqualTo(new byte[] { 1 }));
+        });
+    }
+
+    private sealed class FailingMemoryStream : MemoryStream
+    {
+        public bool ShouldFail { get; set; }
+        
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (ShouldFail) throw new IOException("Mock connection failure");
+            await base.WriteAsync(buffer, cancellationToken);
+        }
+        
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        {
+            if (ShouldFail) throw new IOException("Mock connection failure");
+            return base.WriteAsync(buffer, offset, count, cancellationToken);
+        }
+    }
+
 }
