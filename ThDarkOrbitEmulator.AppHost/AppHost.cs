@@ -5,6 +5,9 @@ using ThDarkOrbitEmulator.AppHost.ClientTesting;
 using ThDarkOrbitEmulator.AppHost.Dashboard;
 using ThDarkOrbitEmulator.AppHost.Operations;
 
+// Docker publishes persistent container ports on IPv4 loopback; localhost's IPv6 address stalls health probes on Windows.
+AppContext.SetSwitch("System.Net.DisableIPv6", true);
+
 var builder = DistributedApplication.CreateBuilder(args);
 var desiredReplicas = MeshScalingOptions.DesiredReplicas(builder.Configuration);
 
@@ -114,6 +117,7 @@ var apiGame = builder.AddProject<Projects.ThDarkOrbitEmulator_ApiService>(Dashbo
     .WithHttpEndpoint(name: "http")
     .WithPurposeIcon("Cube")
     .WithHttpHealthCheck("/health")
+    .WithEnvironment("DOTNET_SYSTEM_NET_DISABLEIPV6", "1")
     .WithReference(sessionsRedis)
     .WithReference(appDatabase, "identity-write")
     .WithReference(appDatabase, "identity-read")
@@ -150,6 +154,7 @@ var gatewayPlayers = builder.AddProject<Projects.ThDarkOrbitEmulator_Gateway>(Da
     .WithHttpsEndpoint(port: 443, name: "unity-https-default")
     .WithExternalHttpEndpoints()
     .WithHttpHealthCheck("/health")
+    .WithEnvironment("DOTNET_SYSTEM_NET_DISABLEIPV6", "1")
     .WithReference(apiGame)
     .WithEnvironment("Keycloak__Authority", keycloakRealmUrl)
     .WithEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", $"http://{DashboardResourceNames.TelemetryOtel}:4318")
